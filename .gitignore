@@ -17,6 +17,11 @@ secrets/
 private/
 
 # Go and native build products
+**/.gradle/
+**/build/
+*.apk
+*.aab
+local.properties
 bin/
 dist/
 out/
@@ -39,6 +44,11 @@ coverage.out
 *.sqlite
 *.sqlite3
 *.log
+postgres/
+postgresql-data/
+pgdata/
+mosquitto/data/
+mosquitto/log/
 logs/
 tmp/
 temp/
