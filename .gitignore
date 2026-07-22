@@ -1,0 +1,55 @@
+# Wi-Fi and environment secrets
+wifi.toml
+**/wifi.toml
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.der
+secrets/
+private/
+
+# Go and native build products
+bin/
+dist/
+out/
+release/
+releases/
+*.exe
+*.dll
+*.so
+*.a
+*.o
+*.test
+coverage.out
+*.coverprofile
+/block-hmi-server
+/block-agent
+
+# Runtime data and logs
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini

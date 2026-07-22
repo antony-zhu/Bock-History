@@ -1,0 +1,4 @@
+# Example only. Real Wi-Fi credentials are managed on the host and must not be
+# committed, embedded in an application, or copied into build artifacts.
+ssid = "replace-with-network-name"
+password = "replace-with-secret-at-deploy-time"

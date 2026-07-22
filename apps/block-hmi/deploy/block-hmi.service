@@ -1,0 +1,32 @@
+[Unit]
+Description=Block HMI Go server
+# Prototype only: the current binary serves plaintext HTTP and does not satisfy
+# ADR-003. Do not use this unit for production until HTTPS/Unix-socket support
+# is implemented and ports 8080/8081 are disabled.
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+Environment=BLOCK_HMI_ADDR=127.0.0.1:8080
+Environment=BLOCK_HMI_BASE_PATH=/block-apple-style
+Environment=BLOCK_HMI_DATA_FILE=/var/lib/block-hmi/state.json
+StateDirectory=block-hmi
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/block-hmi
+ExecStart=/opt/block-hmi/bin/current
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+
+[Install]
+WantedBy=multi-user.target
