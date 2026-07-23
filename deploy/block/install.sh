@@ -22,6 +22,7 @@ readonly STATE_ROOT="${HOST_ROOT}/var/lib/block-release"
 readonly SYSTEMD_ROOT="${HOST_ROOT}/etc/systemd/system"
 readonly CONFIG_ROOT="${HOST_ROOT}/etc/block"
 readonly LOCK_ROOT="${HOST_ROOT}/run/lock"
+readonly AGENT_SOCKET="${HOST_ROOT}/run/block-agent/api/block-agent.sock"
 if [[ "${TEST_MODE}" == "true" ]]; then
   readonly AGENT_FILE_GROUP="root"
   readonly HMI_FILE_GROUP="root"
@@ -153,6 +154,21 @@ validate_private_key_mode() {
   mode="$(stat -c '%a' "${path}")"
   (( (8#${mode} & 077) == 0 )) ||
     die "TLS private-key source must not be group/world accessible: ${path} (${mode})"
+}
+
+metadata_matches_expected() {
+  local path="$1"
+  local expected="$2"
+
+  # DrvFS cannot represent the Linux owner/group/mode installed into the
+  # regression sandbox. This opt-in is test-only; production always performs
+  # the exact metadata comparison below.
+  if [[ "${TEST_MODE}" == "true" &&
+    "${BLOCK_DEPLOY_TEST_SKIP_METADATA:-false}" == "true" ]]; then
+    [[ -f "${path}" && ! -L "${path}" ]]
+    return
+  fi
+  [[ "$(stat -c '%U:%G:%a' "${path}" 2>/dev/null || true)" == "${expected}" ]]
 }
 
 verify_certificate_material() {
@@ -389,6 +405,60 @@ maybe_failpoint() {
   fi
 }
 
+agent_socket_exists() {
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    [[ -e "${AGENT_SOCKET}" && ! -L "${AGENT_SOCKET}" ]]
+  else
+    [[ -S "${AGENT_SOCKET}" ]]
+  fi
+}
+
+wait_for_agent_ready() {
+  local max_attempts=30
+  local retry_seconds=1
+  local deadline=$((SECONDS + 30))
+  local attempt
+  local attempts_run=0
+  local active_state
+
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    max_attempts="${BLOCK_DEPLOY_TEST_AGENT_READY_ATTEMPTS:-5}"
+    retry_seconds="${BLOCK_DEPLOY_TEST_AGENT_READY_INTERVAL_SECONDS:-0}"
+    [[ "${max_attempts}" =~ ^[1-9][0-9]*$ && "${max_attempts}" -le 120 ]] ||
+      die "BLOCK_DEPLOY_TEST_AGENT_READY_ATTEMPTS must be between 1 and 120"
+    [[ "${retry_seconds}" =~ ^[0-9]+$ && "${retry_seconds}" -le 10 ]] ||
+      die "BLOCK_DEPLOY_TEST_AGENT_READY_INTERVAL_SECONDS must be between 0 and 10"
+  fi
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    attempts_run="${attempt}"
+    if systemctl is-active --quiet block-agent.service &&
+      agent_socket_exists &&
+      curl --fail --silent --show-error \
+        --connect-timeout 1 \
+        --max-time 2 \
+        --proto '=http' \
+        --unix-socket "${AGENT_SOCKET}" \
+        http://localhost/healthz >/dev/null 2>&1; then
+      printf 'NOTICE: Agent UDS ready after %d/%d probe(s): %s\n' \
+        "${attempt}" "${max_attempts}" "${AGENT_SOCKET}"
+      return 0
+    fi
+    if ((attempt < max_attempts)); then
+      if [[ "${TEST_MODE}" != "true" && "${SECONDS}" -ge "${deadline}" ]]; then
+        break
+      fi
+      sleep "${retry_seconds}"
+    fi
+  done
+
+  active_state="$(systemctl is-active block-agent.service 2>/dev/null || true)"
+  [[ -n "${active_state}" ]] || active_state="unknown"
+  printf 'ERROR: Agent did not become ready after %d probe(s) (unit=%s, socket=%s); refusing to start HMI\n' \
+    "${attempts_run}" "${active_state}" "${AGENT_SOCKET}" >&2
+  return 1
+}
+
 trap 'install_error_trap "$?" "${LINENO}"' ERR
 
 while [[ "$#" -gt 0 ]]; do
@@ -442,7 +512,7 @@ esac
 
 for command_name in \
   awk basename cat cmp cp curl cut date flock getent grep install ln mv openssl \
-  python3 readlink rm sha256sum stat systemctl; do
+  python3 readlink rm sha256sum sleep stat systemctl; do
   require_command "${command_name}"
 done
 
@@ -580,11 +650,11 @@ if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
     "${release_dir}/manifest.txt:root:root:644"; do
     metadata_path="${metadata_spec%%:*}"
     metadata_expected="${metadata_spec#*:}"
-    [[ "$(stat -c '%U:%G:%a' "${metadata_path}" 2>/dev/null || true)" == "${metadata_expected}" ]] ||
+    metadata_matches_expected "${metadata_path}" "${metadata_expected}" ||
       die "existing release has unsafe metadata: ${metadata_path}"
   done
   if [[ "${profile}" == "lab" ]]; then
-    [[ "$(stat -c '%U:%G:%a' "${release_dir}/bin/plc-simulator" 2>/dev/null || true)" == "root:root:755" ]] ||
+    metadata_matches_expected "${release_dir}/bin/plc-simulator" "root:root:755" ||
       die "existing release has unsafe plc-simulator metadata"
   fi
   for unit_name in block-agent.service block-hmi.service block-plc-simulator.service; do
@@ -630,19 +700,18 @@ if [[ "${same_current}" == "true" ]] &&
     "${release_dir}/manifest.txt:root:root:644"; do
     metadata_path="${metadata_spec%%:*}"
     metadata_expected="${metadata_spec#*:}"
-    if [[ ! -f "${metadata_path}" ]] ||
-      [[ "$(stat -c '%U:%G:%a' "${metadata_path}")" != "${metadata_expected}" ]]; then
+    if ! metadata_matches_expected "${metadata_path}" "${metadata_expected}"; then
       host_matches_desired="false"
     fi
   done
   if [[ "${profile}" == "lab" ]]; then
-    [[ "$(stat -c '%U:%G:%a' "${CONFIG_ROOT}/plc-simulator.json" 2>/dev/null || true)" == "root:${SIMULATOR_FILE_GROUP}:640" ]] ||
+    metadata_matches_expected "${CONFIG_ROOT}/plc-simulator.json" "root:${SIMULATOR_FILE_GROUP}:640" ||
       host_matches_desired="false"
-    [[ "$(stat -c '%U:%G:%a' "${release_dir}/bin/plc-simulator" 2>/dev/null || true)" == "root:root:755" ]] ||
+    metadata_matches_expected "${release_dir}/bin/plc-simulator" "root:root:755" ||
       host_matches_desired="false"
   fi
   for unit_name in block-agent.service block-hmi.service block-plc-simulator.service; do
-    [[ "$(stat -c '%U:%G:%a' "${SYSTEMD_ROOT}/${unit_name}" 2>/dev/null || true)" == "root:root:644" ]] ||
+    metadata_matches_expected "${SYSTEMD_ROOT}/${unit_name}" "root:root:644" ||
       host_matches_desired="false"
   done
 fi
@@ -657,6 +726,7 @@ if [[ "${host_matches_desired}" == "true" ]]; then
     systemctl enable block-agent.service block-hmi.service
   fi
   systemctl restart block-agent.service
+  wait_for_agent_ready
   systemctl restart block-hmi.service
   verify_args=(
     --profile "${profile}"
@@ -666,7 +736,12 @@ if [[ "${host_matches_desired}" == "true" ]]; then
   for admin_name in "${control_admins[@]}"; do
     verify_args+=(--control-admin "${admin_name}")
   done
-  "${release_dir}/deploy/verify-install.sh" "${verify_args[@]}"
+  if [[ "${TEST_MODE}" == "true" &&
+    "${BLOCK_DEPLOY_TEST_SKIP_VERIFY:-false}" == "true" ]]; then
+    printf 'NOTICE: test mode skipped host verification\n'
+  else
+    "${release_dir}/deploy/verify-install.sh" "${verify_args[@]}"
+  fi
   printf 'OK: release %s already matched; services were converged and verified\n' "${version}"
   exit 0
 fi
@@ -848,6 +923,7 @@ else
   systemctl enable block-agent.service block-hmi.service
 fi
 systemctl restart block-agent.service
+wait_for_agent_ready
 systemctl restart block-hmi.service
 maybe_failpoint "after-service-restart"
 

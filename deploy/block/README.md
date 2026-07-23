@@ -179,6 +179,10 @@ sudo usermod -aG block-sim-control <explicit-lab-operator>
 - 同一版本、profile、基线和二进制必须完全相同，否则拒绝覆盖；
 - 同一 release 的 Agent/Simulator 配置 SHA-256 必须与 manifest 完全相同；
 - 当主机已经与该版本及配置一致时，只收敛 enable/start 状态并重新验证，不创建新的安装事务；
+- 无论复用既有 release 还是执行正常安装，都会先启动 Agent，并通过有界重试确认
+  `/run/block-agent/api/block-agent.sock` 的 `/healthz` 已就绪后才启动 HMI；
+  约 30 秒内仍未就绪会输出 unit 状态和 socket 路径并失败，不使用固定 `sleep`
+  猜测启动时序；
 - 配置或 unit 漂移会先备份再恢复到发布内容；
 - 半成品或同版本不同内容不会被静默覆盖，必须由 `BLK-REL` 调查。
 - 从 lab 切换 production 会删除 Simulator 配置，并验证 Simulator 二进制、

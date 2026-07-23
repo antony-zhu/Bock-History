@@ -100,6 +100,10 @@ grep -Fq 'BLOCK_RELEASE_ROLE=BLK-REL' "${ROOT}/rollback.sh" ||
   die "rollback lacks BLK-REL guard"
 grep -Fq 'restore_failed_install' "${ROOT}/install.sh" ||
   die "installer lacks failed-install restoration"
+[[ "$(grep -Fc 'wait_for_agent_ready' "${ROOT}/install.sh")" -ge 3 ]] ||
+  die "installer does not gate HMI startup on Agent readiness in both convergence paths"
+grep -Fq 'refusing to start HMI' "${ROOT}/install.sh" ||
+  die "Agent readiness timeout does not fail closed with a clear error"
 grep -Fq 'current transaction is not bound to the current release manifest' "${ROOT}/rollback.sh" ||
   die "rollback lacks current-release transaction binding"
 grep -Fq 'private-key PEM block found' "${ROOT}/install.sh" ||

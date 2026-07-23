@@ -48,21 +48,102 @@ assert_file_equals() {
     fail "unexpected contents in ${path}"
 }
 
+assert_event_order() {
+  local log_path="$1"
+  shift
+  local previous=0
+  local event
+  local line
+
+  for event in "$@"; do
+    line="$(awk -v wanted="${event}" '$0 == wanted { print NR; exit }' "${log_path}")"
+    [[ -n "${line}" ]] || fail "missing deployment event '${event}' in ${log_path}"
+    ((line > previous)) ||
+      fail "deployment event '${event}' occurred out of order in ${log_path}"
+    previous="${line}"
+  done
+}
+
 make_systemctl_stub() {
   local directory="$1"
   install -d -m 0755 "${directory}"
   cat >"${directory}/systemctl" <<'EOF'
 #!/usr/bin/env bash
-case "${1:-}" in
+set -euo pipefail
+
+root="${BLOCK_DEPLOY_TEST_ROOT:?}"
+state_root="${root}/var/lib/block-release"
+socket_path="${root}/run/block-agent/api/block-agent.sock"
+log_path="${state_root}/systemctl-test.log"
+install -d -m 0700 "${state_root}"
+command_name="${1:-}"
+shift || true
+printf '%s%s\n' "${command_name}" "$([[ "$#" -gt 0 ]] && printf ' %s' "$*" || true)" >>"${log_path}"
+
+unit=""
+for argument in "$@"; do
+  if [[ "${argument}" == *.service ]]; then
+    unit="${argument}"
+  fi
+done
+
+case "${command_name}" in
   is-enabled)
     printf 'disabled\n'
     exit 1
     ;;
   is-active)
+    if [[ -n "${unit}" && -f "${state_root}/active-${unit}" ]]; then
+      if [[ "${unit}" == "block-agent.service" &&
+        "${BLOCK_DEPLOY_TEST_AGENT_READY_MODE:-delayed}" != "never" ]]; then
+        count=0
+        [[ ! -f "${state_root}/agent-probe-count" ]] ||
+          count="$(cat "${state_root}/agent-probe-count")"
+        count=$((count + 1))
+        printf '%s\n' "${count}" >"${state_root}/agent-probe-count"
+        ready_after="${BLOCK_DEPLOY_TEST_AGENT_READY_AFTER:-2}"
+        if ((count >= ready_after)); then
+          install -d -m 0755 "$(dirname -- "${socket_path}")"
+          : >"${socket_path}"
+        fi
+      fi
+      printf 'active\n'
+      exit 0
+    fi
     printf 'inactive\n'
     exit 1
     ;;
   show)
+    exit 0
+    ;;
+  restart|start)
+    for argument in "$@"; do
+      [[ "${argument}" == *.service ]] || continue
+      if [[ "${argument}" == "block-hmi.service" && ! -e "${socket_path}" ]]; then
+        printf 'ERROR: test HMI start occurred before Agent readiness marker\n' >&2
+        exit 42
+      fi
+      : >"${state_root}/active-${argument}"
+      if [[ "${argument}" == "block-agent.service" ]]; then
+        rm -f -- "${socket_path}" "${state_root}/agent-probe-count"
+      fi
+    done
+    exit 0
+    ;;
+  stop)
+    for argument in "$@"; do
+      [[ "${argument}" == *.service ]] || continue
+      rm -f -- "${state_root}/active-${argument}"
+      if [[ "${argument}" == "block-agent.service" ]]; then
+        rm -f -- "${socket_path}" "${state_root}/agent-probe-count"
+      fi
+    done
+    exit 0
+    ;;
+  disable)
+    if [[ " $* " == *" --now "* && -n "${unit}" ]]; then
+      rm -f -- "${state_root}/active-${unit}"
+    fi
     exit 0
     ;;
   *)
@@ -71,6 +152,33 @@ case "${1:-}" in
 esac
 EOF
   chmod 0755 "${directory}/systemctl"
+}
+
+make_curl_stub() {
+  local directory="$1"
+  cat >"${directory}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="${BLOCK_DEPLOY_TEST_ROOT:?}"
+state_root="${root}/var/lib/block-release"
+socket_path=""
+previous=""
+for argument in "$@"; do
+  if [[ "${previous}" == "--unix-socket" ]]; then
+    socket_path="${argument}"
+    break
+  fi
+  previous="${argument}"
+done
+if [[ -n "${socket_path}" && -e "${socket_path}" && ! -L "${socket_path}" ]]; then
+  printf 'agent-health-ready\n' >>"${state_root}/systemctl-test.log"
+  exit 0
+fi
+printf 'ERROR: test curl did not find a ready Agent socket\n' >&2
+exit 22
+EOF
+  chmod 0755 "${directory}/curl"
 }
 
 make_certificate_fixture() {
@@ -140,7 +248,33 @@ run_install() {
     --common-baseline 2222222222222222222222222222222222222222
 }
 
+run_lab_install() {
+  local host_root="$1"
+  local inputs="$2"
+  shift 2
+
+  env \
+    PATH="${TEST_ROOT}/bin:${PATH}" \
+    BLOCK_RELEASE_ROLE=BLK-REL \
+    BLOCK_DEPLOY_TEST_MODE=true \
+    BLOCK_DEPLOY_TEST_ROOT="${host_root}" \
+    "$@" \
+    "${ROOT}/install.sh" \
+    --execute \
+    --profile lab \
+    --version 1.2.3-lab-test \
+    --artifact-dir "${inputs}/artifact" \
+    --agent-config "${inputs}/agent-lab.json" \
+    --simulator-config "${inputs}/simulator.json" \
+    --tls-cert "${inputs}/tls/hmi.crt" \
+    --tls-key "${inputs}/tls/hmi.key" \
+    --tls-ca "${inputs}/tls/ca.crt" \
+    --git-commit 1111111111111111111111111111111111111111 \
+    --common-baseline 2222222222222222222222222222222222222222
+}
+
 make_systemctl_stub "${TEST_ROOT}/bin"
+make_curl_stub "${TEST_ROOT}/bin"
 make_inputs "${TEST_ROOT}/inputs"
 
 # Existing installation: an injected failure after switching current must restore
@@ -235,6 +369,68 @@ run_install \
   fail "production install retained Simulator configuration"
 [[ ! -e "${production_root}/etc/block/block-profile.env" ]] ||
   fail "production install retained legacy block-profile.env"
+assert_event_order \
+  "${production_root}/var/lib/block-release/systemctl-test.log" \
+  "restart block-agent.service" \
+  "agent-health-ready" \
+  "restart block-hmi.service"
+
+# Reusing an unchanged current release must enforce the same Agent-ready gate.
+: >"${production_root}/var/lib/block-release/systemctl-test.log"
+run_install \
+  "${production_root}" \
+  "${TEST_ROOT}/inputs" \
+  BLOCK_DEPLOY_TEST_SKIP_METADATA=true \
+  BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
+  >"${TEST_ROOT}/production-reuse.out" 2>&1
+grep -Fq 'already matched; services were converged and verified' "${TEST_ROOT}/production-reuse.out" ||
+  fail "unchanged release did not use the convergence branch"
+assert_event_order \
+  "${production_root}/var/lib/block-release/systemctl-test.log" \
+  "restart block-agent.service" \
+  "agent-health-ready" \
+  "restart block-hmi.service"
+
+# Lab startup must converge Simulator, then Agent readiness, then HMI.
+lab_root="${TEST_ROOT}/lab-host"
+install -d -m 0755 "${lab_root}/etc/systemd/system"
+run_lab_install \
+  "${lab_root}" \
+  "${TEST_ROOT}/inputs" \
+  BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
+  >"${TEST_ROOT}/lab.out" 2>&1
+assert_event_order \
+  "${lab_root}/var/lib/block-release/systemctl-test.log" \
+  "restart block-plc-simulator.service" \
+  "restart block-agent.service" \
+  "agent-health-ready" \
+  "restart block-hmi.service"
+
+# If Agent readiness never converges, HMI must not start and the install
+# transaction must restore the fresh-host state.
+readiness_failure_root="${TEST_ROOT}/readiness-failure-host"
+install -d -m 0755 "${readiness_failure_root}/etc/systemd/system"
+if run_lab_install \
+  "${readiness_failure_root}" \
+  "${TEST_ROOT}/inputs" \
+  BLOCK_DEPLOY_TEST_AGENT_READY_MODE=never \
+  BLOCK_DEPLOY_TEST_AGENT_READY_ATTEMPTS=2 \
+  BLOCK_DEPLOY_TEST_AGENT_READY_INTERVAL_SECONDS=0 \
+  BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
+  >"${TEST_ROOT}/readiness-failure.out" 2>&1; then
+  fail "install unexpectedly succeeded without Agent readiness"
+fi
+grep -Fq 'Agent did not become ready after 2 probe(s)' "${TEST_ROOT}/readiness-failure.out" ||
+  fail "Agent readiness timeout lacked a clear bounded error"
+grep -Fq 'pre-install host state restored' "${TEST_ROOT}/readiness-failure.out" ||
+  fail "Agent readiness failure did not restore the captured host state"
+if grep -Fqx 'restart block-hmi.service' \
+  "${readiness_failure_root}/var/lib/block-release/systemctl-test.log"; then
+  fail "HMI was started despite Agent readiness failure"
+fi
+[[ ! -e "${readiness_failure_root}/opt/block/current" &&
+  ! -L "${readiness_failure_root}/opt/block/current" ]] ||
+  fail "Agent readiness failure left the fresh current symlink"
 
 if [[ "${BLOCK_DEPLOY_SKIP_PACKAGED_STATIC_ASSERT:-false}" != "true" ]]; then
   # The installed verify-static entrypoint must retain every runtime dependency,
@@ -339,4 +535,4 @@ grep -Fq 'current transaction is not bound' "${TEST_ROOT}/rollback.out" ||
 [[ "$(readlink -f "${rollback_root}/opt/block/current")" == "${current_release}" ]] ||
   fail "rejected rollback changed current release"
 
-printf 'OK: deploy failure recovery, fresh cleanup, immutable config hashes, private-key rejection, rollback binding and packaged static dependencies\n'
+printf 'OK: deploy failure recovery, Agent-before-HMI readiness convergence, release reuse, fresh cleanup, immutable config hashes, private-key rejection, rollback binding and packaged static dependencies\n'
