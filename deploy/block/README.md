@@ -61,8 +61,17 @@ Agent 查询的 `SourceInfo` 决定；部署环境变量不得伪造或覆盖数
 │   └── plc-simulator        # 仅 lab
 ├── deploy/
 │   ├── health-check.sh
+│   ├── install-users.sh
+│   ├── install.sh
 │   ├── verify-install.sh
+│   ├── verify-static.sh
 │   ├── rollback.sh
+│   ├── config/
+│   │   ├── block-agent.example.json
+│   │   ├── block-agent-simulator.example.json
+│   │   └── plc-simulator.example.json
+│   ├── tests/
+│   │   └── deploy-regression.sh
 │   └── systemd/
 └── manifest.txt
 
@@ -118,7 +127,7 @@ test -x tests/deploy-regression.sh
 ./verify-static.sh
 ```
 
-该脚本执行所有 shell 的 `bash -n`、三个 JSON 样例解析，并检查 socket 路径、用户组矩阵、HMI `8s` 超时、TLS curl、生产/实验开关及 systemd 静态网络门禁。它还在工作区 `.cache` 沙箱内执行安装失败、fresh-host 清理、配置哈希不可变、证书/CA 私钥拒绝以及错误回滚事务拒绝的反例测试。
+该脚本执行所有 shell 的 `bash -n`、三个 JSON 样例解析，并检查 socket 路径、用户组矩阵、HMI `8s` 超时、TLS curl、生产/实验开关及 systemd 静态网络门禁。它还在工作区 `.cache` 沙箱内执行安装失败、fresh-host 清理、配置哈希不可变、证书/CA 私钥拒绝以及错误回滚事务拒绝的反例测试。release 会同时保存 `verify-static.sh` 所依赖的 `config/` 样例和 `tests/deploy-regression.sh`，回归测试会从打包后的 release 再执行一次静态入口，避免只复制入口脚本而遗漏依赖。
 
 ### 3. 生产安装
 

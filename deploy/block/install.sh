@@ -473,7 +473,8 @@ for source_script in \
   health-check.sh \
   verify-install.sh \
   rollback.sh \
-  verify-static.sh; do
+  verify-static.sh \
+  tests/deploy-regression.sh; do
   [[ -x "${SCRIPT_DIR}/${source_script}" ]] ||
     die "deployment script must be executable: ${SCRIPT_DIR}/${source_script}"
 done
@@ -552,15 +553,30 @@ if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
     install.sh \
     rollback.sh \
     verify-install.sh \
-    verify-static.sh; do
+    verify-static.sh \
+    tests/deploy-regression.sh; do
     cmp -s "${SCRIPT_DIR}/${deploy_script}" "${release_dir}/deploy/${deploy_script}" ||
       die "existing release ${deploy_script} differs from the supplied deployment bundle"
+  done
+  for config_example in \
+    block-agent.example.json \
+    block-agent-simulator.example.json \
+    plc-simulator.example.json; do
+    cmp -s \
+      "${SCRIPT_DIR}/config/${config_example}" \
+      "${release_dir}/deploy/config/${config_example}" ||
+      die "existing release ${config_example} differs from the supplied deployment bundle"
   done
   cmp -s "${SCRIPT_DIR}/README.md" "${release_dir}/deploy/README.md" ||
     die "existing release README differs from the supplied deployment bundle"
   for metadata_spec in \
     "${release_dir}/bin/block-agent:root:root:755" \
     "${release_dir}/bin/block-hmi:root:root:755" \
+    "${release_dir}/deploy/verify-static.sh:root:root:755" \
+    "${release_dir}/deploy/tests/deploy-regression.sh:root:root:755" \
+    "${release_dir}/deploy/config/block-agent.example.json:root:root:644" \
+    "${release_dir}/deploy/config/block-agent-simulator.example.json:root:root:644" \
+    "${release_dir}/deploy/config/plc-simulator.example.json:root:root:644" \
     "${release_dir}/manifest.txt:root:root:644"; do
     metadata_path="${metadata_spec%%:*}"
     metadata_expected="${metadata_spec#*:}"
@@ -709,6 +725,8 @@ if [[ "${release_reused}" == "false" ]]; then
   install -d -o root -g root -m 0755 \
     "${staging_dir}/bin" \
     "${staging_dir}/deploy" \
+    "${staging_dir}/deploy/config" \
+    "${staging_dir}/deploy/tests" \
     "${staging_dir}/deploy/systemd"
   install -o root -g root -m 0755 \
     "${artifact_dir}/bin/block-agent" \
@@ -728,10 +746,19 @@ if [[ "${release_reused}" == "false" ]]; then
     install.sh \
     rollback.sh \
     verify-install.sh \
-    verify-static.sh; do
+    verify-static.sh \
+    tests/deploy-regression.sh; do
     install -o root -g root -m 0755 \
       "${SCRIPT_DIR}/${deploy_script}" \
       "${staging_dir}/deploy/${deploy_script}"
+  done
+  for config_example in \
+    block-agent.example.json \
+    block-agent-simulator.example.json \
+    plc-simulator.example.json; do
+    install -o root -g root -m 0644 \
+      "${SCRIPT_DIR}/config/${config_example}" \
+      "${staging_dir}/deploy/config/${config_example}"
   done
   install -o root -g root -m 0644 \
     "${SCRIPT_DIR}/README.md" \

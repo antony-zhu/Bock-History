@@ -236,6 +236,31 @@ run_install \
 [[ ! -e "${production_root}/etc/block/block-profile.env" ]] ||
   fail "production install retained legacy block-profile.env"
 
+if [[ "${BLOCK_DEPLOY_SKIP_PACKAGED_STATIC_ASSERT:-false}" != "true" ]]; then
+  # The installed verify-static entrypoint must retain every runtime dependency,
+  # not only the top-level script.
+  packaged_deploy="${production_root}/opt/block/releases/1.2.3-test/deploy"
+  [[ -x "${packaged_deploy}/verify-static.sh" ]] ||
+    fail "release is missing executable verify-static.sh"
+  [[ -x "${packaged_deploy}/tests/deploy-regression.sh" ]] ||
+    fail "release is missing executable tests/deploy-regression.sh"
+  for config_example in \
+    block-agent.example.json \
+    block-agent-simulator.example.json \
+    plc-simulator.example.json; do
+    cmp -s \
+      "${ROOT}/config/${config_example}" \
+      "${packaged_deploy}/config/${config_example}" ||
+      fail "release is missing verify-static config dependency: ${config_example}"
+  done
+  BLOCK_DEPLOY_SKIP_PACKAGED_STATIC_ASSERT=true \
+    BLOCK_DMP_CACHE_ROOT="${CACHE_ROOT}" \
+    "${packaged_deploy}/verify-static.sh" \
+    >"${TEST_ROOT}/packaged-static.out" 2>&1
+  grep -Fq 'OK: deploy/block shell syntax' "${TEST_ROOT}/packaged-static.out" ||
+    fail "packaged verify-static did not complete"
+fi
+
 # Existing release configuration hashes are immutable.
 cp "${TEST_ROOT}/inputs/agent.json" "${TEST_ROOT}/inputs/agent.changed.json"
 python3 - "${TEST_ROOT}/inputs/agent.changed.json" <<'PY'
@@ -314,4 +339,4 @@ grep -Fq 'current transaction is not bound' "${TEST_ROOT}/rollback.out" ||
 [[ "$(readlink -f "${rollback_root}/opt/block/current")" == "${current_release}" ]] ||
   fail "rejected rollback changed current release"
 
-printf 'OK: deploy failure recovery, fresh cleanup, immutable config hashes, private-key rejection and rollback binding\n'
+printf 'OK: deploy failure recovery, fresh cleanup, immutable config hashes, private-key rejection, rollback binding and packaged static dependencies\n'
