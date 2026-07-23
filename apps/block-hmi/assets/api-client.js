@@ -2,7 +2,10 @@
   "use strict";
 
   var config = window.HMI_CONFIG || {};
-  var timeoutMs = Number(config.requestTimeoutMs) || 8000;
+  var configuredTimeoutMs = Number(config.requestTimeoutMs);
+  var timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+    ? configuredTimeoutMs
+    : 12000;
 
   function defaultAPIBase() {
     var path = window.location.pathname || "/";
@@ -60,30 +63,38 @@
     };
     var method = requestOptions.method || "GET";
     var idempotencyKey = requestOptions.idempotencyKey;
-    var timer = 0;
+    var controller = new window.AbortController();
+    var timedOut = false;
 
     if (requestOptions.operator) headers["X-Operator"] = requestOptions.operator;
     if (requestOptions.body !== undefined) headers["Content-Type"] = "application/json";
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 
-    var fetchPromise = window.fetch(apiBase + String(path).replace(/^\/+/, ""), {
+    var timer = window.setTimeout(function () {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    return window.fetch(apiBase + String(path).replace(/^\/+/, ""), {
       method: method,
       credentials: "same-origin",
       cache: "no-store",
       headers: headers,
-      body: requestOptions.body === undefined ? undefined : JSON.stringify(requestOptions.body)
+      body: requestOptions.body === undefined ? undefined : JSON.stringify(requestOptions.body),
+      signal: controller.signal
     }).then(parseResponse).catch(function (error) {
       if (error instanceof APIError) throw error;
+      if (timedOut || (error && error.name === "AbortError")) {
+        throw new APIError(
+          method === "GET" || method === "HEAD"
+            ? "后台响应超时"
+            : "后台响应超时，操作结果未知",
+          0,
+          "timeout"
+        );
+      }
       throw new APIError("无法连接后台服务", 0, "network_error");
-    });
-
-    var timeoutPromise = new Promise(function (_, reject) {
-      timer = window.setTimeout(function () {
-        reject(new APIError("后台响应超时，操作结果未知", 0, "timeout"));
-      }, timeoutMs);
-    });
-
-    return Promise.race([fetchPromise, timeoutPromise]).then(function (payload) {
+    }).then(function (payload) {
       window.clearTimeout(timer);
       return payload;
     }, function (error) {

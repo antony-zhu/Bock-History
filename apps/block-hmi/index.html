@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light" data-skin="light" data-soft-keyboard-enabled="true" data-backend-status="connecting">
+<html lang="zh-CN" data-theme="light" data-skin="light" data-soft-keyboard-enabled="true" data-backend-status="connecting" data-simulation-mode="__BLOCK_HMI_SOURCE_SIMULATION__">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -1237,7 +1237,7 @@
     }
 
     html[data-backend-status="online"] .line-name::after {
-      content: "后台联机";
+      content: "本地服务在线";
     }
 
     html[data-backend-status="online"] .line-name::before {
@@ -1246,11 +1246,34 @@
 
     html[data-backend-status="offline"] .line-name::after {
       color: var(--red);
-      content: "后台离线";
+      content: "设备连接中断";
     }
 
     html[data-backend-status="offline"] .line-name::before {
       background: var(--red);
+    }
+
+    .simulation-badge {
+      padding: 6px 11px;
+      color: #8a3d00;
+      border: 1px solid rgba(255, 149, 0, 0.5);
+      border-radius: 999px;
+      background: rgba(255, 204, 128, 0.55);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+    }
+
+    html[data-simulation-mode="false"] .simulation-badge {
+      display: none;
+    }
+
+    html[data-theme="graphite"] .simulation-badge {
+      color: #ffd29a;
+      border-color: rgba(255, 179, 71, 0.55);
+      background: rgba(132, 72, 0, 0.5);
+      box-shadow: none;
     }
 
     .top-meta {
@@ -3604,7 +3627,7 @@
   <main class="stage" id="hmi" aria-label="料仓自动化工控机界面">
     <section class="main-panel">
       <header class="topbar">
-        <div class="line-name">产线名称一</div>
+        <div class="line-name">产线名称一 <span class="simulation-badge" role="status" aria-label="当前为模拟数据">模拟数据</span></div>
         <div class="top-meta">
           <time id="currentDate">日期--</time>
           <div class="theme-picker" id="themePicker">
@@ -3700,8 +3723,8 @@
               <div class="system-row">
                 <strong>系统状态</strong>
                 <span class="colon">:</span>
-                <span class="lamp running" id="systemLamp" aria-hidden="true"></span>
-                <span class="status-text" id="systemStatus">运行中</span>
+                <span class="lamp" id="systemLamp" aria-hidden="true"></span>
+                <span class="status-text" id="systemStatus">等待可信数据</span>
               </div>
 
               <div class="pick-status" aria-label="抓取位置状态">
@@ -3714,62 +3737,64 @@
               </div>
 
               <div class="bin-row" id="binRow" aria-label="库位状态">
-                <div class="bin full" data-bin="0">
+                <div class="bin empty" data-bin="0">
                   <div class="bin-name">库位1</div>
                   <div class="bin-bar" aria-hidden="true"></div>
-                  <div class="bin-state">满料</div>
+                  <div class="bin-state">暂无可信数据</div>
                 </div>
-                <div class="bin warning" data-bin="1">
+                <div class="bin empty" data-bin="1">
                   <div class="bin-name">库位2</div>
                   <div class="bin-bar" aria-hidden="true"></div>
-                  <div class="bin-state">需换料</div>
+                  <div class="bin-state">暂无可信数据</div>
                 </div>
-                <div class="bin fault" data-bin="2">
+                <div class="bin empty" data-bin="2">
                   <div class="bin-name">库位3</div>
                   <div class="bin-bar" aria-hidden="true"></div>
-                  <div class="bin-state">异常</div>
+                  <div class="bin-state">暂无可信数据</div>
                 </div>
               </div>
             </div>
 
             <div class="home-right">
               <div class="action-grid" aria-label="设备控制">
-                <button class="control-button" type="button" data-action="clear">清空料仓</button>
-                <button class="control-button" type="button" data-action="start">启动</button>
-                <button class="control-button" type="button" data-action="pause">暂停</button>
-                <button class="control-button" type="button" data-action="reset">复位</button>
-                <button class="control-button" type="button" data-action="single" aria-pressed="false">单件循环<br>暂停</button>
-                <button class="control-button" type="button" data-action="frame" aria-pressed="false">单框循环<br>暂停</button>
-                <button class="control-button" type="button" data-action="inspect">抽检</button>
-                <button class="control-button" type="button" data-action="custom">手动模式</button>
+                <button class="control-button" type="button" data-action="clear" disabled>清空料仓</button>
+                <button class="control-button" type="button" data-action="start" disabled>启动</button>
+                <button class="control-button" type="button" data-action="pause" disabled>暂停</button>
+                <button class="control-button" type="button" data-action="reset" disabled>复位</button>
+                <button class="control-button" type="button" data-action="single" aria-pressed="false" disabled>单件循环<br>--</button>
+                <button class="control-button" type="button" data-action="frame" aria-pressed="false" disabled>单框循环<br>--</button>
+                <button class="control-button" type="button" data-action="inspect" disabled>抽检</button>
+                <button class="control-button" type="button" data-action="custom" disabled>模式切换</button>
               </div>
 
               <div class="metric-row" aria-label="生产指标">
                 <div class="metric">
                   <div class="metric-label">单件节拍</div>
                   <div class="metric-value">
-                    <output class="value-box" id="homeCycle">30</output>
+                    <output class="value-box" id="homeCycle">--</output>
                     <span>秒（S）</span>
                   </div>
                 </div>
                 <div class="metric">
                   <div class="metric-label">当日产能</div>
                   <div class="metric-value">
-                    <output class="value-box" id="homeOutput">30</output>
+                    <output class="value-box" id="homeOutput">--</output>
                     <span>件</span>
                   </div>
                 </div>
                 <div class="metric">
                   <div class="metric-label">合格率</div>
                   <div class="metric-value">
-                    <output class="value-box" id="homePassRate">100</output>
+                    <output class="value-box" id="homePassRate">--</output>
                     <span>%</span>
                   </div>
                 </div>
               </div>
 
               <div class="event-box" aria-label="当前消息">
-                <ol class="event-list" id="homeEvents"></ol>
+                <ol class="event-list" id="homeEvents">
+                  <li class="event-line info"><span class="dot" aria-hidden="true"></span><span>暂无可信报警数据</span></li>
+                </ol>
               </div>
             </div>
           </div>
@@ -3780,50 +3805,50 @@
             <div class="data-grid">
               <div class="data-point">
                 <div class="data-label">当日目标产能</div>
-                <div class="data-readout"><output id="dataTarget">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataTarget">--</output><span>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">单件节拍</div>
-                <div class="data-readout"><output id="dataCycle">30</output><span>秒（S）</span></div>
+                <div class="data-readout"><output id="dataCycle">--</output><span>秒（S）</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">当前产能</div>
-                <div class="data-readout"><output id="dataOutput">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataOutput">--</output><span>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">设备稼动率</div>
-                <div class="data-readout"><output id="dataOee">92</output><span>%</span></div>
+                <div class="data-readout"><output id="dataOee">--</output><span>%</span></div>
               </div>
 
               <div class="data-point">
                 <div class="data-label">抽检数量</div>
-                <div class="data-readout"><output id="dataInspected">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataInspected">--</output><span>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">合格数量</div>
-                <div class="data-readout"><output id="dataPassed">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataPassed">--</output><span>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">NG数量</div>
-                <div class="data-readout"><output id="dataNg">0</output><span>件</span></div>
+                <div class="data-readout"><output id="dataNg">--</output><span>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">待检数量</div>
-                <div class="data-readout"><output id="dataPending">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataPending">--</output><span>件</span></div>
               </div>
 
               <div class="data-point wide">
                 <div class="data-label">料仓毛坯</div>
-                <div class="data-readout"><output id="dataBlank">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataBlank">--</output><span>件</span></div>
               </div>
               <div class="data-point wide">
                 <div class="data-label">料仓成品</div>
-                <div class="data-readout"><output id="dataFinished">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataFinished">--</output><span>件</span></div>
               </div>
             </div>
 
             <div class="data-footnote">
-              <span id="progressText">目标完成度 100%</span>
+              <span id="progressText">目标完成度 --</span>
               <div class="progress-track" aria-hidden="true"><span id="progressFill"></span></div>
               <span id="dataFreshness">数据刷新：正在连接</span>
             </div>
@@ -3835,17 +3860,17 @@
             <form class="settings-form" id="settingsForm">
               <div class="settings-row">
                 <label for="targetInput">产能设定：</label>
-                <input id="targetInput" name="target" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="30" required data-soft-keyboard="numeric" data-soft-label="产能设定" aria-describedby="settingsValidation">
+                <input id="targetInput" name="target" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="" required data-soft-keyboard="numeric" data-soft-label="产能设定" aria-describedby="settingsValidation">
                 <span>件</span>
               </div>
               <div class="settings-row">
                 <label for="toolInput">换刀件数设定：</label>
-                <input id="toolInput" name="tool" type="number" min="1" max="99999" step="1" inputmode="numeric" autocomplete="off" value="100" required data-soft-keyboard="numeric" data-soft-label="换刀件数设定" aria-describedby="settingsValidation">
+                <input id="toolInput" name="tool" type="number" min="1" max="99999" step="1" inputmode="numeric" autocomplete="off" value="" required data-soft-keyboard="numeric" data-soft-label="换刀件数设定" aria-describedby="settingsValidation">
                 <span>件</span>
               </div>
               <div class="settings-row">
                 <label for="inspectInput">抽检间隔设定：</label>
-                <input id="inspectInput" name="inspect" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="30" required data-soft-keyboard="numeric" data-soft-label="抽检间隔设定" aria-describedby="settingsValidation">
+                <input id="inspectInput" name="inspect" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="" required data-soft-keyboard="numeric" data-soft-label="抽检间隔设定" aria-describedby="settingsValidation">
                 <span>件</span>
               </div>
               <p class="settings-validation" id="settingsValidation" role="status" aria-live="polite"></p>
@@ -3867,7 +3892,9 @@
         <section class="page" data-page="alarm" hidden>
           <div class="log-layout">
             <div class="log-panel">
-              <ol class="log-list" id="alarmEvents"></ol>
+                <ol class="log-list" id="alarmEvents">
+                  <li class="log-line info"><span class="dot" aria-hidden="true"></span><span class="log-copy">暂无可信报警数据</span></li>
+                </ol>
             </div>
           </div>
         </section>
@@ -3875,7 +3902,9 @@
         <section class="page" data-page="history" hidden>
           <div class="log-layout">
             <div class="log-panel">
-              <ol class="log-list" id="historyEvents"></ol>
+                <ol class="log-list" id="historyEvents">
+                  <li class="log-line info"><span class="dot" aria-hidden="true"></span><span class="log-copy">暂无可信历史数据</span></li>
+                </ol>
             </div>
           </div>
         </section>
@@ -3941,15 +3970,16 @@
       </nav>
 
       <button
-        class="mode is-auto"
+        class="mode"
         id="modeToggle"
         type="button"
-        aria-label="当前为自动模式，点击切换为手动模式"
+        aria-label="等待可信设备数据"
         aria-pressed="false"
+        disabled
       >
-        <div class="meta-cn" id="modeCn">自动</div>
-        <div class="meta-en" id="modeEn">Auto</div>
-        <div class="operator-name" id="modeState">远程联机</div>
+        <div class="meta-cn" id="modeCn">待机</div>
+        <div class="meta-en" id="modeEn">--</div>
+        <div class="operator-name" id="modeState">等待数据</div>
       </button>
     </footer>
 
@@ -3965,7 +3995,7 @@
 
   <script src="assets/vendor/simple-keyboard/index.js"></script>
   <script src="assets/soft-keyboard.js"></script>
-  <script src="assets/api-client.js?v=20260721.1"></script>
+  <script src="assets/api-client.js?v=20260723.1"></script>
   <script>
     (() => {
       "use strict";
@@ -4008,38 +4038,27 @@
 
       const state = {
         revision: 0,
-        running: true,
-        mode: "auto",
+        updatedAt: "",
+        running: false,
+        mode: "",
         singlePaused: false,
         framePaused: false,
         theme: "light",
-        target: 30,
-        output: 30,
-        cycle: 30,
-        oee: 92,
-        inspected: 30,
-        passed: 30,
+        target: 0,
+        output: 0,
+        cycle: 0,
+        oee: 0,
+        inspected: 0,
+        passed: 0,
         ng: 0,
-        pending: 30,
-        blank: 30,
-        finished: 30,
-        toolLimit: 100,
-        inspectInterval: 30,
-        bins: [
-          { type: "full", label: "满料" },
-          { type: "warning", label: "需换料" },
-          { type: "fault", label: "异常" }
-        ],
-        alarms: [
-          { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "09:42:18", acknowledged: false },
-          { id: 2, level: "warning", code: "0002", text: "库位2余量不足", time: "09:40:06", acknowledged: false },
-          { id: 1, level: "info", code: "0001", text: "系统自检完成", time: "09:35:12", acknowledged: false }
-        ],
-        history: [
-          { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "2026-07-19 18:42:18" },
-          { id: 2, level: "warning", code: "0002", text: "X按钮急停解除", time: "2026-07-19 17:26:08" },
-          { id: 1, level: "info", code: "0001", text: "完成抽检", time: "2026-07-19 16:55:31" }
-        ]
+        pending: 0,
+        blank: 0,
+        finished: 0,
+        toolLimit: 0,
+        inspectInterval: 0,
+        bins: [],
+        alarms: [],
+        history: []
       };
 
       const $ = (selector, root = document) => root.querySelector(selector);
@@ -4083,6 +4102,7 @@
       let backendWriteInFlight = false;
       let backendPollTimer = 0;
       let settingsDirty = false;
+      let hasTrustedData = false;
 
       function supportsFlexGap() {
         const probe = document.createElement("div");
@@ -4201,15 +4221,34 @@
         const previous = backendConnected;
         backendConnected = Boolean(connected);
         root.dataset.backendStatus = backendConnected ? "online" : "offline";
-        $("#dataFreshness").textContent = backendConnected
-          ? "数据刷新：后台联机"
-          : "数据刷新：后台离线";
+        updateFreshnessDisplay();
         updateControlAvailability();
         if (announce && previous !== backendConnected) {
           showToast(
             backendConnected ? "后台连接已恢复" : "后台连接中断，控制操作已停用",
             backendConnected ? "info" : "danger"
           );
+        }
+      }
+
+      function updateFreshnessDisplay() {
+        const element = $("#dataFreshness");
+        const updatedAt = state.updatedAt ? new Date(state.updatedAt) : null;
+        if (!hasTrustedData) {
+          element.textContent = "暂无可信设备数据";
+          return;
+        }
+        if (backendConnected) {
+          element.textContent = updatedAt && !Number.isNaN(updatedAt.getTime())
+            ? `数据刷新：${formatClockTime(updatedAt)}`
+            : "数据刷新：本地服务在线";
+          return;
+        }
+        if (updatedAt && !Number.isNaN(updatedAt.getTime())) {
+          const ageSeconds = Math.max(0, Math.floor((Date.now() - updatedAt.getTime()) / 1000));
+          element.textContent = `数据已过期 ${ageSeconds} 秒 / 设备连接中断`;
+        } else {
+          element.textContent = "数据已过期 / 设备连接中断";
         }
       }
 
@@ -4220,14 +4259,34 @@
           window.HMISoftKeyboard &&
           window.HMISoftKeyboard.isOpen()
         ) return;
+        if (!hasTrustedData) {
+          $("#targetInput").value = "";
+          $("#toolInput").value = "";
+          $("#inspectInput").value = "";
+          settingsDirty = false;
+          return;
+        }
         $("#targetInput").value = state.target;
         $("#toolInput").value = state.toolLimit;
         $("#inspectInput").value = state.inspectInterval;
         settingsDirty = false;
       }
 
-      function applyServerState(nextState, options = {}) {
+      function isCompleteServerState(nextState) {
         if (!nextState || typeof nextState !== "object") return false;
+        if (!serverStateFields.every(key => Object.prototype.hasOwnProperty.call(nextState, key))) {
+          return false;
+        }
+        const updatedAt = new Date(nextState.updatedAt);
+        return Number(nextState.revision) > 0 &&
+          !Number.isNaN(updatedAt.getTime()) &&
+          Array.isArray(nextState.bins) &&
+          Array.isArray(nextState.alarms) &&
+          Array.isArray(nextState.history);
+      }
+
+      function applyServerState(nextState, options = {}) {
+        if (!isCompleteServerState(nextState)) return false;
         const incomingRevision = Number(nextState.revision) || 0;
         if (incomingRevision && state.revision && incomingRevision < state.revision) return false;
 
@@ -4237,21 +4296,40 @@
         if (!Array.isArray(state.bins)) state.bins = [];
         if (!Array.isArray(state.alarms)) state.alarms = [];
         if (!Array.isArray(state.history)) state.history = [];
+        hasTrustedData = true;
 
         renderAll();
         syncSettingsInputs(Boolean(options.forceSettings));
-        if (nextState.updatedAt) {
-          const updatedAt = new Date(nextState.updatedAt);
-          if (!Number.isNaN(updatedAt.getTime())) {
-            $("#dataFreshness").textContent = `数据刷新：${formatClockTime(updatedAt)}`;
-          }
-        }
+        updateFreshnessDisplay();
         return true;
       }
 
       function backendErrorMessage(error) {
         if (!error) return "后台请求失败";
-        if (error.status === 409) return "数据已被其他操作更新，已重新读取最新状态";
+        switch (error.code) {
+          case "revision_conflict":
+            return "数据已被其他操作更新，已重新读取最新状态";
+          case "safety_interlock":
+            return "安全联锁拒绝操作，请检查急停和安全门";
+          case "idempotency_conflict":
+            return "命令标识冲突，操作未重新发送";
+          case "alarm_not_found":
+            return "报警不存在或已被处理";
+          case "device_unavailable":
+            return "设备连接不可用，控制操作已停用";
+          case "bad_quality":
+            return "设备数据质量不可用，控制操作已停用";
+          case "data_stale":
+            return "设备数据已过期，控制操作已停用";
+          case "command_outcome_unknown":
+          case "timeout":
+          case "unknown":
+            return "命令结果未知，禁止自动重试；请先核对设备状态";
+          case "source_mismatch":
+            return "Agent 数据源已改变，控制操作已停用";
+          default:
+            break;
+        }
         if (error.status === 401) return "登录状态已失效，请重新登录";
         if (error.status === 403) return "当前操作员无权执行此操作";
         return error.message || "后台请求失败";
@@ -4267,9 +4345,11 @@
         backendReadInFlight = true;
         try {
           const payload = await backend.getState();
+          if (!applyServerState(payload.state, { forceSettings: Boolean(options.forceSettings) })) {
+            throw new backend.APIError("后台状态不完整，未采用本次数据", 502, "invalid_state");
+          }
           const recovered = !backendConnected;
           setBackendConnected(true, Boolean(options.announceRecovery && recovered));
-          applyServerState(payload.state, { forceSettings: Boolean(options.forceSettings) });
           return true;
         } catch (error) {
           setBackendConnected(false, !options.initial);
@@ -4305,24 +4385,42 @@
         let successPayload = null;
         try {
           successPayload = await factory();
+          if (!applyServerState(successPayload.state, { forceSettings: Boolean(options.settingsSaved) })) {
+            throw new backend.APIError("后台状态不完整，未采用本次数据", 502, "invalid_state");
+          }
           setBackendConnected(true);
           if (options.settingsSaved) settingsDirty = false;
-          applyServerState(successPayload.state, { forceSettings: Boolean(options.settingsSaved) });
         } catch (error) {
           mutationError = error;
-          if (error && error.code === "network_error") setBackendConnected(false, true);
+          if (
+            error &&
+            (
+              error.code === "network_error" ||
+              error.code === "timeout" ||
+              error.code === "command_outcome_unknown" ||
+              error.code === "device_unavailable" ||
+              error.code === "bad_quality" ||
+              error.code === "data_stale" ||
+              error.code === "backend_unavailable" ||
+              error.code === "source_mismatch"
+            )
+          ) {
+            setBackendConnected(false, true);
+          }
         } finally {
           backendWriteInFlight = false;
           updateControlAvailability();
         }
 
         if (mutationError) {
-          if (mutationError.status === 409 || mutationError.code === "timeout") {
+          if (mutationError.code === "revision_conflict") {
             await refreshBackendState({ forceSettings: false });
           }
           showToast(
             backendErrorMessage(mutationError),
-            mutationError.code === "timeout" ? "warning" : "danger"
+            mutationError.code === "timeout" || mutationError.code === "command_outcome_unknown"
+              ? "warning"
+              : "danger"
           );
           return false;
         }
@@ -4392,12 +4490,32 @@
       function renderStatus() {
         const lamp = $("#systemLamp");
         const modeToggle = $("#modeToggle");
+        if (!hasTrustedData) {
+          lamp.className = "lamp";
+          $("#systemStatus").textContent = "等待可信数据";
+          $("#modeCn").textContent = "待机";
+          $("#modeEn").textContent = "--";
+          $("#modeState").textContent = "等待数据";
+          modeToggle.classList.remove("is-auto", "is-manual");
+          modeToggle.setAttribute("aria-pressed", "false");
+          modeToggle.setAttribute("aria-label", "等待可信设备数据");
+          $('[data-action="custom"]').textContent = "模式切换";
+          [
+            { action: "single", label: "单件循环" },
+            { action: "frame", label: "单框循环" }
+          ].forEach(item => {
+            const button = $(`[data-action="${item.action}"]`);
+            button.setAttribute("aria-pressed", "false");
+            button.innerHTML = `${item.label}<br>--`;
+          });
+          return;
+        }
         lamp.className = `lamp ${state.running ? "running" : "paused"}`;
         $("#systemStatus").textContent = state.running ? "运行中" : "运行停止";
 
         $("#modeCn").textContent = state.mode === "auto" ? "自动" : "手动";
         $("#modeEn").textContent = state.mode === "auto" ? "Auto" : "Manual";
-        $("#modeState").textContent = state.mode === "auto" ? "远程联机" : "本机操作";
+        $("#modeState").textContent = state.mode === "auto" ? "自动运行" : "本机操作";
         modeToggle.classList.toggle("is-auto", state.mode === "auto");
         modeToggle.classList.toggle("is-manual", state.mode === "manual");
         modeToggle.setAttribute("aria-pressed", String(state.mode === "manual"));
@@ -4421,7 +4539,7 @@
       function renderBins() {
         $$(".bin", $("#binRow")).forEach((element, index) => {
           const bin = state.bins[index] || { type: "empty", label: "无数据" };
-          const type = ["full", "warning", "fault", "empty"].indexOf(bin.type) >= 0
+          const type = ["full", "normal", "warning", "fault", "empty"].indexOf(bin.type) >= 0
             ? bin.type
             : "empty";
           element.className = `bin ${type}`;
@@ -4430,9 +4548,21 @@
       }
 
       function renderMetrics() {
+        if (!hasTrustedData) {
+          [
+            "#homeCycle", "#homeOutput", "#homePassRate", "#dataTarget", "#dataCycle",
+            "#dataOutput", "#dataOee", "#dataInspected", "#dataPassed", "#dataNg",
+            "#dataPending", "#dataBlank", "#dataFinished"
+          ].forEach(selector => {
+            $(selector).textContent = "--";
+          });
+          $("#progressText").textContent = "目标完成度 --";
+          $("#progressFill").style.width = "0%";
+          return;
+        }
         const passRate = state.inspected > 0
-          ? Math.round((state.passed / state.inspected) * 100)
-          : 100;
+          ? Math.max(0, Math.min(100, Math.round((state.passed / state.inspected) * 100)))
+          : 0;
         const progress = Math.min(100, Math.round((state.output / Math.max(1, state.target)) * 100));
 
         $("#homeCycle").textContent = state.cycle;
@@ -4455,6 +4585,21 @@
 
       function renderEvents() {
         const homeList = $("#homeEvents");
+        if (!hasTrustedData) {
+          homeList.innerHTML = `
+            <li class="event-line info">
+              <span class="dot" aria-hidden="true"></span>
+              <span>暂无可信报警数据</span>
+            </li>
+          `;
+          $("#alarmEvents").innerHTML = `
+            <li class="log-line info">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="log-copy">暂无可信报警数据</span>
+            </li>
+          `;
+          return;
+        }
         const homeItems = state.alarms.filter(item => !item.acknowledged).slice(0, 3);
         homeList.innerHTML = homeItems.map(item => `
           <li class="event-line ${safeEventLevel(item.level)}">
@@ -4478,6 +4623,15 @@
       }
 
       function renderHistory() {
+        if (!hasTrustedData) {
+          $("#historyEvents").innerHTML = `
+            <li class="log-line info">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="log-copy">暂无可信历史数据</span>
+            </li>
+          `;
+          return;
+        }
         $("#historyEvents").innerHTML = state.history.map(item => `
           <li class="log-line ${safeEventLevel(item.level)}">
             <span class="dot" aria-hidden="true"></span>
@@ -4809,7 +4963,10 @@
       applyTheme(readStoredTheme());
       fitStage();
       updateDate();
-      window.setInterval(updateDate, 1000);
+      window.setInterval(() => {
+        updateDate();
+        updateFreshnessDisplay();
+      }, 1000);
       renderAll();
       refreshBackendState({ initial: true, forceSettings: true }).then(() => {
         scheduleBackendRefresh(backendConnected ? 2000 : 5000);

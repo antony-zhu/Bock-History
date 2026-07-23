@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -274,6 +275,22 @@ func TestInvalidBasePath(t *testing.T) {
 	}
 	if _, err := newHandlerWithController(controller, "/bad/../path"); err == nil {
 		t.Fatal("expected invalid base path error")
+	}
+}
+
+func TestHMIStatePublicFieldsRemainAtBaseline(t *testing.T) {
+	typeOfState := reflect.TypeOf(HMIState{})
+	got := make([]string, 0, typeOfState.NumField())
+	for index := 0; index < typeOfState.NumField(); index++ {
+		got = append(got, typeOfState.Field(index).Tag.Get("json"))
+	}
+	want := []string{
+		"revision", "updatedAt", "running", "mode", "singlePaused", "framePaused",
+		"target", "output", "cycle", "oee", "inspected", "passed", "ng", "pending",
+		"blank", "finished", "toolLimit", "inspectInterval", "bins", "alarms", "history",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("HMIState public JSON fields changed: got %v, want %v", got, want)
 	}
 }
 

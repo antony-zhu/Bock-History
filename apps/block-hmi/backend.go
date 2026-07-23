@@ -18,10 +18,23 @@ const (
 )
 
 var (
-	errRevisionConflict = errors.New("state revision conflict")
-	errAlarmNotFound    = errors.New("alarm not found")
-	errUnknownCommand   = errors.New("unknown device command")
+	errRevisionConflict    = errors.New("state revision conflict")
+	errAlarmNotFound       = errors.New("alarm not found")
+	errUnknownCommand      = errors.New("unknown device command")
+	errIdempotencyConflict = errors.New("idempotency key conflict")
+	errSafetyInterlock     = errors.New("safety interlock rejected command")
+	errDeviceUnavailable   = errors.New("device unavailable")
+	errBadQuality          = errors.New("device data quality unavailable")
+	errDataStale           = errors.New("device data stale")
+	errCommandFailed       = errors.New("device command failed")
+	errOutcomeUnknown      = errors.New("device command outcome unknown")
+	errSourceMismatch      = errors.New("Agent data source changed")
 )
+
+type SourceInfo struct {
+	Kind       string
+	Simulation bool
+}
 
 type Parameters struct {
 	Target          int `json:"target"`
@@ -78,6 +91,7 @@ type HMIState struct {
 type MutationMeta struct {
 	Operator  string
 	RequestID string
+	CommandID string
 }
 
 type DeviceCommand struct {

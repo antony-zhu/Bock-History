@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,9 +115,13 @@ func (a *apiServer) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	meta, ok := mutationMeta(w, r, operator)
+	if !ok {
+		return
+	}
 	state, message, err := a.controller.UpdateSettings(r.Context(), Parameters{
 		Target: *request.Target, ToolLimit: *request.ToolLimit, InspectInterval: *request.InspectInterval,
-	}, mutationMeta(r, operator), expected)
+	}, meta, expected)
 	if err != nil {
 		writeControllerError(w, err)
 		return
@@ -145,9 +151,13 @@ func (a *apiServer) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	meta, ok := mutationMeta(w, r, operator)
+	if !ok {
+		return
+	}
 	state, message, err := a.controller.ExecuteCommand(r.Context(), DeviceCommand{
 		Name: request.Command, Mode: request.Mode, Paused: request.Paused,
-	}, mutationMeta(r, operator), expected)
+	}, meta, expected)
 	if err != nil {
 		writeControllerError(w, err)
 		return
@@ -183,7 +193,11 @@ func (a *apiServer) handleAlarmAcknowledgement(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	state, message, err := a.controller.AcknowledgeAlarm(r.Context(), alarmID, mutationMeta(r, operator), expected)
+	meta, ok := mutationMeta(w, r, operator)
+	if !ok {
+		return
+	}
+	state, message, err := a.controller.AcknowledgeAlarm(r.Context(), alarmID, meta, expected)
 	if err != nil {
 		writeControllerError(w, err)
 		return
@@ -288,12 +302,34 @@ func mutationOperator(w http.ResponseWriter, r *http.Request, bodyValue string) 
 	return operator, true
 }
 
-func mutationMeta(r *http.Request, operator string) MutationMeta {
+func mutationMeta(w http.ResponseWriter, r *http.Request, operator string) (MutationMeta, bool) {
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	if len(requestID) > 128 {
 		requestID = requestID[:128]
 	}
-	return MutationMeta{Operator: operator, RequestID: requestID}
+	commandID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if commandID == "" {
+		commandID = requestID
+	}
+	if commandID == "" {
+		value := make([]byte, 16)
+		if _, err := rand.Read(value); err != nil {
+			writeAPIError(w, http.StatusServiceUnavailable, "backend_unavailable", "无法生成命令标识", nil)
+			return MutationMeta{}, false
+		}
+		commandID = "hmi-" + hex.EncodeToString(value)
+	}
+	if len(commandID) > 128 {
+		writeAPIError(w, http.StatusUnprocessableEntity, "validation_error", "Idempotency-Key 不能超过 128 个字符", nil)
+		return MutationMeta{}, false
+	}
+	for _, char := range commandID {
+		if unicode.IsControl(char) {
+			writeAPIError(w, http.StatusUnprocessableEntity, "validation_error", "Idempotency-Key 不能包含控制字符", nil)
+			return MutationMeta{}, false
+		}
+	}
+	return MutationMeta{Operator: operator, RequestID: requestID, CommandID: commandID}, true
 }
 
 func resolveExpectedRevision(w http.ResponseWriter, r *http.Request, bodyValue *uint64) (*uint64, bool) {
@@ -374,6 +410,22 @@ func writeControllerError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusNotFound, "alarm_not_found", "报警不存在", nil)
 	case errors.Is(err, errUnknownCommand):
 		writeAPIError(w, http.StatusUnprocessableEntity, "validation_error", "设备命令不符合要求", nil)
+	case errors.Is(err, errIdempotencyConflict):
+		writeAPIError(w, http.StatusConflict, "idempotency_conflict", "命令标识已用于不同操作", nil)
+	case errors.Is(err, errSafetyInterlock):
+		writeAPIError(w, http.StatusConflict, "safety_interlock", "安全联锁拒绝启动，请检查急停和安全门", nil)
+	case errors.Is(err, errDeviceUnavailable):
+		writeAPIError(w, http.StatusServiceUnavailable, "device_unavailable", "设备连接不可用", nil)
+	case errors.Is(err, errBadQuality):
+		writeAPIError(w, http.StatusServiceUnavailable, "bad_quality", "设备数据质量不可用", nil)
+	case errors.Is(err, errDataStale):
+		writeAPIError(w, http.StatusServiceUnavailable, "data_stale", "设备数据已过期", nil)
+	case errors.Is(err, errCommandFailed):
+		writeAPIError(w, http.StatusBadGateway, "command_failed", "设备命令执行失败", nil)
+	case errors.Is(err, errOutcomeUnknown):
+		writeAPIError(w, http.StatusGatewayTimeout, "command_outcome_unknown", "命令结果未知，禁止自动重试", nil)
+	case errors.Is(err, errSourceMismatch):
+		writeAPIError(w, http.StatusServiceUnavailable, "source_mismatch", "Agent 数据源已改变，HMI 已停止提供业务数据", nil)
 	default:
 		writeAPIError(w, http.StatusServiceUnavailable, "backend_unavailable", "后台暂时不可用，请稍后重试", nil)
 	}

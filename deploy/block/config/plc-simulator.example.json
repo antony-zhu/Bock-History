@@ -1,0 +1,16 @@
+{
+  "ioSocket": "/run/block-plc/io/io.sock",
+  "ioSocketGroup": "block-sim-io",
+  "controlSocket": "/run/block-plc/control/control.sock",
+  "controlSocketGroup": "block-sim-control",
+  "stateFile": "/var/lib/block-plc-sim/state.json",
+  "samplePeriod": "1s",
+  "seed": 20260722,
+  "passRate": 0.98,
+  "faultInjectionEnabled": true,
+  "binCapacities": [120, 120, 30],
+  "initialTarget": 100,
+  "initialCycleSeconds": 30,
+  "initialToolLimit": 100,
+  "initialInspectInterval": 10
+}
