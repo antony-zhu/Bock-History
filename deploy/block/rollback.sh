@@ -97,6 +97,9 @@ restore_managed_directory_states() {
   local extra
   local expected_path
   declare -A seen=()
+  declare -A recorded_owner=()
+  declare -A recorded_group=()
+  declare -A recorded_mode=()
 
   if [[ ! -e "${state_file}" && ! -L "${state_file}" ]]; then
     printf 'NOTICE: legacy transaction has no managed-directory metadata; existing directories will not be relabelled\n'
@@ -113,14 +116,9 @@ restore_managed_directory_states() {
       die "invalid managed-directory metadata in ${state_file}"
     fi
     seen["${path}"]="present"
-    if [[ -e "${path}" || -L "${path}" ]]; then
-      [[ -d "${path}" && ! -L "${path}" ]] ||
-        die "refusing unsafe managed directory during rollback: ${path}"
-      chown --no-dereference -- "${owner}:${group}" "${path}"
-      chmod -- "${mode}" "${path}"
-    else
-      install -d -o "${owner}" -g "${group}" -m "${mode}" "${path}"
-    fi
+    recorded_owner["${path}"]="${owner}"
+    recorded_group["${path}"]="${group}"
+    recorded_mode["${path}"]="${mode}"
   done <"${state_file}"
   for expected_path in \
     "${OPT_ROOT}" \
@@ -131,6 +129,28 @@ restore_managed_directory_states() {
     "${CONFIG_ROOT}/certs"; do
     [[ -n "${seen["${expected_path}"]+present}" ]] ||
       die "transaction is missing managed-directory metadata for ${expected_path}"
+    if [[ -e "${expected_path}" || -L "${expected_path}" ]] &&
+      [[ ! -d "${expected_path}" || -L "${expected_path}" ]]; then
+      die "refusing unsafe managed directory during rollback: ${expected_path}"
+    fi
+  done
+  for expected_path in \
+    "${OPT_ROOT}" \
+    "${RELEASE_ROOT}" \
+    "${STATE_ROOT}" \
+    "${STATE_ROOT}/transactions" \
+    "${CONFIG_ROOT}" \
+    "${CONFIG_ROOT}/certs"; do
+    owner="${recorded_owner["${expected_path}"]}"
+    group="${recorded_group["${expected_path}"]}"
+    mode="${recorded_mode["${expected_path}"]}"
+    if [[ -e "${expected_path}" || -L "${expected_path}" ]]; then
+      chown --no-dereference -- "${owner}:${group}" "${expected_path}"
+      chmod -- "${mode}" "${expected_path}"
+    else
+      install -d -o "${owner}" -g "${group}" -m "${mode}" \
+        "${expected_path}"
+    fi
   done
 }
 

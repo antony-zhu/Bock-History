@@ -191,7 +191,8 @@ sudo usermod -aG block-sim-control <explicit-lab-operator>
 安装事务在修改主机前保存可恢复快照。配置写入、unit 安装、`current`
 切换、服务重启或安装后验证任一步失败，安装器都会停止本次服务并恢复
 旧 unit、配置、证书、受管父目录 UID/GID/mode、链接、事务指针及服务状态。
-恢复文件时不会重新标记已有父目录，并拒绝父目录 symlink。Fresh host 没有旧 release
+目录状态会先完整校验六个受管路径，再统一恢复；恢复文件时不会重新标记已有父目录，
+并拒绝父目录 symlink。Fresh host 没有旧 release
 时也会删除本次写入的受管主机文件和 `current`，同时保留失败事务目录供
 审计；已创建的锁定服务账户和完整、未激活的 release 不自动删除。
 

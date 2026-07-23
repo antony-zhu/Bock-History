@@ -511,6 +511,42 @@ assert_directory_state \
   "${upgrade_transaction}" \
   "${existing_certs}" \
   "${existing_certs_metadata}"
+upgrade_release="$(readlink -f "${existing_root}/opt/block/current")"
+cp -a \
+  "${upgrade_transaction}/directory-state.tsv" \
+  "${upgrade_transaction}/directory-state.valid.tsv"
+sed '$d' \
+  "${upgrade_transaction}/directory-state.valid.tsv" \
+  >"${upgrade_transaction}/directory-state.tsv"
+: >"${existing_root}/install-command-test.log"
+: >"${existing_root}/chmod-command-test.log"
+: >"${existing_root}/chown-command-test.log"
+if env \
+  PATH="${TEST_ROOT}/bin:${PATH}" \
+  BLOCK_RELEASE_ROLE=BLK-REL \
+  BLOCK_DEPLOY_TEST_MODE=true \
+  BLOCK_DEPLOY_TEST_ROOT="${existing_root}" \
+  BLOCK_DEPLOY_TEST_REAL_INSTALL="${REAL_INSTALL}" \
+  BLOCK_DEPLOY_TEST_REAL_CHMOD="${REAL_CHMOD}" \
+  BLOCK_DEPLOY_TEST_REAL_CHOWN="${REAL_CHOWN}" \
+  "${ROOT}/rollback.sh" --execute \
+  >"${TEST_ROOT}/existing-corrupt-directory-state.out" 2>&1; then
+  fail "manual rollback accepted truncated parent-directory metadata"
+fi
+grep -Fq 'transaction is missing managed-directory metadata' \
+  "${TEST_ROOT}/existing-corrupt-directory-state.out" ||
+  fail "manual rollback did not reject truncated parent-directory metadata"
+[[ ! -s "${existing_root}/chmod-command-test.log" &&
+  ! -s "${existing_root}/chown-command-test.log" ]] ||
+  fail "manual rollback partially applied invalid parent-directory metadata"
+[[ "$(readlink -f "${existing_root}/opt/block/current")" == "${upgrade_release}" ]] ||
+  fail "invalid parent-directory metadata changed current release"
+[[ "$(directory_metadata "${existing_certs}")" == "${existing_certs_metadata}" ]] ||
+  fail "invalid parent-directory metadata changed certificate-directory metadata"
+rm -f -- "${upgrade_transaction}/directory-state.tsv"
+mv -- \
+  "${upgrade_transaction}/directory-state.valid.tsv" \
+  "${upgrade_transaction}/directory-state.tsv"
 : >"${existing_root}/install-command-test.log"
 : >"${existing_root}/chmod-command-test.log"
 : >"${existing_root}/chown-command-test.log"
