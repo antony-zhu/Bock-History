@@ -55,13 +55,101 @@ atomic_write_line() {
   mv -fT "${temporary}" "${destination}"
 }
 
+ensure_directory_exists_without_relabel() {
+  local path="$1"
+  local owner="$2"
+  local group="$3"
+  local mode="$4"
+
+  if [[ -e "${path}" || -L "${path}" ]]; then
+    [[ -d "${path}" && ! -L "${path}" ]] ||
+      die "directory path is missing or unsafe: ${path}"
+    return
+  fi
+  install -d -o "${owner}" -g "${group}" -m "${mode}" "${path}"
+}
+
+is_managed_directory_path() {
+  local path="$1"
+
+  case "${path}" in
+    "${OPT_ROOT}"|\
+      "${RELEASE_ROOT}"|\
+      "${STATE_ROOT}"|\
+      "${STATE_ROOT}/transactions"|\
+      "${CONFIG_ROOT}"|\
+      "${CONFIG_ROOT}/certs")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+restore_managed_directory_states() {
+  local transaction="$1"
+  local state_file="${transaction}/directory-state.tsv"
+  local path
+  local owner
+  local group
+  local mode
+  local extra
+  local expected_path
+  declare -A seen=()
+
+  if [[ ! -e "${state_file}" && ! -L "${state_file}" ]]; then
+    printf 'NOTICE: legacy transaction has no managed-directory metadata; existing directories will not be relabelled\n'
+    return
+  fi
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] ||
+    die "transaction managed-directory metadata is unsafe: ${state_file}"
+  while IFS=$'\t' read -r path owner group mode extra; do
+    if [[ -z "${path}" || -n "${extra}" ]] ||
+      ! is_managed_directory_path "${path}" ||
+      [[ ! "${owner}" =~ ^[0-9]+$ || ! "${group}" =~ ^[0-9]+$ ||
+        ! "${mode}" =~ ^[0-7]{3,4}$ ]] ||
+      [[ -n "${seen["${path}"]+present}" ]]; then
+      die "invalid managed-directory metadata in ${state_file}"
+    fi
+    seen["${path}"]="present"
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      [[ -d "${path}" && ! -L "${path}" ]] ||
+        die "refusing unsafe managed directory during rollback: ${path}"
+      chown --no-dereference -- "${owner}:${group}" "${path}"
+      chmod -- "${mode}" "${path}"
+    else
+      install -d -o "${owner}" -g "${group}" -m "${mode}" "${path}"
+    fi
+  done <"${state_file}"
+  for expected_path in \
+    "${OPT_ROOT}" \
+    "${RELEASE_ROOT}" \
+    "${STATE_ROOT}" \
+    "${STATE_ROOT}/transactions" \
+    "${CONFIG_ROOT}" \
+    "${CONFIG_ROOT}/certs"; do
+    [[ -n "${seen["${expected_path}"]+present}" ]] ||
+      die "transaction is missing managed-directory metadata for ${expected_path}"
+  done
+}
+
+require_safe_restore_parent() {
+  local path="$1"
+  local parent
+
+  parent="$(dirname -- "${path}")"
+  [[ -d "${parent}" && ! -L "${parent}" ]] ||
+    die "restore parent is missing or unsafe: ${parent}"
+}
+
 restore_path() {
   local path="$1"
   local tx_dir="$2"
   local backup="${tx_dir}/files/${path#/}"
 
   if [[ -e "${backup}" || -L "${backup}" ]]; then
-    install -d -m 0755 "$(dirname -- "${path}")"
+    require_safe_restore_parent "${path}"
     rm -f -- "${path}"
     cp -a --no-dereference "${backup}" "${path}"
   elif grep -Fqx -- "${path}" "${tx_dir}/missing-files"; then
@@ -137,12 +225,14 @@ esac
   die "there is no recorded installation transaction to roll back"
 [[ -L "${CURRENT_LINK}" ]] || die "${CURRENT_LINK} must be a symlink"
 
-for command_name in awk cp curl date flock grep install ln mv readlink rm sha256sum systemctl; do
+for command_name in \
+  awk chmod chown cp curl date dirname flock grep install ln mv readlink rm \
+  sha256sum systemctl; do
   command -v "${command_name}" >/dev/null 2>&1 ||
     die "required command is missing: ${command_name}"
 done
 
-install -d -m 0755 "${LOCK_ROOT}"
+ensure_directory_exists_without_relabel "${LOCK_ROOT}" root root 0755
 exec 9>"${LOCK_ROOT}/block-release.lock"
 flock -n 9 || die "another Block install or rollback is running"
 
@@ -190,6 +280,7 @@ systemctl stop block-hmi.service >/dev/null 2>&1 || true
 systemctl stop block-agent.service >/dev/null 2>&1 || true
 systemctl stop block-plc-simulator.service >/dev/null 2>&1 || true
 
+restore_managed_directory_states "${tx_dir}"
 for managed_path in \
   "${SYSTEMD_ROOT}/block-agent.service" \
   "${SYSTEMD_ROOT}/block-hmi.service" \

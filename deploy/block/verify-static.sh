@@ -100,6 +100,20 @@ grep -Fq 'BLOCK_RELEASE_ROLE=BLK-REL' "${ROOT}/rollback.sh" ||
   die "rollback lacks BLK-REL guard"
 grep -Fq 'restore_failed_install' "${ROOT}/install.sh" ||
   die "installer lacks failed-install restoration"
+grep -Fq 'capture_managed_directory_states "${tx_dir}"' "${ROOT}/install.sh" ||
+  die "installer does not capture managed parent-directory metadata"
+grep -Fq 'restore_managed_directory_states "${tx_dir}"' "${ROOT}/install.sh" ||
+  die "failed-install recovery does not restore managed parent-directory metadata"
+grep -Fq 'restore_managed_directory_states "${tx_dir}"' "${ROOT}/rollback.sh" ||
+  die "manual rollback does not restore managed parent-directory metadata"
+grep -Fq 'require_safe_restore_parent "${path}"' "${ROOT}/install.sh" ||
+  die "failed-install recovery does not preserve existing restore-parent metadata"
+grep -Fq 'require_safe_restore_parent "${path}"' "${ROOT}/rollback.sh" ||
+  die "manual rollback does not preserve existing restore-parent metadata"
+if grep -Fq 'install -d -m 0755 "$(dirname -- "${path}")"' \
+  "${ROOT}/install.sh" "${ROOT}/rollback.sh"; then
+  die "restore path still relabels existing parent directories to 0755"
+fi
 [[ "$(grep -Fc 'wait_for_agent_ready' "${ROOT}/install.sh")" -ge 3 ]] ||
   die "installer does not gate HMI startup on Agent readiness in both convergence paths"
 grep -Fq 'refusing to start HMI' "${ROOT}/install.sh" ||

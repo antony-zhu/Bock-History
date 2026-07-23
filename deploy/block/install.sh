@@ -218,6 +218,127 @@ backup_file() {
   fi
 }
 
+ensure_directory_exists_without_relabel() {
+  local path="$1"
+  local owner="$2"
+  local group="$3"
+  local mode="$4"
+
+  if [[ -e "${path}" || -L "${path}" ]]; then
+    [[ -d "${path}" && ! -L "${path}" ]] ||
+      die "directory path is missing or unsafe: ${path}"
+    return
+  fi
+  install -d -o "${owner}" -g "${group}" -m "${mode}" "${path}"
+}
+
+is_managed_directory_path() {
+  local path="$1"
+
+  case "${path}" in
+    "${OPT_ROOT}"|\
+      "${RELEASE_ROOT}"|\
+      "${STATE_ROOT}"|\
+      "${STATE_ROOT}/transactions"|\
+      "${CONFIG_ROOT}"|\
+      "${CONFIG_ROOT}/certs")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+capture_managed_directory_states() {
+  local transaction="$1"
+  local state_file="${transaction}/directory-state.tsv"
+  local path
+
+  : >"${state_file}"
+  for path in \
+    "${OPT_ROOT}" \
+    "${RELEASE_ROOT}" \
+    "${STATE_ROOT}" \
+    "${STATE_ROOT}/transactions" \
+    "${CONFIG_ROOT}" \
+    "${CONFIG_ROOT}/certs"; do
+    [[ -d "${path}" && ! -L "${path}" ]] ||
+      die "managed directory is missing or unsafe: ${path}"
+    printf '%s\t%s\t%s\t%s\n' \
+      "${path}" \
+      "$(stat -c '%u' "${path}")" \
+      "$(stat -c '%g' "${path}")" \
+      "$(stat -c '%a' "${path}")" \
+      >>"${state_file}"
+  done
+  chmod 0600 "${state_file}"
+}
+
+restore_managed_directory_states() {
+  local transaction="$1"
+  local state_file="${transaction}/directory-state.tsv"
+  local path
+  local owner
+  local group
+  local mode
+  local extra
+  local expected_path
+  declare -A seen=()
+
+  [[ -f "${state_file}" && ! -L "${state_file}" ]] || {
+    printf 'ERROR: transaction lacks safe managed-directory metadata: %s\n' \
+      "${state_file}" >&2
+    return 1
+  }
+  while IFS=$'\t' read -r path owner group mode extra; do
+    if [[ -z "${path}" || -n "${extra}" ]] ||
+      ! is_managed_directory_path "${path}" ||
+      [[ ! "${owner}" =~ ^[0-9]+$ || ! "${group}" =~ ^[0-9]+$ ||
+        ! "${mode}" =~ ^[0-7]{3,4}$ ]] ||
+      [[ -n "${seen["${path}"]+present}" ]]; then
+      printf 'ERROR: invalid managed-directory metadata in %s\n' "${state_file}" >&2
+      return 1
+    fi
+    seen["${path}"]="present"
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      if [[ ! -d "${path}" || -L "${path}" ]]; then
+        printf 'ERROR: refusing unsafe managed directory during recovery: %s\n' \
+          "${path}" >&2
+        return 1
+      fi
+      chown --no-dereference -- "${owner}:${group}" "${path}" || return 1
+      chmod -- "${mode}" "${path}" || return 1
+    else
+      install -d -o "${owner}" -g "${group}" -m "${mode}" "${path}" || return 1
+    fi
+  done <"${state_file}"
+  for expected_path in \
+    "${OPT_ROOT}" \
+    "${RELEASE_ROOT}" \
+    "${STATE_ROOT}" \
+    "${STATE_ROOT}/transactions" \
+    "${CONFIG_ROOT}" \
+    "${CONFIG_ROOT}/certs"; do
+    if [[ -z "${seen["${expected_path}"]+present}" ]]; then
+      printf 'ERROR: transaction is missing managed-directory metadata for %s\n' \
+        "${expected_path}" >&2
+      return 1
+    fi
+  done
+}
+
+require_safe_restore_parent() {
+  local path="$1"
+  local parent
+
+  parent="$(dirname -- "${path}")"
+  [[ -d "${parent}" && ! -L "${parent}" ]] || {
+    printf 'ERROR: restore parent is missing or unsafe: %s\n' "${parent}" >&2
+    return 1
+  }
+}
+
 capture_unit_state() {
   local unit="$1"
   local tx_dir="$2"
@@ -248,7 +369,7 @@ restore_path_from_transaction() {
   local backup="${transaction}/files/${path#/}"
 
   if [[ -e "${backup}" || -L "${backup}" ]]; then
-    install -d -m 0755 "$(dirname -- "${path}")"
+    require_safe_restore_parent "${path}" || return 1
     rm -f -- "${path}"
     cp -a --no-dereference "${backup}" "${path}"
   elif grep -Fqx -- "${path}" "${transaction}/missing-files"; then
@@ -301,6 +422,8 @@ restore_failed_install() {
   systemctl stop block-agent.service >/dev/null 2>&1 || true
   systemctl stop block-plc-simulator.service >/dev/null 2>&1 || true
 
+  restore_managed_directory_states "${tx_dir}" ||
+    restore_failed="true"
   for managed_path in \
     "${SYSTEMD_ROOT}/block-agent.service" \
     "${SYSTEMD_ROOT}/block-hmi.service" \
@@ -511,8 +634,8 @@ case "${hmi_url}" in
 esac
 
 for command_name in \
-  awk basename cat cmp cp curl cut date flock getent grep install ln mv openssl \
-  python3 readlink rm sha256sum sleep stat systemctl; do
+  awk basename cat chmod chown cmp cp curl cut date dirname flock getent grep \
+  install ln mv openssl python3 readlink rm sha256sum sleep stat systemctl; do
   require_command "${command_name}"
 done
 
@@ -573,7 +696,7 @@ if [[ "${profile}" == "lab" ]]; then
   simulator_config_hash="$(sha256sum "${simulator_config}" | awk '{print $1}')"
 fi
 
-install -d -m 0755 "${LOCK_ROOT}"
+ensure_directory_exists_without_relabel "${LOCK_ROOT}" root root 0755
 exec 9>"${LOCK_ROOT}/block-release.lock"
 flock -n 9 || die "another Block install or rollback is running"
 
@@ -581,13 +704,14 @@ if [[ "${TEST_MODE}" != "true" ]]; then
   "${SCRIPT_DIR}/install-users.sh"
 fi
 
-for protected_path in "${OPT_ROOT}" "${RELEASE_ROOT}" "${STATE_ROOT}" "${CONFIG_ROOT}" "${CONFIG_ROOT}/certs"; do
-  [[ ! -L "${protected_path}" ]] || die "protected path must not be a symlink: ${protected_path}"
-done
-install -d -o root -g root -m 0755 "${OPT_ROOT}" "${RELEASE_ROOT}"
-install -d -o root -g root -m 0700 "${STATE_ROOT}" "${STATE_ROOT}/transactions"
-install -d -o root -g root -m 0755 "${CONFIG_ROOT}"
-install -d -o root -g "${HMI_FILE_GROUP}" -m 0750 "${CONFIG_ROOT}/certs"
+ensure_directory_exists_without_relabel "${OPT_ROOT}" root root 0755
+ensure_directory_exists_without_relabel "${RELEASE_ROOT}" root root 0755
+ensure_directory_exists_without_relabel "${STATE_ROOT}" root root 0700
+ensure_directory_exists_without_relabel "${STATE_ROOT}/transactions" root root 0700
+ensure_directory_exists_without_relabel "${CONFIG_ROOT}" root root 0755
+ensure_directory_exists_without_relabel \
+  "${CONFIG_ROOT}/certs" root "${HMI_FILE_GROUP}" 0750
+maybe_failpoint "after-directory-preflight"
 
 release_reused="false"
 if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
@@ -714,6 +838,23 @@ if [[ "${same_current}" == "true" ]] &&
     metadata_matches_expected "${SYSTEMD_ROOT}/${unit_name}" "root:root:644" ||
       host_matches_desired="false"
   done
+  for metadata_spec in \
+    "${OPT_ROOT}:root:root:755" \
+    "${RELEASE_ROOT}:root:root:755" \
+    "${STATE_ROOT}:root:root:700" \
+    "${STATE_ROOT}/transactions:root:root:700" \
+    "${CONFIG_ROOT}:root:root:755" \
+    "${CONFIG_ROOT}/certs:root:${HMI_FILE_GROUP}:750"; do
+    metadata_path="${metadata_spec%%:*}"
+    metadata_expected="${metadata_spec#*:}"
+    if [[ "${TEST_MODE}" == "true" &&
+      "${BLOCK_DEPLOY_TEST_SKIP_METADATA:-false}" == "true" ]]; then
+      [[ -d "${metadata_path}" && ! -L "${metadata_path}" ]] ||
+        host_matches_desired="false"
+    elif [[ "$(stat -c '%U:%G:%a' "${metadata_path}" 2>/dev/null || true)" != "${metadata_expected}" ]]; then
+      host_matches_desired="false"
+    fi
+  done
 fi
 
 if [[ "${host_matches_desired}" == "true" ]]; then
@@ -752,6 +893,7 @@ staging_dir="${RELEASE_ROOT}/.${version}.staging.$$"
 install -d -o root -g root -m 0700 "${tx_dir}"
 : >"${tx_dir}/missing-files"
 : >"${tx_dir}/unit-state.tsv"
+capture_managed_directory_states "${tx_dir}"
 
 if [[ -L "${CURRENT_LINK}" ]]; then
   previous_current="$(readlink -f "${CURRENT_LINK}")"
@@ -795,6 +937,11 @@ for unit_name in \
   capture_unit_state "${unit_name}" "${tx_dir}"
 done
 transaction_armed="true"
+
+install -d -o root -g root -m 0755 "${OPT_ROOT}" "${RELEASE_ROOT}"
+install -d -o root -g root -m 0700 "${STATE_ROOT}" "${STATE_ROOT}/transactions"
+install -d -o root -g root -m 0755 "${CONFIG_ROOT}"
+install -d -o root -g "${HMI_FILE_GROUP}" -m 0750 "${CONFIG_ROOT}/certs"
 
 if [[ "${release_reused}" == "false" ]]; then
   install -d -o root -g root -m 0755 \

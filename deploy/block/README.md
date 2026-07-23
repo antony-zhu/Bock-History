@@ -79,7 +79,7 @@ Agent 查询的 `SourceInfo` 决定；部署环境变量不得伪造或覆盖数
 /var/lib/block-release/transactions/<transaction>/
 ```
 
-`current` 用临时符号链接加 `mv -T` 原子切换。`manifest.txt` 记录版本、profile、Git/Common 基线、UTC 时间、上一版本、二进制 SHA-256、非秘密 Agent/Simulator 配置 SHA-256 和 HMI 证书指纹；不记录私钥。同一 release 的配置哈希不可变。每次变更前会记录旧 `current`、unit、非秘密配置、证书文件以及服务启用/活动状态。
+`current` 用临时符号链接加 `mv -T` 原子切换。`manifest.txt` 记录版本、profile、Git/Common 基线、UTC 时间、上一版本、二进制 SHA-256、非秘密 Agent/Simulator 配置 SHA-256 和 HMI 证书指纹；不记录私钥。同一 release 的配置哈希不可变。每次变更前会记录旧 `current`、unit、非秘密配置、证书文件、受管父目录的数值 UID/GID/mode，以及服务启用/活动状态。
 
 SQLite、Simulator 状态、日志、证书私钥和现场配置都不放进发布目录或 Git。Agent SQLite 位于 `/var/lib/block-agent/block.db`，回滚不会删除或移动它。
 
@@ -127,7 +127,7 @@ test -x tests/deploy-regression.sh
 ./verify-static.sh
 ```
 
-该脚本执行所有 shell 的 `bash -n`、三个 JSON 样例解析，并检查 socket 路径、用户组矩阵、HMI `8s` 超时、TLS curl、生产/实验开关及 systemd 静态网络门禁。它还在工作区 `.cache` 沙箱内执行安装失败、fresh-host 清理、配置哈希不可变、证书/CA 私钥拒绝以及错误回滚事务拒绝的反例测试。release 会同时保存 `verify-static.sh` 所依赖的 `config/` 样例和 `tests/deploy-regression.sh`，回归测试会从打包后的 release 再执行一次静态入口，避免只复制入口脚本而遗漏依赖。
+该脚本执行所有 shell 的 `bash -n`、三个 JSON 样例解析，并检查 socket 路径、用户组矩阵、HMI `8s` 超时、TLS curl、生产/实验开关及 systemd 静态网络门禁。它还在工作区 `.cache` 沙箱内执行安装失败、父目录权限恢复、人工回滚、fresh-host 清理、配置哈希不可变、证书/CA 私钥拒绝以及错误回滚事务拒绝的反例测试。release 会同时保存 `verify-static.sh` 所依赖的 `config/` 样例和 `tests/deploy-regression.sh`，回归测试会从打包后的 release 再执行一次静态入口，避免只复制入口脚本而遗漏依赖。
 
 ### 3. 生产安装
 
@@ -190,7 +190,8 @@ sudo usermod -aG block-sim-control <explicit-lab-operator>
 
 安装事务在修改主机前保存可恢复快照。配置写入、unit 安装、`current`
 切换、服务重启或安装后验证任一步失败，安装器都会停止本次服务并恢复
-旧 unit、配置、证书、链接、事务指针及服务状态。Fresh host 没有旧 release
+旧 unit、配置、证书、受管父目录 UID/GID/mode、链接、事务指针及服务状态。
+恢复文件时不会重新标记已有父目录，并拒绝父目录 symlink。Fresh host 没有旧 release
 时也会删除本次写入的受管主机文件和 `current`，同时保留失败事务目录供
 审计；已创建的锁定服务账户和完整、未激活的 release 不自动删除。
 
@@ -272,7 +273,7 @@ sudo env BLOCK_RELEASE_ROLE=BLK-REL \
 
 1. 取得发布锁并验证事务路径；
 2. 停止 HMI、Agent、Simulator；
-3. 恢复上一份 unit、非秘密配置和 release profile 记录；
+3. 恢复上一份 unit、非秘密配置、已记录的受管父目录元数据和 release profile 记录；
 4. 原子切回上一 `current`；
 5. `daemon-reload`，恢复原 enable/active 状态；
 6. 若上一 Agent/HMI 原本 active，则执行受信 TLS 和 UDS 健康检查；

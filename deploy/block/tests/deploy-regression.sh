@@ -3,6 +3,9 @@ set -euo pipefail
 
 readonly ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly CACHE_ROOT="${BLOCK_DMP_CACHE_ROOT:-/mnt/d/codex/Block-DMP/.cache}"
+readonly REAL_INSTALL="$(command -v install)"
+readonly REAL_CHMOD="$(command -v chmod)"
+readonly REAL_CHOWN="$(command -v chown)"
 
 case "${CACHE_ROOT}" in
   /mnt/d/codex/Block-DMP/.cache|/mnt/d/codex/Block-DMP/.cache/*) ;;
@@ -62,6 +65,70 @@ assert_event_order() {
       fail "deployment event '${event}' occurred out of order in ${log_path}"
     previous="${line}"
   done
+}
+
+directory_metadata() {
+  stat -c '%u:%g:%a' "$1"
+}
+
+assert_directory_state() {
+  local transaction="$1"
+  local path="$2"
+  local metadata="$3"
+  local owner="${metadata%%:*}"
+  local remainder="${metadata#*:}"
+  local group="${remainder%%:*}"
+  local mode="${remainder#*:}"
+
+  grep -Fqx -- "${path}"$'\t'"${owner}"$'\t'"${group}"$'\t'"${mode}" \
+    "${transaction}/directory-state.tsv" ||
+    fail "transaction did not capture directory metadata for ${path}"
+}
+
+directory_install_count() {
+  local log_path="$1"
+  local wanted="$2"
+
+  if [[ ! -f "${log_path}" ]]; then
+    printf '0\n'
+    return
+  fi
+  awk -F'\t' -v wanted="${wanted}" '
+    {
+      is_directory = 0
+      has_target = 0
+      for (field = 1; field <= NF; field++) {
+        if ($field == "-d") {
+          is_directory = 1
+        }
+        if ($field == wanted) {
+          has_target = 1
+        }
+      }
+      if (is_directory && has_target) {
+        count++
+      }
+    }
+    END { print count + 0 }
+  ' "${log_path}"
+}
+
+assert_directory_restore_commands() {
+  local host_root="$1"
+  local path="$2"
+  local metadata="$3"
+  local owner="${metadata%%:*}"
+  local remainder="${metadata#*:}"
+  local group="${remainder%%:*}"
+  local mode="${remainder#*:}"
+
+  grep -Fqx -- \
+    "--no-dereference"$'\t'"--"$'\t'"${owner}:${group}"$'\t'"${path}" \
+    "${host_root}/chown-command-test.log" ||
+    fail "restore did not reapply owner ${owner}:${group} to ${path}"
+  grep -Fqx -- "--"$'\t'"${mode}"$'\t'"${path}" \
+    "${host_root}/chmod-command-test.log" ||
+    fail "restore did not reapply mode ${mode} to ${path}"
 }
 
 make_systemctl_stub() {
@@ -181,6 +248,54 @@ EOF
   chmod 0755 "${directory}/curl"
 }
 
+make_filesystem_command_stubs() {
+  local directory="$1"
+
+  cat >"${directory}/install" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="${BLOCK_DEPLOY_TEST_ROOT:?}"
+real_install="${BLOCK_DEPLOY_TEST_REAL_INSTALL:?}"
+separator=""
+for argument in "$@"; do
+  printf '%s%s' "${separator}" "${argument}" >>"${root}/install-command-test.log"
+  separator=$'\t'
+done
+printf '\n' >>"${root}/install-command-test.log"
+exec "${real_install}" "$@"
+EOF
+  cat >"${directory}/chmod" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="${BLOCK_DEPLOY_TEST_ROOT:?}"
+real_command="${BLOCK_DEPLOY_TEST_REAL_CHMOD:?}"
+separator=""
+for argument in "$@"; do
+  printf '%s%s' "${separator}" "${argument}" >>"${root}/chmod-command-test.log"
+  separator=$'\t'
+done
+printf '\n' >>"${root}/chmod-command-test.log"
+exec "${real_command}" "$@"
+EOF
+  cat >"${directory}/chown" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="${BLOCK_DEPLOY_TEST_ROOT:?}"
+real_command="${BLOCK_DEPLOY_TEST_REAL_CHOWN:?}"
+separator=""
+for argument in "$@"; do
+  printf '%s%s' "${separator}" "${argument}" >>"${root}/chown-command-test.log"
+  separator=$'\t'
+done
+printf '\n' >>"${root}/chown-command-test.log"
+exec "${real_command}" "$@"
+EOF
+  chmod 0755 "${directory}/install" "${directory}/chmod" "${directory}/chown"
+}
+
 make_certificate_fixture() {
   local directory="$1"
 
@@ -234,6 +349,9 @@ run_install() {
     BLOCK_RELEASE_ROLE=BLK-REL \
     BLOCK_DEPLOY_TEST_MODE=true \
     BLOCK_DEPLOY_TEST_ROOT="${host_root}" \
+    BLOCK_DEPLOY_TEST_REAL_INSTALL="${REAL_INSTALL}" \
+    BLOCK_DEPLOY_TEST_REAL_CHMOD="${REAL_CHMOD}" \
+    BLOCK_DEPLOY_TEST_REAL_CHOWN="${REAL_CHOWN}" \
     "$@" \
     "${ROOT}/install.sh" \
     --execute \
@@ -258,6 +376,9 @@ run_lab_install() {
     BLOCK_RELEASE_ROLE=BLK-REL \
     BLOCK_DEPLOY_TEST_MODE=true \
     BLOCK_DEPLOY_TEST_ROOT="${host_root}" \
+    BLOCK_DEPLOY_TEST_REAL_INSTALL="${REAL_INSTALL}" \
+    BLOCK_DEPLOY_TEST_REAL_CHMOD="${REAL_CHMOD}" \
+    BLOCK_DEPLOY_TEST_REAL_CHOWN="${REAL_CHOWN}" \
     "$@" \
     "${ROOT}/install.sh" \
     --execute \
@@ -276,16 +397,43 @@ run_lab_install() {
 make_systemctl_stub "${TEST_ROOT}/bin"
 make_curl_stub "${TEST_ROOT}/bin"
 make_inputs "${TEST_ROOT}/inputs"
+make_filesystem_command_stubs "${TEST_ROOT}/bin"
+
+# A failure after directory preflight but before the transaction is armed must
+# not relabel an existing protected certificate directory.
+prearm_root="${TEST_ROOT}/prearm-host"
+install -d -m 0755 "${prearm_root}/etc/systemd/system"
+install -d -o root -g root -m 0750 "${prearm_root}/etc/block/certs"
+prearm_certs="${prearm_root}/etc/block/certs"
+prearm_certs_metadata="$(directory_metadata "${prearm_certs}")"
+if run_install \
+  "${prearm_root}" \
+  "${TEST_ROOT}/inputs" \
+  BLOCK_DEPLOY_TEST_FAILPOINT=after-directory-preflight \
+  >"${TEST_ROOT}/prearm.out" 2>&1; then
+  fail "pre-transaction failpoint unexpectedly succeeded"
+fi
+grep -Fq 'injected deployment failure at after-directory-preflight' \
+  "${TEST_ROOT}/prearm.out" ||
+  fail "pre-transaction test did not reach the directory preflight failpoint"
+[[ "$(directory_metadata "${prearm_certs}")" == "${prearm_certs_metadata}" ]] ||
+  fail "directory preflight changed existing certificate-directory metadata"
+[[ "$(directory_install_count \
+  "${prearm_root}/install-command-test.log" "${prearm_certs}")" == "0" ]] ||
+  fail "directory preflight relabelled the existing certificate directory"
 
 # Existing installation: an injected failure after switching current must restore
-# every managed file, certificate, marker and the previous current symlink.
+# every managed file, certificate, parent-directory metadata, marker and the
+# previous current symlink.
 existing_root="${TEST_ROOT}/existing-host"
 old_release="${existing_root}/opt/block/releases/1.0.0"
 install -d -m 0755 \
   "${old_release}" \
   "${existing_root}/etc/systemd/system" \
-  "${existing_root}/etc/block/certs" \
   "${existing_root}/var/lib/block-release"
+install -d -o root -g root -m 0750 "${existing_root}/etc/block/certs"
+existing_certs="${existing_root}/etc/block/certs"
+existing_certs_metadata="$(directory_metadata "${existing_certs}")"
 printf 'old release\n' >"${old_release}/manifest.txt"
 ln -s "${old_release}" "${existing_root}/opt/block/current"
 printf 'production\n' >"${existing_root}/var/lib/block-release/current-profile"
@@ -318,8 +466,77 @@ assert_file_equals "legacy-profile" "${existing_root}/etc/block/block-profile.en
 assert_file_equals "old-cert" "${existing_root}/etc/block/certs/block-hmi.crt"
 assert_file_equals "old-key" "${existing_root}/etc/block/certs/block-hmi.key"
 assert_file_equals "old-ca" "${existing_root}/etc/block/certs/ca.crt"
+[[ "$(directory_metadata "${existing_certs}")" == "${existing_certs_metadata}" ]] ||
+  fail "failed-install recovery changed certificate-directory metadata"
+[[ "$(directory_install_count \
+  "${existing_root}/install-command-test.log" "${existing_certs}")" == "1" ]] ||
+  fail "failed-install recovery relabelled the certificate parent directory"
+grep -Fqx -- \
+  "-d"$'\t'"-o"$'\t'"root"$'\t'"-g"$'\t'"root"$'\t'"-m"$'\t'"0750"$'\t'"${existing_certs}" \
+  "${existing_root}/install-command-test.log" ||
+  fail "installer did not converge the test-equivalent root:root 0750 certificate boundary"
+shopt -s nullglob
+existing_failed_transactions=(
+  "${existing_root}/var/lib/block-release/transactions/"*
+)
+shopt -u nullglob
+[[ "${#existing_failed_transactions[@]}" -eq 1 ]] ||
+  fail "failed install did not retain exactly one transaction"
+assert_directory_state \
+  "${existing_failed_transactions[0]}" \
+  "${existing_certs}" \
+  "${existing_certs_metadata}"
+assert_directory_restore_commands \
+  "${existing_root}" \
+  "${existing_certs}" \
+  "${existing_certs_metadata}"
 [[ ! -e "${existing_root}/var/lib/block-release/current-transaction" ]] ||
   fail "failed existing-host install left a current transaction marker"
+
+# A successful upgrade followed by manual rollback must preserve the same
+# certificate-directory boundary without restoring or relabelling cert files.
+: >"${existing_root}/install-command-test.log"
+: >"${existing_root}/chmod-command-test.log"
+: >"${existing_root}/chown-command-test.log"
+run_install \
+  "${existing_root}" \
+  "${TEST_ROOT}/inputs" \
+  BLOCK_DEPLOY_TEST_SKIP_METADATA=true \
+  BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
+  >"${TEST_ROOT}/existing-success.out" 2>&1
+upgrade_transaction="$(
+  cat "${existing_root}/var/lib/block-release/current-transaction"
+)"
+assert_directory_state \
+  "${upgrade_transaction}" \
+  "${existing_certs}" \
+  "${existing_certs_metadata}"
+: >"${existing_root}/install-command-test.log"
+: >"${existing_root}/chmod-command-test.log"
+: >"${existing_root}/chown-command-test.log"
+env \
+  PATH="${TEST_ROOT}/bin:${PATH}" \
+  BLOCK_RELEASE_ROLE=BLK-REL \
+  BLOCK_DEPLOY_TEST_MODE=true \
+  BLOCK_DEPLOY_TEST_ROOT="${existing_root}" \
+  BLOCK_DEPLOY_TEST_REAL_INSTALL="${REAL_INSTALL}" \
+  BLOCK_DEPLOY_TEST_REAL_CHMOD="${REAL_CHMOD}" \
+  BLOCK_DEPLOY_TEST_REAL_CHOWN="${REAL_CHOWN}" \
+  "${ROOT}/rollback.sh" --execute \
+  >"${TEST_ROOT}/existing-rollback.out" 2>&1
+grep -Fq 'OK: restored' "${TEST_ROOT}/existing-rollback.out" ||
+  fail "manual rollback did not complete"
+[[ "$(readlink -f "${existing_root}/opt/block/current")" == "${old_release}" ]] ||
+  fail "manual rollback did not restore the previous release"
+[[ "$(directory_metadata "${existing_certs}")" == "${existing_certs_metadata}" ]] ||
+  fail "manual rollback changed certificate-directory metadata"
+[[ "$(directory_install_count \
+  "${existing_root}/install-command-test.log" "${existing_certs}")" == "0" ]] ||
+  fail "manual rollback relabelled the certificate parent directory"
+assert_directory_restore_commands \
+  "${existing_root}" \
+  "${existing_certs}" \
+  "${existing_certs_metadata}"
 
 # Fresh installation: the same failure must remove all managed host files and
 # current pointers even though manual rollback intentionally has no predecessor.
@@ -492,6 +709,9 @@ if env \
   BLOCK_RELEASE_ROLE=BLK-REL \
   BLOCK_DEPLOY_TEST_MODE=true \
   BLOCK_DEPLOY_TEST_ROOT="${TEST_ROOT}/private-key-host" \
+  BLOCK_DEPLOY_TEST_REAL_INSTALL="${REAL_INSTALL}" \
+  BLOCK_DEPLOY_TEST_REAL_CHMOD="${REAL_CHMOD}" \
+  BLOCK_DEPLOY_TEST_REAL_CHOWN="${REAL_CHOWN}" \
   "${ROOT}/install.sh" \
   --execute \
   --profile production \
@@ -526,6 +746,9 @@ if env \
   BLOCK_RELEASE_ROLE=BLK-REL \
   BLOCK_DEPLOY_TEST_MODE=true \
   BLOCK_DEPLOY_TEST_ROOT="${rollback_root}" \
+  BLOCK_DEPLOY_TEST_REAL_INSTALL="${REAL_INSTALL}" \
+  BLOCK_DEPLOY_TEST_REAL_CHMOD="${REAL_CHMOD}" \
+  BLOCK_DEPLOY_TEST_REAL_CHOWN="${REAL_CHOWN}" \
   "${ROOT}/rollback.sh" --execute \
   >"${TEST_ROOT}/rollback.out" 2>&1; then
   fail "rollback accepted a transaction not bound to current release"
@@ -535,4 +758,4 @@ grep -Fq 'current transaction is not bound' "${TEST_ROOT}/rollback.out" ||
 [[ "$(readlink -f "${rollback_root}/opt/block/current")" == "${current_release}" ]] ||
   fail "rejected rollback changed current release"
 
-printf 'OK: deploy failure recovery, Agent-before-HMI readiness convergence, release reuse, fresh cleanup, immutable config hashes, private-key rejection, rollback binding and packaged static dependencies\n'
+printf 'OK: deploy failure recovery, parent-directory metadata preservation, manual rollback, Agent-before-HMI readiness convergence, release reuse, fresh cleanup, immutable config hashes, private-key rejection, rollback binding and packaged static dependencies\n'
