@@ -88,6 +88,23 @@ type HMIState struct {
 	History         []HistoryEntry `json:"history"`
 }
 
+// MarshalJSON keeps collection fields stable for browser clients. Go's default
+// encoding turns nil slices into null, but an empty alarm/history/bin set is a
+// valid trusted state and must remain a JSON array.
+func (state HMIState) MarshalJSON() ([]byte, error) {
+	type stateAlias HMIState
+	if state.Bins == nil {
+		state.Bins = []BinState{}
+	}
+	if state.Alarms == nil {
+		state.Alarms = []Alarm{}
+	}
+	if state.History == nil {
+		state.History = []HistoryEntry{}
+	}
+	return json.Marshal(stateAlias(state))
+}
+
 type MutationMeta struct {
 	Operator  string
 	RequestID string

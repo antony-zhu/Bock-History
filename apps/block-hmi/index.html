@@ -4285,7 +4285,17 @@
           Array.isArray(nextState.history);
       }
 
+      function normalizeEmptyStateCollections(nextState) {
+        if (!nextState || typeof nextState !== "object") return nextState;
+        const normalized = Object.assign({}, nextState);
+        ["bins", "alarms", "history"].forEach(key => {
+          if (normalized[key] === null) normalized[key] = [];
+        });
+        return normalized;
+      }
+
       function applyServerState(nextState, options = {}) {
+        nextState = normalizeEmptyStateCollections(nextState);
         if (!isCompleteServerState(nextState)) return false;
         const incomingRevision = Number(nextState.revision) || 0;
         if (incomingRevision && state.revision && incomingRevision < state.revision) return false;

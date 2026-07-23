@@ -84,7 +84,9 @@ func FromPLC(snapshot plccontract.Snapshot, previous Model) (Model, SourceMeta) 
 		Finished:        points.Finished,
 		ToolLimit:       points.ToolLimit,
 		InspectInterval: points.InspectInterval,
-		History:         append([]HistoryEntry(nil), previous.History...),
+		Bins:            make([]Bin, 0, len(points.Bins)),
+		Alarms:          make([]Alarm, 0, len(points.Alarms)),
+		History:         append([]HistoryEntry{}, previous.History...),
 	}
 	if points.Target > 0 {
 		next.OEE = min(100, points.Output*100/points.Target)

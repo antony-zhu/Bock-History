@@ -117,6 +117,27 @@ func TestInitialPageContainsNoFabricatedProductionOrAlarmData(t *testing.T) {
 	}
 }
 
+func TestBrowserNormalizesExplicitNullCollectionsBeforeStateValidation(t *testing.T) {
+	contents, err := embeddedFiles.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := string(contents)
+	normalization := `if (normalized[key] === null) normalized[key] = [];`
+	applyNormalization := `nextState = normalizeEmptyStateCollections(nextState);`
+	validation := `if (!isCompleteServerState(nextState)) return false;`
+	for _, required := range []string{normalization, applyNormalization, validation} {
+		if !strings.Contains(index, required) {
+			t.Fatalf("browser empty-collection recovery is missing %q", required)
+		}
+	}
+	normalizationIndex := strings.Index(index, applyNormalization)
+	validationIndex := strings.Index(index, validation)
+	if normalizationIndex < 0 || validationIndex < 0 || normalizationIndex > validationIndex {
+		t.Fatal("browser validates state before normalizing explicit null collections")
+	}
+}
+
 func TestBrowserFetchTimeoutAbortsUnderlyingRequest(t *testing.T) {
 	contents, err := embeddedFiles.ReadFile("assets/api-client.js")
 	if err != nil {
