@@ -37,14 +37,7 @@ func main() {
 		log.Fatalf("prepare HMI server: %v", err)
 	}
 
-	server := &http.Server{
-		Addr:              serverConfig.Addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
-	}
+	server := newHMIServer(serverConfig.Addr, handler)
 
 	shutdownSignals := make(chan os.Signal, 1)
 	signal.Notify(shutdownSignals, syscall.SIGINT, syscall.SIGTERM)
@@ -74,6 +67,20 @@ type hmiServerConfig struct {
 	Addr     string
 	CertFile string
 	KeyFile  string
+}
+
+func newHMIServer(address string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			MaxVersion: tls.VersionTLS13,
+		},
+	}
 }
 
 func loadServerConfig() (hmiServerConfig, error) {

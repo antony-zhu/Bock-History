@@ -29,13 +29,35 @@ func TestTLSValidAndInvalidPeersAndPlaintextRejection(t *testing.T) {
 		t.Fatal("append test CA")
 	}
 
-	validClient := tlsHTTPClient(roots, "", tls.VersionTLS12, 0)
+	validClient := tlsHTTPClient(roots, "", tls.VersionTLS12, tls.VersionTLS12)
 	response, err := validClient.Get("https://" + address + "/healthz")
 	if err != nil {
-		t.Fatalf("trusted TLS request failed: %v", err)
+		t.Fatalf("trusted TLS 1.2 request failed: %v", err)
 	}
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("trusted TLS status = %d", response.StatusCode)
+		t.Fatalf("trusted TLS 1.2 status = %d", response.StatusCode)
+	}
+	if response.TLS == nil {
+		t.Fatal("trusted TLS 1.2 response did not include connection state")
+	}
+	if response.TLS.Version != tls.VersionTLS12 {
+		t.Fatalf("negotiated TLS version = %#x, want TLS 1.2", response.TLS.Version)
+	}
+	_ = response.Body.Close()
+
+	tls13Client := tlsHTTPClient(roots, "", tls.VersionTLS13, tls.VersionTLS13)
+	response, err = tls13Client.Get("https://" + address + "/healthz")
+	if err != nil {
+		t.Fatalf("trusted TLS 1.3 request failed: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("trusted TLS 1.3 status = %d", response.StatusCode)
+	}
+	if response.TLS == nil {
+		t.Fatal("trusted TLS 1.3 response did not include connection state")
+	}
+	if response.TLS.Version != tls.VersionTLS13 {
+		t.Fatalf("negotiated TLS version = %#x, want TLS 1.3", response.TLS.Version)
 	}
 	_ = response.Body.Close()
 
@@ -47,9 +69,11 @@ func TestTLSValidAndInvalidPeersAndPlaintextRejection(t *testing.T) {
 	if _, err := wrongHostClient.Get("https://" + address + "/healthz"); err == nil {
 		t.Fatal("wrong hostname was accepted")
 	}
-	legacyClient := tlsHTTPClient(roots, "", tls.VersionTLS10, tls.VersionTLS11)
-	if _, err := legacyClient.Get("https://" + address + "/healthz"); err == nil {
-		t.Fatal("TLS 1.0/1.1 client was accepted")
+	for _, legacyVersion := range []uint16{tls.VersionTLS10, tls.VersionTLS11} {
+		legacyClient := tlsHTTPClient(roots, "", legacyVersion, legacyVersion)
+		if _, err := legacyClient.Get("https://" + address + "/healthz"); err == nil {
+			t.Fatalf("TLS version %#x client was accepted", legacyVersion)
+		}
 	}
 
 	plainClient := &http.Client{Timeout: time.Second}
@@ -148,8 +172,9 @@ func startTLSServer(t *testing.T, handler http.Handler, certificate tls.Certific
 	if err != nil {
 		t.Fatal(err)
 	}
-	tlsListener := tls.NewListener(listener, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
-	server := &http.Server{Handler: handler}
+	server := newHMIServer(listener.Addr().String(), handler)
+	server.TLSConfig.Certificates = []tls.Certificate{certificate}
+	tlsListener := tls.NewListener(listener, server.TLSConfig)
 	done := make(chan struct{})
 	go func() {
 		_ = server.Serve(tlsListener)
