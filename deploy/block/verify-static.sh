@@ -106,6 +106,10 @@ grep -Fq 'restore_managed_directory_states "${tx_dir}"' "${ROOT}/install.sh" ||
   die "failed-install recovery does not restore managed parent-directory metadata"
 grep -Fq 'restore_managed_directory_states "${tx_dir}"' "${ROOT}/rollback.sh" ||
   die "manual rollback does not restore managed parent-directory metadata"
+grep -Fq 'wait_for_agent_ready' "${ROOT}/rollback.sh" ||
+  die "manual rollback does not wait for Agent UDS readiness"
+grep -Fq 'refusing to start HMI' "${ROOT}/rollback.sh" ||
+  die "manual rollback does not fail closed before HMI startup"
 grep -Fq 'require_safe_restore_parent "${path}"' "${ROOT}/install.sh" ||
   die "failed-install recovery does not preserve existing restore-parent metadata"
 grep -Fq 'require_safe_restore_parent "${path}"' "${ROOT}/rollback.sh" ||

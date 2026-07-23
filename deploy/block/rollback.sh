@@ -22,6 +22,7 @@ readonly STATE_ROOT="${HOST_ROOT}/var/lib/block-release"
 readonly SYSTEMD_ROOT="${HOST_ROOT}/etc/systemd/system"
 readonly CONFIG_ROOT="${HOST_ROOT}/etc/block"
 readonly LOCK_ROOT="${HOST_ROOT}/run/lock"
+readonly AGENT_SOCKET="${HOST_ROOT}/run/block-agent/api/block-agent.sock"
 
 ca_file="${CONFIG_ROOT}/certs/ca.crt"
 hmi_url="https://127.0.0.1:8443/healthz"
@@ -207,6 +208,60 @@ previous_active_state() {
   awk -F'\t' -v wanted="${wanted_unit}" '$1 == wanted { print $3 }' "${tx_dir}/unit-state.tsv"
 }
 
+agent_socket_exists() {
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    [[ -e "${AGENT_SOCKET}" && ! -L "${AGENT_SOCKET}" ]]
+  else
+    [[ -S "${AGENT_SOCKET}" ]]
+  fi
+}
+
+wait_for_agent_ready() {
+  local max_attempts=30
+  local retry_seconds=1
+  local deadline=$((SECONDS + 30))
+  local attempt
+  local attempts_run=0
+  local active_state
+
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    max_attempts="${BLOCK_DEPLOY_TEST_AGENT_READY_ATTEMPTS:-5}"
+    retry_seconds="${BLOCK_DEPLOY_TEST_AGENT_READY_INTERVAL_SECONDS:-0}"
+    [[ "${max_attempts}" =~ ^[1-9][0-9]*$ && "${max_attempts}" -le 120 ]] ||
+      die "BLOCK_DEPLOY_TEST_AGENT_READY_ATTEMPTS must be between 1 and 120"
+    [[ "${retry_seconds}" =~ ^[0-9]+$ && "${retry_seconds}" -le 10 ]] ||
+      die "BLOCK_DEPLOY_TEST_AGENT_READY_INTERVAL_SECONDS must be between 0 and 10"
+  fi
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    attempts_run="${attempt}"
+    if systemctl is-active --quiet block-agent.service &&
+      agent_socket_exists &&
+      curl --fail --silent --show-error \
+        --connect-timeout 1 \
+        --max-time 2 \
+        --proto '=http' \
+        --unix-socket "${AGENT_SOCKET}" \
+        http://localhost/healthz >/dev/null 2>&1; then
+      printf 'NOTICE: Agent UDS ready after %d/%d probe(s): %s\n' \
+        "${attempt}" "${max_attempts}" "${AGENT_SOCKET}"
+      return 0
+    fi
+    if ((attempt < max_attempts)); then
+      if [[ "${TEST_MODE}" != "true" && "${SECONDS}" -ge "${deadline}" ]]; then
+        break
+      fi
+      sleep "${retry_seconds}"
+    fi
+  done
+
+  active_state="$(systemctl is-active block-agent.service 2>/dev/null || true)"
+  [[ -n "${active_state}" ]] || active_state="unknown"
+  printf 'ERROR: Agent did not become ready after %d probe(s) (unit=%s, socket=%s); refusing to start HMI\n' \
+    "${attempts_run}" "${active_state}" "${AGENT_SOCKET}" >&2
+  return 1
+}
+
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --execute)
@@ -247,7 +302,7 @@ esac
 
 for command_name in \
   awk chmod chown cp curl date dirname flock grep install ln mv readlink rm \
-  sha256sum systemctl; do
+  sha256sum sleep systemctl; do
   command -v "${command_name}" >/dev/null 2>&1 ||
     die "required command is missing: ${command_name}"
 done
@@ -321,24 +376,28 @@ while IFS=$'\t' read -r unit_name enabled_state active_state; do
   restore_enablement "${unit_name}" "${enabled_state}"
 done <"${tx_dir}/unit-state.tsv"
 
-for unit_name in \
-  block-plc-simulator.service \
-  block-agent.service \
-  block-hmi.service; do
-  if [[ "$(previous_active_state "${unit_name}")" == "active" ]]; then
-    systemctl start "${unit_name}"
-  fi
-done
-
+simulator_was_active="$(previous_active_state block-plc-simulator.service)"
 agent_was_active="$(previous_active_state block-agent.service)"
 hmi_was_active="$(previous_active_state block-hmi.service)"
+if [[ "${simulator_was_active}" == "active" ]]; then
+  systemctl start block-plc-simulator.service
+fi
+if [[ "${agent_was_active}" == "active" ]]; then
+  systemctl start block-agent.service
+  wait_for_agent_ready
+fi
+if [[ "${hmi_was_active}" == "active" ]]; then
+  systemctl start block-hmi.service
+fi
 if [[ "${agent_was_active}" == "active" && "${hmi_was_active}" == "active" ]]; then
   health_ok="false"
   for attempt in 1 2 3; do
     if BLOCK_HMI_CA="${ca_file}" \
       BLOCK_HMI_HEALTH_URL="${hmi_url}" \
+      BLOCK_AGENT_SOCKET="${AGENT_SOCKET}" \
+      BLOCK_SIMULATOR_IO_SOCKET="${HOST_ROOT}/run/block-plc/io/io.sock" \
       BLOCK_EXPECT_SIMULATOR="$(
-        [[ "$(previous_active_state block-plc-simulator.service)" == "active" ]] &&
+        [[ "${simulator_was_active}" == "active" ]] &&
           printf true ||
           printf false
       )" \

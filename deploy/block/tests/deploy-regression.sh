@@ -242,6 +242,10 @@ if [[ -n "${socket_path}" && -e "${socket_path}" && ! -L "${socket_path}" ]]; th
   printf 'agent-health-ready\n' >>"${state_root}/systemctl-test.log"
   exit 0
 fi
+if [[ -z "${socket_path}" ]]; then
+  printf 'hmi-health-ready\n' >>"${state_root}/systemctl-test.log"
+  exit 0
+fi
 printf 'ERROR: test curl did not find a ready Agent socket\n' >&2
 exit 22
 EOF
@@ -495,6 +499,11 @@ assert_directory_restore_commands \
 
 # A successful upgrade followed by manual rollback must preserve the same
 # certificate-directory boundary without restoring or relabelling cert files.
+for unit in \
+  block-agent.service \
+  block-hmi.service; do
+  : >"${existing_root}/var/lib/block-release/active-${unit}"
+done
 : >"${existing_root}/install-command-test.log"
 : >"${existing_root}/chmod-command-test.log"
 : >"${existing_root}/chown-command-test.log"
@@ -550,6 +559,7 @@ mv -- \
 : >"${existing_root}/install-command-test.log"
 : >"${existing_root}/chmod-command-test.log"
 : >"${existing_root}/chown-command-test.log"
+: >"${existing_root}/var/lib/block-release/systemctl-test.log"
 env \
   PATH="${TEST_ROOT}/bin:${PATH}" \
   BLOCK_RELEASE_ROLE=BLK-REL \
@@ -573,6 +583,11 @@ assert_directory_restore_commands \
   "${existing_root}" \
   "${existing_certs}" \
   "${existing_certs_metadata}"
+assert_event_order \
+  "${existing_root}/var/lib/block-release/systemctl-test.log" \
+  "start block-agent.service" \
+  "agent-health-ready" \
+  "start block-hmi.service"
 
 # Fresh installation: the same failure must remove all managed host files and
 # current pointers even though manual rollback intentionally has no predecessor.
@@ -794,4 +809,4 @@ grep -Fq 'current transaction is not bound' "${TEST_ROOT}/rollback.out" ||
 [[ "$(readlink -f "${rollback_root}/opt/block/current")" == "${current_release}" ]] ||
   fail "rejected rollback changed current release"
 
-printf 'OK: deploy failure recovery, parent-directory metadata preservation, manual rollback, Agent-before-HMI readiness convergence, release reuse, fresh cleanup, immutable config hashes, private-key rejection, rollback binding and packaged static dependencies\n'
+printf 'OK: deploy failure recovery, parent-directory metadata preservation, manual rollback with Agent-before-HMI readiness, release reuse, fresh cleanup, immutable config hashes, private-key rejection, rollback binding and packaged static dependencies\n'

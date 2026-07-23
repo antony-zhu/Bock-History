@@ -6,6 +6,16 @@ set -euo pipefail
 : "${BLOCK_AGENT_SOCKET:=/run/block-agent/api/block-agent.sock}"
 : "${BLOCK_SIMULATOR_IO_SOCKET:=/run/block-plc/io/io.sock}"
 : "${BLOCK_EXPECT_SIMULATOR:=false}"
+readonly TEST_MODE="${BLOCK_DEPLOY_TEST_MODE:-false}"
+
+socket_exists() {
+  local path="$1"
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    [[ -e "${path}" && ! -L "${path}" ]]
+  else
+    [[ -S "${path}" ]]
+  fi
+}
 
 case "${BLOCK_HMI_HEALTH_URL}" in
   https://127.0.0.1:8443/*|https://localhost:8443/*|https://\[::1\]:8443/*) ;;
@@ -20,7 +30,7 @@ if [[ ! -r "${BLOCK_HMI_CA}" ]]; then
   exit 2
 fi
 
-if [[ ! -S "${BLOCK_AGENT_SOCKET}" ]]; then
+if ! socket_exists "${BLOCK_AGENT_SOCKET}"; then
   printf 'ERROR: Agent Unix socket is missing: %s\n' "${BLOCK_AGENT_SOCKET}" >&2
   exit 1
 fi
@@ -40,7 +50,8 @@ curl --fail --silent --show-error \
   --unix-socket "${BLOCK_AGENT_SOCKET}" \
   http://localhost/healthz
 
-if [[ "${BLOCK_EXPECT_SIMULATOR}" == "true" && ! -S "${BLOCK_SIMULATOR_IO_SOCKET}" ]]; then
+if [[ "${BLOCK_EXPECT_SIMULATOR}" == "true" ]] &&
+  ! socket_exists "${BLOCK_SIMULATOR_IO_SOCKET}"; then
   printf 'ERROR: Simulator I/O Unix socket is missing: %s\n' "${BLOCK_SIMULATOR_IO_SOCKET}" >&2
   exit 1
 fi

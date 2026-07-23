@@ -277,8 +277,9 @@ sudo env BLOCK_RELEASE_ROLE=BLK-REL \
 3. 恢复上一份 unit、非秘密配置、已记录的受管父目录元数据和 release profile 记录；
 4. 原子切回上一 `current`；
 5. `daemon-reload`，恢复原 enable/active 状态；
-6. 若上一 Agent/HMI 原本 active，则执行受信 TLS 和 UDS 健康检查；
-7. 恢复上一事务指针并记录 UTC 回滚时间。
+6. 若上一 Agent 原本 active，则等待其 UDS `/healthz` 就绪；
+7. 仅在 Agent 就绪后启动原本 active 的 HMI，再执行受信 TLS 和 UDS 健康检查；
+8. 恢复上一事务指针并记录 UTC 回滚时间。
 
 人工回滚前会强制验证 `current-transaction` 记录的 release 目标和 manifest
 SHA-256 与当前 release 完全一致，拒绝陈旧、篡改或串线事务；因此同一不可变
