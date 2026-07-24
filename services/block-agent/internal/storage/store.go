@@ -14,6 +14,7 @@ import (
 
 	"block.local/block-agent/internal/plccontract"
 	"block.local/block-agent/internal/state"
+	"block.local/block-agent/internal/uplink"
 
 	_ "modernc.org/sqlite"
 )
@@ -35,8 +36,9 @@ const (
 )
 
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db     *sql.DB
+	now    func() time.Time
+	uplink UplinkOptions
 
 	snapshotMu sync.Mutex
 	healthMu   sync.RWMutex
@@ -46,6 +48,16 @@ type Store struct {
 	// afterCompleteCommit is a test failpoint used to model a commit that
 	// reached durable storage but whose acknowledgement was lost.
 	afterCompleteCommit func() error
+}
+
+type UplinkOptions struct {
+	Enabled          bool
+	Source           uplink.Source
+	BootID           string
+	StreamGeneration string
+	StaleAfter       time.Duration
+	OrdinaryLimit    int64
+	HardLimit        int64
 }
 
 type SnapshotRecord struct {
@@ -98,8 +110,24 @@ type AuditPage struct {
 }
 
 func Open(path string, now func() time.Time) (*Store, error) {
+	return OpenWithOptions(path, now, UplinkOptions{})
+}
+
+func OpenWithOptions(path string, now func() time.Time, uplinkOptions UplinkOptions) (*Store, error) {
 	if now == nil {
 		now = time.Now
+	}
+	if uplinkOptions.OrdinaryLimit == 0 {
+		uplinkOptions.OrdinaryLimit = 2*1024*1024*1024 - 64*1024*1024
+	}
+	if uplinkOptions.HardLimit == 0 {
+		uplinkOptions.HardLimit = 2 * 1024 * 1024 * 1024
+	}
+	if uplinkOptions.OrdinaryLimit < 1 || uplinkOptions.HardLimit <= uplinkOptions.OrdinaryLimit {
+		return nil, errors.New("uplink storage limits are invalid")
+	}
+	if uplinkOptions.Enabled && uplinkOptions.StaleAfter <= 0 {
+		return nil, errors.New("uplink stale threshold must be positive")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
@@ -110,7 +138,7 @@ func Open(path string, now func() time.Time) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	store := &Store{db: db, now: now, healthCode: AvailabilityBackendUnavailable}
+	store := &Store{db: db, now: now, uplink: uplinkOptions, healthCode: AvailabilityBackendUnavailable}
 	if err := store.initialize(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -135,17 +163,29 @@ func (s *Store) initialize(ctx context.Context) error {
 	if journalMode != "wal" {
 		return fmt.Errorf("SQLite journal mode is %q, want wal", journalMode)
 	}
-	contents, err := migrations.ReadFile("migrations/001_init.sql")
-	if err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, string(contents)); err != nil {
-		return fmt.Errorf("apply SQLite migration 001: %w", err)
+	for _, migration := range []string{
+		"001_init.sql", "002_uplink.sql", "003_mqtt_inflight.sql",
+	} {
+		contents, err := migrations.ReadFile("migrations/" + migration)
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, string(contents)); err != nil {
+			return fmt.Errorf("apply SQLite migration %s: %w", migration, err)
+		}
 	}
 	if err := s.ensureCommandMetadataColumns(ctx); err != nil {
 		return fmt.Errorf("migrate command metadata columns: %w", err)
 	}
-	return s.RecoverPending(ctx)
+	if err := s.RecoverPending(ctx); err != nil {
+		return err
+	}
+	if s.uplink.Enabled {
+		if err := s.initializeUplink(ctx); err != nil {
+			return fmt.Errorf("initialize BDM uplink: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) ensureCommandMetadataColumns(ctx context.Context) error {
@@ -219,7 +259,18 @@ func (s *Store) saveSnapshotLocked(ctx context.Context, record SnapshotRecord) e
 		return err
 	}
 	defer tx.Rollback()
+	previous, previousErr := loadSnapshotQuery(ctx, tx)
+	if previousErr != nil && !errors.Is(previousErr, ErrNoSnapshot) {
+		return previousErr
+	}
 	if err := saveSnapshotTx(ctx, tx, record); err != nil {
+		return err
+	}
+	var previousPointer *SnapshotRecord
+	if previousErr == nil {
+		previousPointer = &previous
+	}
+	if err := s.enqueueSnapshotChangesTx(ctx, tx, previousPointer, record, s.now().UTC()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -246,6 +297,14 @@ func (s *Store) SavePLC(ctx context.Context, snapshot plccontract.Snapshot, rece
 		return SnapshotRecord{}, err
 	}
 	if err := saveSnapshotTx(ctx, tx, record); err != nil {
+		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
+		return SnapshotRecord{}, err
+	}
+	var previousPointer *SnapshotRecord
+	if previousErr == nil {
+		previousPointer = &previous
+	}
+	if err := s.enqueueSnapshotChangesTx(ctx, tx, previousPointer, record, receivedAt.UTC()); err != nil {
 		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
 		return SnapshotRecord{}, err
 	}
@@ -377,8 +436,32 @@ func mergeSnapshot(snapshot plccontract.Snapshot, previous SnapshotRecord, hasPr
 func (s *Store) MarkStale(ctx context.Context, code string) error {
 	s.snapshotMu.Lock()
 	defer s.snapshotMu.Unlock()
-	_, err := s.db.ExecContext(ctx, "UPDATE current_snapshot SET stale = 1 WHERE singleton_id = 1")
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
+		return err
+	}
+	defer tx.Rollback()
+	previous, err := loadSnapshotQuery(ctx, tx)
+	if errors.Is(err, ErrNoSnapshot) {
+		s.SetSourceUnavailable(code)
+		return tx.Commit()
+	}
+	if err != nil {
+		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
+		return err
+	}
+	current := previous
+	current.Stale = true
+	if _, err := tx.ExecContext(ctx, "UPDATE current_snapshot SET stale = 1 WHERE singleton_id = 1"); err != nil {
+		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
+		return err
+	}
+	if err := s.enqueueSnapshotChangesTx(ctx, tx, &previous, current, s.now().UTC()); err != nil {
+		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
+		return err
+	}
+	if err := tx.Commit(); err != nil {
 		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
 		return err
 	}
@@ -490,6 +573,8 @@ func (s *Store) CompleteCommand(ctx context.Context, result plccontract.CommandR
 		s.SetSourceUnavailable(AvailabilityBackendUnavailable)
 		return nil, currentErr
 	}
+	previous := current
+	hadPrevious := hasCurrent
 	acceptedReadback := false
 	if readback != nil {
 		merged, mergeErr := mergeSnapshot(*readback, current, hasCurrent, receivedAt, staleAfter)
@@ -507,6 +592,14 @@ func (s *Store) CompleteCommand(ctx context.Context, result plccontract.CommandR
 	}
 	if hasCurrent && (acceptedReadback || operation.Text != "") {
 		if err := saveSnapshotTx(ctx, tx, current); err != nil {
+			s.SetSourceUnavailable(AvailabilityBackendUnavailable)
+			return nil, err
+		}
+		var previousPointer *SnapshotRecord
+		if hadPrevious {
+			previousPointer = &previous
+		}
+		if err := s.enqueueSnapshotChangesTx(ctx, tx, previousPointer, current, receivedAt.UTC()); err != nil {
 			s.SetSourceUnavailable(AvailabilityBackendUnavailable)
 			return nil, err
 		}

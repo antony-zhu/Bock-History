@@ -1,6 +1,10 @@
 # Block 原生部署与回滚
 
-本目录是 `BLK-SIM-001-R1` 的 Block 部署副本，只处理“一台 Block 对应一台设备”的本机闭环。Block 的采集、状态、HMI、报警、历史和允许的现场操作不依赖 Wi-Fi、BDM 或外部服务器。本目录不部署 MQTT、Pad、远程命令、远程升级或真实 PLC Driver，也不会连接或修改远程主机。
+本目录处理“一台 Block 对应一台设备”的本机闭环，并提供可选的 BDM
+只读数据上行。Block 的采集、状态、HMI、报警、历史和允许的现场操作不依赖
+Wi-Fi、BDM 或外部服务器。启用 BDM 时，Block 仅作为 MQTTS 客户端主动连接
+BDM；本目录不部署 MQTT Broker、Pad、远程命令、远程升级或真实 PLC Driver，
+也不会连接或修改远程主机。
 
 真实 Block 上的写操作只允许 `BLK-REL`/设备管理员执行。开发智能体只能做源代码和静态验证。
 
@@ -18,7 +22,7 @@
 | 主体 | 允许访问 | 明确禁止 |
 | --- | --- | --- |
 | `block-hmi` | Agent API `/run/block-agent/api/block-agent.sock`；HMI 证书 | Simulator、Agent SQLite |
-| `block-agent` | 自有 SQLite；实验时 Simulator I/O `/run/block-plc/io/io.sock` | Simulator control |
+| `block-agent` | 自有 SQLite；实验时 Simulator I/O `/run/block-plc/io/io.sock`；可选 BDM 客户端证书和到 BDM `8883/tcp` 的 MQTTS 出站 | Simulator control；任何业务入站 TCP |
 | `block-simulator` | 自有 I/O/control socket 和状态 | Agent API、Agent SQLite |
 | 显式实验管理员 | 加入 `block-sim-control` 后访问 control socket | 不因该组获得其他服务权限 |
 
@@ -30,7 +34,13 @@
 
 不存在共享的 `block` 组。三个服务各用自己的主组，socket 均为 `0660`。Simulator control 不向 Agent 或 HMI 开放。
 
-HMI 只监听 `127.0.0.1:8443`，且只能使用受信 HTTPS。`80`、`1883`、`8080`、`8081` 不监听、不跳转。Agent 和 Simulator 只有 Unix socket，unit 使用 `PrivateNetwork=true` 和 `AF_UNIX`；HMI unit 使用 `IPAddressDeny=any`、`IPAddressAllow=localhost`，阻断外连。SSH `22/tcp` 的调试例外不属于业务程序。
+HMI 只监听 `127.0.0.1:8443`，且只能使用受信 HTTPS。`80`、`1883`、
+`8080`、`8081` 不监听、不跳转。Simulator 只使用 Unix socket，并保持
+`PrivateNetwork=true` 和 `AF_UNIX`。Agent 不监听业务 TCP；其 unit 允许
+`AF_UNIX`，并只允许向当前实验 BDM `192.168.1.105/32` 出站。Agent 不依赖
+`network-online.target`，BDM 不可达不会阻止本地服务启动。HMI unit 使用
+`IPAddressDeny=any`、`IPAddressAllow=localhost`，阻断外连。SSH `22/tcp`
+的调试例外不属于业务程序。
 
 健康检查中的 `http://localhost` 只作为 curl 访问 Unix socket 时必需的占位 URL，不经过 TCP。
 
@@ -68,6 +78,8 @@ Agent 查询的 `SourceInfo` 决定；部署环境变量不得伪造或覆盖数
 │   ├── rollback.sh
 │   ├── config/
 │   │   ├── block-agent.example.json
+│   │   ├── block-agent-bdm.example.json
+│   │   ├── block-agent-simulator-bdm.example.json
 │   │   ├── block-agent-simulator.example.json
 │   │   └── plc-simulator.example.json
 │   ├── tests/
@@ -81,7 +93,12 @@ Agent 查询的 `SourceInfo` 决定；部署环境变量不得伪造或覆盖数
 
 `current` 用临时符号链接加 `mv -T` 原子切换。`manifest.txt` 记录版本、profile、Git/Common 基线、UTC 时间、上一版本、二进制 SHA-256、非秘密 Agent/Simulator 配置 SHA-256 和 HMI 证书指纹；不记录私钥。同一 release 的配置哈希不可变。每次变更前会记录旧 `current`、unit、非秘密配置、证书文件、受管父目录的数值 UID/GID/mode，以及服务启用/活动状态。
 
-SQLite、Simulator 状态、日志、证书私钥和现场配置都不放进发布目录或 Git。Agent SQLite 位于 `/var/lib/block-agent/block.db`，回滚不会删除或移动它。
+SQLite、Simulator 状态、日志、证书私钥和现场配置都不放进发布目录或 Git。
+Agent SQLite 位于独立数据盘挂载点 `/var/lib/block/block.db`，回滚不会删除
+或移动它。真实安装前必须由 `BLK-REL` 备份并确认目标分区内容，再按 UUID
+把数据分区稳定挂载到 `/var/lib/block`，将挂载点设为
+`block-agent:block-agent`、`0700`；安装器和 unit 都会拒绝把正式数据库
+退回根分区。
 
 ## Fresh-host 安装
 
@@ -105,6 +122,20 @@ artifact/
 - 包含访问名称或 `127.0.0.1` IP SAN 的 `block-hmi.crt`；
 - 与证书匹配、源文件权限不高于 `0600` 的 `block-hmi.key`。
 
+启用 BDM 时还需准备：
+
+- 真实两机联调以 `block-agent-simulator-bdm.example.json` 为模板；它同时
+  开启 PLC Simulator 和 BDM 上行，避免现场拼装配置。无 Simulator 的生产
+  模式才使用 `block-agent-bdm.example.json`。当前实验端点固定写为
+  `mqtts://192.168.1.105:8883`；
+- 只用于验证 BDM Broker 服务端证书的 `bdm-server-ca.crt`；
+- CN 精确等于配置中不透明 `blk-<32位小写十六进制>` principal、含
+  `clientAuth` EKU 的 Block 客户端证书及匹配私钥。
+
+服务端信任 CA 与 Block 客户端证书的签发 CA 可以分离。`--bdm-ca` 只安装
+服务端信任根；Block 客户端链由 BDM Broker 配置的 client CA 在握手时验证，
+不得误用服务端 CA 校验客户端证书。
+
 真实 Wi-Fi 值、密码、令牌、真实 `.env` 和私钥不得进入仓库或构建产物。安装器会拒绝常见秘密字段名出现在 JSON 配置中，拒绝证书或 CA 文件包含任何私钥 PEM 块，并验证证书有效期、信任链和公私钥匹配。
 
 源包中的下列脚本必须保持 `0755`：
@@ -127,7 +158,14 @@ test -x tests/deploy-regression.sh
 ./verify-static.sh
 ```
 
-该脚本执行所有 shell 的 `bash -n`、三个 JSON 样例解析，并检查 socket 路径、用户组矩阵、HMI `8s` 超时、TLS curl、生产/实验开关及 systemd 静态网络门禁。它还在工作区 `.cache` 沙箱内执行安装失败、父目录权限恢复、人工回滚、fresh-host 清理、配置哈希不可变、证书/CA 私钥拒绝以及错误回滚事务拒绝的反例测试。release 会同时保存 `verify-static.sh` 所依赖的 `config/` 样例和 `tests/deploy-regression.sh`，回归测试会从打包后的 release 再执行一次静态入口，避免只复制入口脚本而遗漏依赖。
+该脚本执行所有 shell 的 `bash -n`、五个 JSON 样例解析，并检查 socket
+路径、用户组矩阵、HMI `8s` 超时、TLS curl、生产/实验开关及 systemd
+静态网络门禁。它还验证 BDM 服务端 CA 与客户端签发 CA 分离时可以安装，
+并在工作区 `.cache` 沙箱内执行安装失败、父目录权限恢复、人工回滚、
+fresh-host 清理、配置哈希不可变、证书/CA 私钥拒绝以及错误回滚事务拒绝
+的反例测试。release 会同时保存 `verify-static.sh` 所依赖的 `config/`
+样例和 `tests/deploy-regression.sh`，回归测试会从打包后的 release 再执行
+一次静态入口，避免只复制入口脚本而遗漏依赖。
 
 ### 3. 生产安装
 
@@ -165,6 +203,22 @@ sudo env BLOCK_RELEASE_ROLE=BLK-REL ./install.sh \
   --common-baseline <full-common-commit> \
   --control-admin <explicit-lab-operator>
 ```
+
+### 5. 启用 BDM 上行
+
+当前两机实验环境中，Block 使用 Wi-Fi 所在网络主动连接
+`192.168.1.105:8883`。除使用 BDM 版 Agent 配置外，安装命令增加：
+
+```bash
+  --agent-config /secure/staging/block-agent-simulator-bdm.json \
+  --bdm-ca /secure/staging/bdm-server-ca.crt \
+  --bdm-client-cert /secure/staging/block-mqtt-client.crt \
+  --bdm-client-key /secure/staging/block-mqtt-client.key
+```
+
+三个 BDM 证书参数必须与 `bdm.enabled=true` 同时出现。以后专用路由器固定
+BDM 地址时，只修改受审查的部署配置、Agent unit 的出站白名单和 BDM
+服务端证书 SAN；不得修改 `siteId/blockId/deviceId` 或 principal 来迁就 IP。
 
 管理员组变更仍由 `BLK-REL` 显式完成：
 
@@ -215,7 +269,8 @@ lab 验证增加 `--profile lab` 和每个 `--control-admin USER`。验证内容
 - 配置、证书、状态目录和 socket 的 owner/group/mode；
 - 使用 `runuser` 实测 HMI、Agent、Simulator 的 Linux 允许/拒绝矩阵；
 - unit 与当前 release 一致且没有未审查 drop-in；
-- Agent/Simulator 无网络、HMI 只允许 loopback 的静态沙箱；
+- Agent 无业务入站，只允许当前 BDM 的 MQTTS 出站；Simulator 无网络，
+  HMI 只允许 loopback 的静态沙箱；
 - `8443` 只绑定 loopback；
 - TCP/UDP `80`、`1883`、`8080`、`8081` 都无监听，因此也不存在明文跳转；
 - production 的 Simulator 不 enabled、不 active；lab 则相反。
@@ -251,7 +306,8 @@ sudo systemd-analyze verify \
 1. 记录 `ss -lntup`、`ss -lx`、三个 unit 状态和日志起点。
 2. 用实验网络策略阻断所有非 loopback 入站/出站。
 3. 验证 Simulator（lab）、Agent、HMI 正常启动；HMI 状态、告警、历史和允许的现场操作正常。
-4. 验证没有 DNS、BDM、MQTT 或其他外部连接尝试。
+4. `bdm.enabled=false` 时验证没有 BDM/MQTT 外部连接尝试；启用时允许
+   Agent 后台重连 `192.168.1.105:8883`，但该失败不得影响本地功能。
 5. 断开 Simulator 后，Agent/HMI 继续存活，数据转为 stale 且写操作禁用；恢复后重新采样。
 6. 重启 Agent，验证 SQLite 中最后状态、历史、审计和命令幂等记录恢复。
 7. 恢复实验网络策略，再次执行 `verify-install.sh`。

@@ -2,6 +2,8 @@
 Description=Block Agent (single device owner)
 After=local-fs.target block-plc-simulator.service
 Wants=local-fs.target
+RequiresMountsFor=/var/lib/block
+ConditionPathIsMountPoint=/var/lib/block
 
 [Service]
 Type=simple
@@ -11,7 +13,7 @@ SupplementaryGroups=block-hmi-api block-sim-io
 UMask=0077
 RuntimeDirectory=block-agent
 RuntimeDirectoryMode=0711
-StateDirectory=block-agent
+StateDirectory=block
 StateDirectoryMode=0700
 ExecStart=/opt/block/current/bin/block-agent -config /etc/block/block-agent.json
 Restart=on-failure
@@ -20,15 +22,16 @@ TimeoutStopSec=10
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
-PrivateNetwork=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 ProtectKernelModules=true
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=192.168.1.105/32
 ReadOnlyPaths=/etc/block
-ReadWritePaths=/run/block-agent /var/lib/block-agent
+ReadWritePaths=/run/block-agent /var/lib/block
 InaccessiblePaths=-/run/block-plc/control -/var/lib/block-plc-sim
 MemoryMax=384M
 TasksMax=128

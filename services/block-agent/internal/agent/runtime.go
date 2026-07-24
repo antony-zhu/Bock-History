@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"block.local/block-agent/internal/adapter"
+	"block.local/block-agent/internal/bdm"
 	"block.local/block-agent/internal/command"
 	"block.local/block-agent/internal/config"
 	"block.local/block-agent/internal/localapi"
 	"block.local/block-agent/internal/storage"
+	"block.local/block-agent/internal/uplink"
 )
 
 type Runtime struct {
@@ -20,6 +22,7 @@ type Runtime struct {
 	store          *storage.Store
 	queue          *command.Queue
 	api            *localapi.Server
+	bdm            *bdm.Manager
 	samplePeriod   time.Duration
 	staleAfter     time.Duration
 	commandTimeout time.Duration
@@ -35,7 +38,28 @@ func Open(cfg config.Agent, now func() time.Time) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := storage.Open(cfg.DatabasePath, now)
+	var (
+		store      *storage.Store
+		bdmManager *bdm.Manager
+	)
+	if cfg.BDM.Enabled {
+		bootID, err := uplink.NewUUID()
+		if err != nil {
+			return nil, fmt.Errorf("create Block boot identity: %w", err)
+		}
+		source := uplink.Source{
+			SiteID: cfg.SiteID, BlockID: cfg.BlockID, DeviceID: cfg.DeviceID,
+		}
+		store, err = storage.OpenWithOptions(cfg.DatabasePath, now, storage.UplinkOptions{
+			Enabled: true, Source: source, BootID: bootID,
+			StreamGeneration: cfg.BDM.StreamGeneration, StaleAfter: staleAfter,
+		})
+		if err == nil {
+			bdmManager = bdm.New(cfg.BDM, source, bootID, store, now)
+		}
+	} else {
+		store, err = storage.Open(cfg.DatabasePath, now)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("open Block database: %w", err)
 	}
@@ -49,6 +73,7 @@ func Open(cfg config.Agent, now func() time.Time) (*Runtime, error) {
 	return &Runtime{
 		config: cfg, device: device, store: store, queue: queue,
 		api:          localapi.New(cfg.LocalAPISocket, cfg.LocalAPISocketGroup, cfg.Adapter.Type, store, queue, staleAfter, now),
+		bdm:          bdmManager,
 		samplePeriod: samplePeriod, staleAfter: staleAfter,
 		commandTimeout: commandTimeout, now: now,
 	}, nil
@@ -70,6 +95,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer cancel()
 	errorsChannel := make(chan error, 1)
 	go func() { errorsChannel <- r.api.Serve(runContext) }()
+	if r.bdm != nil {
+		// BDM is an optional observer. Its certificate, DNS, route, broker or
+		// protocol failures never terminate the local sampling/HMI loop.
+		go func() { _ = r.bdm.Run(runContext) }()
+	}
 	_ = r.SampleOnce(runContext)
 	ticker := time.NewTicker(r.samplePeriod)
 	defer ticker.Stop()

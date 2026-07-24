@@ -19,6 +19,7 @@ readonly OPT_ROOT="${HOST_ROOT}/opt/block"
 readonly RELEASE_ROOT="${OPT_ROOT}/releases"
 readonly CURRENT_LINK="${OPT_ROOT}/current"
 readonly STATE_ROOT="${HOST_ROOT}/var/lib/block-release"
+readonly DATA_ROOT="${HOST_ROOT}/var/lib/block"
 readonly SYSTEMD_ROOT="${HOST_ROOT}/etc/systemd/system"
 readonly CONFIG_ROOT="${HOST_ROOT}/etc/block"
 readonly LOCK_ROOT="${HOST_ROOT}/run/lock"
@@ -41,6 +42,10 @@ simulator_config=""
 tls_cert=""
 tls_key=""
 tls_ca=""
+bdm_ca=""
+bdm_client_cert=""
+bdm_client_key=""
+bdm_enabled="False"
 git_commit=""
 common_baseline=""
 hmi_url="https://127.0.0.1:8443/healthz"
@@ -64,13 +69,15 @@ Usage:
     --execute --profile production|lab --version VERSION \
     --artifact-dir DIR --agent-config FILE \
     --tls-cert FILE --tls-key FILE --tls-ca FILE \
+    [--bdm-ca FILE --bdm-client-cert FILE --bdm-client-key FILE] \
     --git-commit COMMIT --common-baseline COMMIT \
     [--simulator-config FILE] [--hmi-url https://LOOPBACK:8443/healthz] \
     [--control-admin USER ...]
 
 DIR must contain bin/block-agent and bin/block-hmi. Lab mode also requires
-bin/plc-simulator and --simulator-config. This script changes only the local
-Block host; it never connects to a remote host.
+bin/plc-simulator and --simulator-config. The three BDM certificate arguments
+are required together only when agent-config has bdm.enabled=true. This script
+changes only the local Block host; it never connects to a remote host.
 EOF
 }
 
@@ -114,13 +121,31 @@ print(value)' \
 
 validate_profile_config() {
   local adapter_type
+  local configured_bdm_enabled
 
   [[ "$(json_value "${agent_config}" localApiSocket)" == "/run/block-agent/api/block-agent.sock" ]] ||
     die "Agent localApiSocket must use the authoritative API path"
   [[ "$(json_value "${agent_config}" localApiSocketGroup)" == "block-hmi-api" ]] ||
     die "Agent localApiSocketGroup must be block-hmi-api"
-  [[ "$(json_value "${agent_config}" databasePath)" == "/var/lib/block-agent/block.db" ]] ||
-    die "Agent databasePath must be /var/lib/block-agent/block.db"
+  [[ "$(json_value "${agent_config}" databasePath)" == "/var/lib/block/block.db" ]] ||
+    die "Agent databasePath must be /var/lib/block/block.db"
+
+  configured_bdm_enabled="$(json_value "${agent_config}" bdm.enabled)"
+  [[ "${configured_bdm_enabled}" == "True" || "${configured_bdm_enabled}" == "False" ]] ||
+    die "Agent bdm.enabled must be a boolean"
+  bdm_enabled="${configured_bdm_enabled}"
+  if [[ "${bdm_enabled}" == "True" ]]; then
+    [[ "$(json_value "${agent_config}" bdm.endpoint)" == "mqtts://192.168.1.105:8883" ]] ||
+      die "current lab baseline requires bdm.endpoint mqtts://192.168.1.105:8883"
+    [[ "$(json_value "${agent_config}" bdm.caFile)" == "/etc/block/bdm-certs/ca.crt" ]] ||
+      die "Agent bdm.caFile must be /etc/block/bdm-certs/ca.crt"
+    [[ "$(json_value "${agent_config}" bdm.clientCertFile)" == "/etc/block/bdm-certs/client.crt" ]] ||
+      die "Agent bdm.clientCertFile must be /etc/block/bdm-certs/client.crt"
+    [[ "$(json_value "${agent_config}" bdm.clientKeyFile)" == "/etc/block/bdm-certs/client.key" ]] ||
+      die "Agent bdm.clientKeyFile must be /etc/block/bdm-certs/client.key"
+    [[ "$(json_value "${agent_config}" bdm.principal)" =~ ^blk-[0-9a-f]{32}$ ]] ||
+      die "Agent bdm.principal must be an opaque blk-<32 lowercase hex> identity"
+  fi
 
   adapter_type="$(json_value "${agent_config}" adapter.type)"
   if [[ "${profile}" == "production" ]]; then
@@ -140,6 +165,64 @@ validate_profile_config() {
     [[ "$(json_value "${simulator_config}" controlSocketGroup)" == "block-sim-control" ]] ||
       die "Simulator controlSocketGroup must be block-sim-control"
   fi
+}
+
+verify_bdm_certificate_material() {
+  local cert_public_hash
+  local extended_key_usage
+  local key_public_hash
+  local principal
+  local subject
+  local subject_cn
+
+  openssl x509 -in "${bdm_ca}" -noout -checkend 0 >/dev/null ||
+    die "BDM server CA bundle is invalid or expired"
+  openssl x509 -in "${bdm_client_cert}" -noout -checkend 0 >/dev/null ||
+    die "Block MQTT client certificate is invalid or expired"
+  extended_key_usage="$(
+    openssl x509 -in "${bdm_client_cert}" -noout -ext extendedKeyUsage 2>/dev/null
+  )"
+  grep -Eq 'TLS Web Client Authentication|Any Extended Key Usage|clientAuth' \
+    <<<"${extended_key_usage}" ||
+    die "Block MQTT client certificate lacks clientAuth extended key usage"
+  principal="$(json_value "${agent_config}" bdm.principal)"
+  subject="$(openssl x509 -in "${bdm_client_cert}" -noout -subject -nameopt RFC2253)"
+  subject="${subject#subject=}"
+  subject_cn="$(
+    printf '%s\n' "${subject}" |
+      tr ',' '\n' |
+      awk -F= '$1 == "CN" { print substr($0, 4); exit }'
+  )"
+  [[ "${subject_cn}" == "${principal}" ]] ||
+    die "Block MQTT client certificate CN must exactly equal bdm.principal"
+  cert_public_hash="$(
+    openssl x509 -in "${bdm_client_cert}" -pubkey -noout |
+      openssl pkey -pubin -outform DER 2>/dev/null |
+      sha256sum |
+      awk '{print $1}'
+  )"
+  key_public_hash="$(
+    openssl pkey -in "${bdm_client_key}" -pubout -outform DER 2>/dev/null |
+      sha256sum |
+      awk '{print $1}'
+  )"
+  [[ -n "${cert_public_hash}" && "${cert_public_hash}" == "${key_public_hash}" ]] ||
+    die "Block MQTT client certificate and private key do not match"
+}
+
+validate_data_root() {
+  local metadata
+
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    return
+  fi
+  [[ -d "${DATA_ROOT}" && ! -L "${DATA_ROOT}" ]] ||
+    die "${DATA_ROOT} must be a real directory backed by the prepared data partition"
+  mountpoint -q "${DATA_ROOT}" ||
+    die "${DATA_ROOT} must be a mounted filesystem before Block installation"
+  metadata="$(stat -c '%U:%G:%a' "${DATA_ROOT}")"
+  [[ "${metadata}" == "block-agent:block-agent:700" ]] ||
+    die "${DATA_ROOT} must be block-agent:block-agent mode 0700; found ${metadata}"
 }
 
 validate_private_key_mode() {
@@ -241,7 +324,8 @@ is_managed_directory_path() {
       "${STATE_ROOT}"|\
       "${STATE_ROOT}/transactions"|\
       "${CONFIG_ROOT}"|\
-      "${CONFIG_ROOT}/certs")
+      "${CONFIG_ROOT}/certs"|\
+      "${CONFIG_ROOT}/bdm-certs")
       return 0
       ;;
     *)
@@ -262,7 +346,8 @@ capture_managed_directory_states() {
     "${STATE_ROOT}" \
     "${STATE_ROOT}/transactions" \
     "${CONFIG_ROOT}" \
-    "${CONFIG_ROOT}/certs"; do
+    "${CONFIG_ROOT}/certs" \
+    "${CONFIG_ROOT}/bdm-certs"; do
     [[ -d "${path}" && ! -L "${path}" ]] ||
       die "managed directory is missing or unsafe: ${path}"
     printf '%s\t%s\t%s\t%s\n' \
@@ -314,7 +399,8 @@ restore_managed_directory_states() {
     "${STATE_ROOT}" \
     "${STATE_ROOT}/transactions" \
     "${CONFIG_ROOT}" \
-    "${CONFIG_ROOT}/certs"; do
+    "${CONFIG_ROOT}/certs" \
+    "${CONFIG_ROOT}/bdm-certs"; do
     if [[ -z "${seen["${expected_path}"]+present}" ]]; then
       printf 'ERROR: transaction is missing managed-directory metadata for %s\n' \
         "${expected_path}" >&2
@@ -333,7 +419,8 @@ restore_managed_directory_states() {
     "${STATE_ROOT}" \
     "${STATE_ROOT}/transactions" \
     "${CONFIG_ROOT}" \
-    "${CONFIG_ROOT}/certs"; do
+    "${CONFIG_ROOT}/certs" \
+    "${CONFIG_ROOT}/bdm-certs"; do
     owner="${recorded_owner["${expected_path}"]}"
     group="${recorded_group["${expected_path}"]}"
     mode="${recorded_mode["${expected_path}"]}"
@@ -453,7 +540,10 @@ restore_failed_install() {
     "${CONFIG_ROOT}/block-profile.env" \
     "${CONFIG_ROOT}/certs/block-hmi.crt" \
     "${CONFIG_ROOT}/certs/block-hmi.key" \
-    "${CONFIG_ROOT}/certs/ca.crt"; do
+    "${CONFIG_ROOT}/certs/ca.crt" \
+    "${CONFIG_ROOT}/bdm-certs/ca.crt" \
+    "${CONFIG_ROOT}/bdm-certs/client.crt" \
+    "${CONFIG_ROOT}/bdm-certs/client.key"; do
     restore_path_from_transaction "${managed_path}" "${tx_dir}" ||
       restore_failed="true"
   done
@@ -610,7 +700,7 @@ while [[ "$#" -gt 0 ]]; do
       execute_confirmed="true"
       shift
       ;;
-    --profile|--version|--artifact-dir|--agent-config|--simulator-config|--tls-cert|--tls-key|--tls-ca|--git-commit|--common-baseline|--hmi-url|--control-admin)
+    --profile|--version|--artifact-dir|--agent-config|--simulator-config|--tls-cert|--tls-key|--tls-ca|--bdm-ca|--bdm-client-cert|--bdm-client-key|--git-commit|--common-baseline|--hmi-url|--control-admin)
       [[ "$#" -ge 2 ]] || die "missing value for $1"
       option="$1"
       value="$2"
@@ -624,6 +714,9 @@ while [[ "$#" -gt 0 ]]; do
         --tls-cert) tls_cert="${value}" ;;
         --tls-key) tls_key="${value}" ;;
         --tls-ca) tls_ca="${value}" ;;
+        --bdm-ca) bdm_ca="${value}" ;;
+        --bdm-client-cert) bdm_client_cert="${value}" ;;
+        --bdm-client-key) bdm_client_key="${value}" ;;
         --git-commit) git_commit="${value}" ;;
         --common-baseline) common_baseline="${value}" ;;
         --hmi-url) hmi_url="${value}" ;;
@@ -655,7 +748,7 @@ esac
 
 for command_name in \
   awk basename cat chmod chown cmp cp curl cut date dirname flock getent grep \
-  install ln mv openssl python3 readlink rm sha256sum sleep stat systemctl; do
+  install ln mountpoint mv openssl python3 readlink rm sha256sum sleep stat systemctl tr; do
   require_command "${command_name}"
 done
 
@@ -708,6 +801,19 @@ elif [[ -n "${simulator_config}" ]]; then
   die "--simulator-config is accepted only with --profile lab"
 fi
 validate_profile_config
+if [[ "${bdm_enabled}" == "True" ]]; then
+  [[ -n "${bdm_ca}" && -n "${bdm_client_cert}" && -n "${bdm_client_key}" ]] ||
+    die "bdm.enabled=true requires --bdm-ca, --bdm-client-cert and --bdm-client-key"
+  require_regular_file "${bdm_ca}"
+  require_regular_file "${bdm_client_cert}"
+  require_regular_file "${bdm_client_key}"
+  validate_private_key_mode "${bdm_client_key}"
+  reject_private_key_blocks "BDM client certificate" "${bdm_client_cert}"
+  reject_private_key_blocks "BDM trusted CA bundle" "${bdm_ca}"
+  verify_bdm_certificate_material
+elif [[ -n "${bdm_ca}" || -n "${bdm_client_cert}" || -n "${bdm_client_key}" ]]; then
+  die "BDM certificate arguments are accepted only when bdm.enabled=true"
+fi
 
 release_dir="${RELEASE_ROOT}/${version}"
 agent_config_hash="$(sha256sum "${agent_config}" | awk '{print $1}')"
@@ -723,6 +829,7 @@ flock -n 9 || die "another Block install or rollback is running"
 if [[ "${TEST_MODE}" != "true" ]]; then
   "${SCRIPT_DIR}/install-users.sh"
 fi
+validate_data_root
 
 ensure_directory_exists_without_relabel "${OPT_ROOT}" root root 0755
 ensure_directory_exists_without_relabel "${RELEASE_ROOT}" root root 0755
@@ -731,6 +838,8 @@ ensure_directory_exists_without_relabel "${STATE_ROOT}/transactions" root root 0
 ensure_directory_exists_without_relabel "${CONFIG_ROOT}" root root 0755
 ensure_directory_exists_without_relabel \
   "${CONFIG_ROOT}/certs" root "${HMI_FILE_GROUP}" 0750
+ensure_directory_exists_without_relabel \
+  "${CONFIG_ROOT}/bdm-certs" root "${AGENT_FILE_GROUP}" 0750
 maybe_failpoint "after-directory-preflight"
 
 release_reused="false"
@@ -774,6 +883,8 @@ if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
   done
   for config_example in \
     block-agent.example.json \
+    block-agent-bdm.example.json \
+    block-agent-simulator-bdm.example.json \
     block-agent-simulator.example.json \
     plc-simulator.example.json; do
     cmp -s \
@@ -789,6 +900,8 @@ if [[ -e "${release_dir}" || -L "${release_dir}" ]]; then
     "${release_dir}/deploy/verify-static.sh:root:root:755" \
     "${release_dir}/deploy/tests/deploy-regression.sh:root:root:755" \
     "${release_dir}/deploy/config/block-agent.example.json:root:root:644" \
+    "${release_dir}/deploy/config/block-agent-bdm.example.json:root:root:644" \
+    "${release_dir}/deploy/config/block-agent-simulator-bdm.example.json:root:root:644" \
     "${release_dir}/deploy/config/block-agent-simulator.example.json:root:root:644" \
     "${release_dir}/deploy/config/plc-simulator.example.json:root:root:644" \
     "${release_dir}/manifest.txt:root:root:644"; do
@@ -820,6 +933,12 @@ if [[ "${same_current}" == "true" ]] &&
   cmp -s "${tls_key}" "${CONFIG_ROOT}/certs/block-hmi.key" &&
   cmp -s "${tls_ca}" "${CONFIG_ROOT}/certs/ca.crt"; then
   host_matches_desired="true"
+  if [[ "${bdm_enabled}" == "True" ]] &&
+    { ! cmp -s "${bdm_ca}" "${CONFIG_ROOT}/bdm-certs/ca.crt" ||
+      ! cmp -s "${bdm_client_cert}" "${CONFIG_ROOT}/bdm-certs/client.crt" ||
+      ! cmp -s "${bdm_client_key}" "${CONFIG_ROOT}/bdm-certs/client.key"; }; then
+    host_matches_desired="false"
+  fi
   if [[ "${profile}" == "lab" ]] &&
     ! cmp -s "${simulator_config}" "${CONFIG_ROOT}/plc-simulator.json"; then
     host_matches_desired="false"
@@ -854,6 +973,17 @@ if [[ "${same_current}" == "true" ]] &&
     metadata_matches_expected "${release_dir}/bin/plc-simulator" "root:root:755" ||
       host_matches_desired="false"
   fi
+  if [[ "${bdm_enabled}" == "True" ]]; then
+    for metadata_spec in \
+      "${CONFIG_ROOT}/bdm-certs/ca.crt:root:${AGENT_FILE_GROUP}:640" \
+      "${CONFIG_ROOT}/bdm-certs/client.crt:root:${AGENT_FILE_GROUP}:640" \
+      "${CONFIG_ROOT}/bdm-certs/client.key:root:${AGENT_FILE_GROUP}:640"; do
+      metadata_path="${metadata_spec%%:*}"
+      metadata_expected="${metadata_spec#*:}"
+      metadata_matches_expected "${metadata_path}" "${metadata_expected}" ||
+        host_matches_desired="false"
+    done
+  fi
   for unit_name in block-agent.service block-hmi.service block-plc-simulator.service; do
     metadata_matches_expected "${SYSTEMD_ROOT}/${unit_name}" "root:root:644" ||
       host_matches_desired="false"
@@ -864,7 +994,8 @@ if [[ "${same_current}" == "true" ]] &&
     "${STATE_ROOT}:root:root:700" \
     "${STATE_ROOT}/transactions:root:root:700" \
     "${CONFIG_ROOT}:root:root:755" \
-    "${CONFIG_ROOT}/certs:root:${HMI_FILE_GROUP}:750"; do
+    "${CONFIG_ROOT}/certs:root:${HMI_FILE_GROUP}:750" \
+    "${CONFIG_ROOT}/bdm-certs:root:${AGENT_FILE_GROUP}:750"; do
     metadata_path="${metadata_spec%%:*}"
     metadata_expected="${metadata_spec#*:}"
     if [[ "${TEST_MODE}" == "true" &&
@@ -944,7 +1075,10 @@ done
 for certificate_path in \
   "${CONFIG_ROOT}/certs/block-hmi.crt" \
   "${CONFIG_ROOT}/certs/block-hmi.key" \
-  "${CONFIG_ROOT}/certs/ca.crt"; do
+  "${CONFIG_ROOT}/certs/ca.crt" \
+  "${CONFIG_ROOT}/bdm-certs/ca.crt" \
+  "${CONFIG_ROOT}/bdm-certs/client.crt" \
+  "${CONFIG_ROOT}/bdm-certs/client.key"; do
   [[ ! -L "${certificate_path}" ]] ||
     die "certificate destination must not be a symlink: ${certificate_path}"
   backup_file "${certificate_path}" "${tx_dir}"
@@ -962,6 +1096,7 @@ install -d -o root -g root -m 0755 "${OPT_ROOT}" "${RELEASE_ROOT}"
 install -d -o root -g root -m 0700 "${STATE_ROOT}" "${STATE_ROOT}/transactions"
 install -d -o root -g root -m 0755 "${CONFIG_ROOT}"
 install -d -o root -g "${HMI_FILE_GROUP}" -m 0750 "${CONFIG_ROOT}/certs"
+install -d -o root -g "${AGENT_FILE_GROUP}" -m 0750 "${CONFIG_ROOT}/bdm-certs"
 
 if [[ "${release_reused}" == "false" ]]; then
   install -d -o root -g root -m 0755 \
@@ -996,6 +1131,8 @@ if [[ "${release_reused}" == "false" ]]; then
   done
   for config_example in \
     block-agent.example.json \
+    block-agent-bdm.example.json \
+    block-agent-simulator-bdm.example.json \
     block-agent-simulator.example.json \
     plc-simulator.example.json; do
     install -o root -g root -m 0644 \
@@ -1018,6 +1155,13 @@ if [[ "${release_reused}" == "false" ]]; then
     simulator_hash="$(sha256sum "${staging_dir}/bin/plc-simulator" | awk '{print $1}')"
   fi
   certificate_fingerprint="$(openssl x509 -in "${tls_cert}" -noout -fingerprint -sha256 | cut -d= -f2)"
+  bdm_certificate_fingerprint="not-enabled"
+  if [[ "${bdm_enabled}" == "True" ]]; then
+    bdm_certificate_fingerprint="$(
+      openssl x509 -in "${bdm_client_cert}" -noout -fingerprint -sha256 |
+        cut -d= -f2
+    )"
+  fi
   previous_version="none"
   if [[ -f "${tx_dir}/previous-current" ]]; then
     previous_version="$(basename -- "$(cat "${tx_dir}/previous-current")")"
@@ -1036,6 +1180,8 @@ plc_simulator_sha256=${simulator_hash}
 agent_config_sha256=${agent_config_hash}
 simulator_config_sha256=${simulator_config_hash}
 hmi_certificate_sha256=${certificate_fingerprint}
+bdm_enabled=${bdm_enabled}
+bdm_client_certificate_sha256=${bdm_certificate_fingerprint}
 transaction=${tx_dir}
 EOF
   chmod 0644 "${staging_dir}/manifest.txt"
@@ -1065,6 +1211,14 @@ fi
 install -o root -g root -m 0644 "${tls_cert}" "${CONFIG_ROOT}/certs/block-hmi.crt"
 install -o root -g root -m 0644 "${tls_ca}" "${CONFIG_ROOT}/certs/ca.crt"
 install -o root -g "${HMI_FILE_GROUP}" -m 0640 "${tls_key}" "${CONFIG_ROOT}/certs/block-hmi.key"
+if [[ "${bdm_enabled}" == "True" ]]; then
+  install -o root -g "${AGENT_FILE_GROUP}" -m 0640 \
+    "${bdm_ca}" "${CONFIG_ROOT}/bdm-certs/ca.crt"
+  install -o root -g "${AGENT_FILE_GROUP}" -m 0640 \
+    "${bdm_client_cert}" "${CONFIG_ROOT}/bdm-certs/client.crt"
+  install -o root -g "${AGENT_FILE_GROUP}" -m 0640 \
+    "${bdm_client_key}" "${CONFIG_ROOT}/bdm-certs/client.key"
+fi
 rm -f -- "${CONFIG_ROOT}/block-profile.env"
 maybe_failpoint "after-config"
 

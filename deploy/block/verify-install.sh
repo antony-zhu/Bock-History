@@ -210,7 +210,7 @@ case "${hmi_url}" in
   *) die "--hmi-url must be loopback HTTPS on port 8443" ;;
 esac
 
-for command_name in cmp curl find getent grep id paste readlink runuser sort ss stat systemctl tr; do
+for command_name in cmp curl find getent grep id mountpoint paste python3 readlink runuser sort ss stat systemctl tr; do
   require_command "${command_name}"
 done
 
@@ -224,20 +224,25 @@ for unit_name in block-agent.service block-hmi.service block-plc-simulator.servi
     die "${unit_name} has an unreviewed drop-in"
 done
 
-assert_unit_line block-agent.service "PrivateNetwork=true"
-assert_unit_line block-agent.service "RestrictAddressFamilies=AF_UNIX"
+assert_unit_line block-agent.service "RestrictAddressFamilies=AF_UNIX AF_INET"
+assert_unit_line block-agent.service "RequiresMountsFor=/var/lib/block"
+assert_unit_line block-agent.service "ConditionPathIsMountPoint=/var/lib/block"
+assert_unit_line block-agent.service "StateDirectory=block"
+assert_unit_line block-agent.service "IPAddressDeny=any"
+assert_unit_line block-agent.service "IPAddressAllow=192.168.1.105/32"
+assert_unit_line block-agent.service "ReadWritePaths=/run/block-agent /var/lib/block"
 assert_unit_line block-agent.service "SupplementaryGroups=block-hmi-api block-sim-io"
 assert_unit_line block-agent.service "InaccessiblePaths=-/run/block-plc/control -/var/lib/block-plc-sim"
 assert_unit_line block-plc-simulator.service "PrivateNetwork=true"
 assert_unit_line block-plc-simulator.service "RestrictAddressFamilies=AF_UNIX"
 assert_unit_line block-plc-simulator.service "SupplementaryGroups=block-sim-io block-sim-control"
-assert_unit_line block-plc-simulator.service "InaccessiblePaths=-/run/block-agent -/var/lib/block-agent"
+assert_unit_line block-plc-simulator.service "InaccessiblePaths=-/run/block-agent -/var/lib/block"
 assert_unit_line block-hmi.service "Environment=BLOCK_HMI_ADDR=127.0.0.1:8443"
 assert_unit_line block-hmi.service "Environment=BLOCK_HMI_AGENT_TIMEOUT=8s"
 assert_unit_line block-hmi.service "SupplementaryGroups=block-hmi-api"
 assert_unit_line block-hmi.service "IPAddressDeny=any"
 assert_unit_line block-hmi.service "IPAddressAllow=localhost"
-assert_unit_line block-hmi.service "InaccessiblePaths=-/run/block-plc -/var/lib/block-agent -/var/lib/block-plc-sim"
+assert_unit_line block-hmi.service "InaccessiblePaths=-/run/block-plc -/var/lib/block -/var/lib/block-plc-sim"
 
 assert_user_groups_exact block-agent block-agent block-hmi-api block-sim-io
 assert_user_groups_exact block-hmi block-hmi block-hmi-api
@@ -261,9 +266,23 @@ assert_file_metadata /etc/block/certs/block-hmi.crt root root 644
 assert_file_metadata /etc/block/certs/ca.crt root root 644
 assert_file_metadata /etc/block/certs/block-hmi.key root block-hmi 640
 assert_directory_metadata /etc/block/certs root block-hmi 750
+assert_directory_metadata /etc/block/bdm-certs root block-agent 750
+bdm_enabled="$(
+  python3 -c 'import json; print("true" if json.load(open("/etc/block/block-agent.json", encoding="utf-8"))["bdm"]["enabled"] else "false")'
+)"
+if [[ "${bdm_enabled}" == "true" ]]; then
+  assert_file_metadata /etc/block/bdm-certs/ca.crt root block-agent 640
+  assert_file_metadata /etc/block/bdm-certs/client.crt root block-agent 640
+  assert_file_metadata /etc/block/bdm-certs/client.key root block-agent 640
+  assert_access block-agent /etc/block/bdm-certs/client.key allow
+  assert_access block-hmi /etc/block/bdm-certs/client.key deny
+  assert_access block-simulator /etc/block/bdm-certs/client.key deny
+fi
 [[ ! -e /etc/block/block-profile.env && ! -L /etc/block/block-profile.env ]] ||
   die "legacy block-profile.env must not remain installed"
-assert_directory_metadata /var/lib/block-agent block-agent block-agent 700
+mountpoint -q /var/lib/block ||
+  die "/var/lib/block is not the dedicated mounted data filesystem"
+assert_directory_metadata /var/lib/block block-agent block-agent 700
 [[ -L "${CURRENT_ROOT}" ]] || die "${CURRENT_ROOT} must be a symlink"
 current_target="$(readlink -f "${CURRENT_ROOT}")"
 [[ "${current_target}" == /opt/block/releases/* ]] ||
@@ -275,21 +294,21 @@ assert_file_metadata "${CURRENT_ROOT}/bin/block-agent" root root 755
 assert_file_metadata "${CURRENT_ROOT}/bin/block-hmi" root root 755
 
 for attempt in {1..20}; do
-  if [[ -f /var/lib/block-agent/block.db ]]; then
+  if [[ -f /var/lib/block/block.db ]]; then
     break
   fi
   sleep 0.5
 done
-[[ -f /var/lib/block-agent/block.db && ! -L /var/lib/block-agent/block.db ]] ||
+[[ -f /var/lib/block/block.db && ! -L /var/lib/block/block.db ]] ||
   die "Agent SQLite database is missing or unsafe"
-[[ "$(stat -c '%U:%G' /var/lib/block-agent/block.db)" == "block-agent:block-agent" ]] ||
+[[ "$(stat -c '%U:%G' /var/lib/block/block.db)" == "block-agent:block-agent" ]] ||
   die "Agent SQLite database owner/group must be block-agent:block-agent"
-if find /var/lib/block-agent -maxdepth 1 -type f \
+if find /var/lib/block -maxdepth 1 -type f \
   \( -name 'block.db' -o -name 'block.db-wal' -o -name 'block.db-shm' \) \
   -perm /077 -print -quit | grep -q .; then
   die "Agent SQLite/WAL files must not grant group/world permissions"
 fi
-if find /var/lib/block-agent -maxdepth 1 -type l \
+if find /var/lib/block -maxdepth 1 -type l \
   \( -name 'block.db-wal' -o -name 'block.db-shm' \) \
   -print -quit | grep -q .; then
   die "Agent SQLite WAL/SHM paths must not be symlinks"
@@ -333,9 +352,9 @@ fi
 
 assert_access block-hmi /run/block-agent/api/block-agent.sock allow
 assert_access block-simulator /run/block-agent/api/block-agent.sock deny
-assert_access block-agent /var/lib/block-agent allow
-assert_access block-hmi /var/lib/block-agent deny
-assert_access block-simulator /var/lib/block-agent deny
+assert_access block-agent /var/lib/block allow
+assert_access block-hmi /var/lib/block deny
+assert_access block-simulator /var/lib/block deny
 
 if [[ "${profile}" == "lab" ]]; then
   assert_access block-agent /run/block-plc/io/io.sock allow
@@ -361,7 +380,7 @@ for listen_address in "${hmi_listeners[@]}"; do
   esac
 done
 
-for forbidden_port in 80 1883 8080 8081; do
+for forbidden_port in 80 1883 8080 8081 8883; do
   [[ -z "$(listener_addresses tcp "${forbidden_port}")" ]] ||
     die "forbidden plaintext TCP port is listening: ${forbidden_port}"
   [[ -z "$(listener_addresses udp "${forbidden_port}")" ]] ||

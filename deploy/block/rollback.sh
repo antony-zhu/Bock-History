@@ -79,7 +79,8 @@ is_managed_directory_path() {
       "${STATE_ROOT}"|\
       "${STATE_ROOT}/transactions"|\
       "${CONFIG_ROOT}"|\
-      "${CONFIG_ROOT}/certs")
+      "${CONFIG_ROOT}/certs"|\
+      "${CONFIG_ROOT}/bdm-certs")
       return 0
       ;;
     *)
@@ -127,7 +128,8 @@ restore_managed_directory_states() {
     "${STATE_ROOT}" \
     "${STATE_ROOT}/transactions" \
     "${CONFIG_ROOT}" \
-    "${CONFIG_ROOT}/certs"; do
+    "${CONFIG_ROOT}/certs" \
+    "${CONFIG_ROOT}/bdm-certs"; do
     [[ -n "${seen["${expected_path}"]+present}" ]] ||
       die "transaction is missing managed-directory metadata for ${expected_path}"
     if [[ -e "${expected_path}" || -L "${expected_path}" ]] &&
@@ -141,7 +143,8 @@ restore_managed_directory_states() {
     "${STATE_ROOT}" \
     "${STATE_ROOT}/transactions" \
     "${CONFIG_ROOT}" \
-    "${CONFIG_ROOT}/certs"; do
+    "${CONFIG_ROOT}/certs" \
+    "${CONFIG_ROOT}/bdm-certs"; do
     owner="${recorded_owner["${expected_path}"]}"
     group="${recorded_group["${expected_path}"]}"
     mode="${recorded_mode["${expected_path}"]}"
@@ -362,7 +365,10 @@ for managed_path in \
   "${SYSTEMD_ROOT}/block-plc-simulator.service" \
   "${CONFIG_ROOT}/block-agent.json" \
   "${CONFIG_ROOT}/plc-simulator.json" \
-  "${CONFIG_ROOT}/block-profile.env"; do
+  "${CONFIG_ROOT}/block-profile.env" \
+  "${CONFIG_ROOT}/bdm-certs/ca.crt" \
+  "${CONFIG_ROOT}/bdm-certs/client.crt" \
+  "${CONFIG_ROOT}/bdm-certs/client.key"; do
   restore_path "${managed_path}" "${tx_dir}"
 done
 

@@ -329,6 +329,42 @@ EOF
   chmod 0600 "${directory}/hmi.key" "${directory}/ca.key"
 }
 
+make_bdm_certificate_fixture() {
+  local directory="$1"
+  local principal="blk-0123456789abcdef0123456789abcdef"
+
+  install -d -m 0700 "${directory}"
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -subj '/CN=BDM server trust CA' \
+    -keyout "${directory}/server-ca.key" \
+    -out "${directory}/server-ca.crt" \
+    -days 2 >/dev/null 2>&1
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -subj '/CN=Block client issuing CA' \
+    -keyout "${directory}/client-ca.key" \
+    -out "${directory}/client-ca.crt" \
+    -days 2 >/dev/null 2>&1
+  openssl req -newkey rsa:2048 -nodes \
+    -subj "/CN=${principal}" \
+    -keyout "${directory}/client.key" \
+    -out "${directory}/client.csr" >/dev/null 2>&1
+  cat >"${directory}/client-extensions.cnf" <<'EOF'
+extendedKeyUsage=clientAuth
+EOF
+  openssl x509 -req \
+    -in "${directory}/client.csr" \
+    -CA "${directory}/client-ca.crt" \
+    -CAkey "${directory}/client-ca.key" \
+    -CAcreateserial \
+    -out "${directory}/client.crt" \
+    -days 2 \
+    -extfile "${directory}/client-extensions.cnf" >/dev/null 2>&1
+  chmod 0600 \
+    "${directory}/server-ca.key" \
+    "${directory}/client-ca.key" \
+    "${directory}/client.key"
+}
+
 make_inputs() {
   local directory="$1"
 
@@ -338,9 +374,12 @@ make_inputs() {
     chmod 0755 "${directory}/artifact/bin/${binary}"
   done
   cp "${ROOT}/config/block-agent.example.json" "${directory}/agent.json"
+  cp "${ROOT}/config/block-agent-bdm.example.json" "${directory}/agent-bdm.json"
+  cp "${ROOT}/config/block-agent-simulator-bdm.example.json" "${directory}/agent-simulator-bdm.json"
   cp "${ROOT}/config/block-agent-simulator.example.json" "${directory}/agent-lab.json"
   cp "${ROOT}/config/plc-simulator.example.json" "${directory}/simulator.json"
   make_certificate_fixture "${directory}/tls"
+  make_bdm_certificate_fixture "${directory}/bdm-tls"
 }
 
 run_install() {
@@ -394,6 +433,37 @@ run_lab_install() {
     --tls-cert "${inputs}/tls/hmi.crt" \
     --tls-key "${inputs}/tls/hmi.key" \
     --tls-ca "${inputs}/tls/ca.crt" \
+    --git-commit 1111111111111111111111111111111111111111 \
+    --common-baseline 2222222222222222222222222222222222222222
+}
+
+run_bdm_install() {
+  local host_root="$1"
+  local inputs="$2"
+  shift 2
+
+  env \
+    PATH="${TEST_ROOT}/bin:${PATH}" \
+    BLOCK_RELEASE_ROLE=BLK-REL \
+    BLOCK_DEPLOY_TEST_MODE=true \
+    BLOCK_DEPLOY_TEST_ROOT="${host_root}" \
+    BLOCK_DEPLOY_TEST_REAL_INSTALL="${REAL_INSTALL}" \
+    BLOCK_DEPLOY_TEST_REAL_CHMOD="${REAL_CHMOD}" \
+    BLOCK_DEPLOY_TEST_REAL_CHOWN="${REAL_CHOWN}" \
+    "$@" \
+    "${ROOT}/install.sh" \
+    --execute \
+    --profile lab \
+    --version 1.2.3-bdm-lab-test \
+    --artifact-dir "${inputs}/artifact" \
+    --agent-config "${inputs}/agent-simulator-bdm.json" \
+    --simulator-config "${inputs}/simulator.json" \
+    --tls-cert "${inputs}/tls/hmi.crt" \
+    --tls-key "${inputs}/tls/hmi.key" \
+    --tls-ca "${inputs}/tls/ca.crt" \
+    --bdm-ca "${inputs}/bdm-tls/server-ca.crt" \
+    --bdm-client-cert "${inputs}/bdm-tls/client.crt" \
+    --bdm-client-key "${inputs}/bdm-tls/client.key" \
     --git-commit 1111111111111111111111111111111111111111 \
     --common-baseline 2222222222222222222222222222222222222222
 }
@@ -643,6 +713,25 @@ assert_event_order \
   "agent-health-ready" \
   "restart block-hmi.service"
 
+# BDM server trust and Block client identity use deliberately separate CAs.
+# A valid installation must not try to verify the client certificate against
+# the server CA bundle.
+bdm_root="${TEST_ROOT}/bdm-host"
+install -d -m 0755 "${bdm_root}/etc/systemd/system"
+run_bdm_install \
+  "${bdm_root}" \
+  "${TEST_ROOT}/inputs" \
+  BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
+  >"${TEST_ROOT}/bdm.out" 2>&1
+cmp -s \
+  "${TEST_ROOT}/inputs/bdm-tls/server-ca.crt" \
+  "${bdm_root}/etc/block/bdm-certs/ca.crt" ||
+  fail "installer did not preserve the distinct BDM server CA"
+cmp -s \
+  "${TEST_ROOT}/inputs/bdm-tls/client.crt" \
+  "${bdm_root}/etc/block/bdm-certs/client.crt" ||
+  fail "installer did not install the separately issued Block client certificate"
+
 # Reusing an unchanged current release must enforce the same Agent-ready gate.
 : >"${production_root}/var/lib/block-release/systemctl-test.log"
 run_install \
@@ -710,6 +799,8 @@ if [[ "${BLOCK_DEPLOY_SKIP_PACKAGED_STATIC_ASSERT:-false}" != "true" ]]; then
     fail "release is missing executable tests/deploy-regression.sh"
   for config_example in \
     block-agent.example.json \
+    block-agent-bdm.example.json \
+    block-agent-simulator-bdm.example.json \
     block-agent-simulator.example.json \
     plc-simulator.example.json; do
     cmp -s \
