@@ -18,7 +18,9 @@ archive/prototypes/web-hmi/     # 旧静态 HMI 原型，只读参考
 
 ## 公共架构与契约
 
-公共架构和跨组件契约的唯一来源是相邻仓库 `D:/codex/Block-BDM-Common`。本仓库通过根目录的 `COMMON_BASELINE` 固定其确切 commit，不在本仓库复制一套可独立修改的公共契约。
+公共架构和跨组件契约的唯一来源是工作区内的
+`D:/codex/Block-DMP/repos/Common`。本仓库通过根目录的
+`COMMON_BASELINE` 固定其确切 commit，不在本仓库复制一套可独立修改的公共契约。
 
 修改 MQTT、OpenAPI、JSON Schema、身份字段或跨组件状态前，必须先由 `ARCH-COMMON` 更新 Common，再更新本仓库的 `COMMON_BASELINE`。
 

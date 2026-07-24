@@ -7,7 +7,9 @@
 - `BLK-DEV` 负责 `services/block-agent/**`、`apps/block-hmi/**` 和 `deploy/block/**`。
 - QA/集成角色只能在任务明确授权时修改 `tests/**`。
 - 不修改 BDM 源码，不在本仓库实现 BDM Web 或 Android Pad。
-- 不修改公共契约；跨组件变更先由 `ARCH-COMMON` 在相邻 `D:/codex/Block-BDM-Common` 仓库完成。
+- 不修改公共契约；跨组件变更先由 `ARCH-COMMON` 在
+  `D:\codex\Block-DMP\repos\Common` 仓库完成。禁止访问迁移前的工作区外
+  Common 路径。
 - 两个智能体不得同时修改同一文件；跨所有权修改先提交接口变更请求。
 
 ## 产品边界
