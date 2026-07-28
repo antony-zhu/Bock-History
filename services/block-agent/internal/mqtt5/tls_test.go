@@ -142,6 +142,29 @@ func TestTLSDialerSupportsSeparatedCAsAndRejectsInvalidServerTransport(t *testin
 	if err := dialOneTLSFailure(wrongHostConfig, serverCertificate, clientRoots, 0x0303, 0x0304); err == nil {
 		t.Fatal("wrong server hostname unexpectedly passed")
 	}
+	wrongCAConfig, _, err := TLSConfig(
+		"mqtts://127.0.0.1:8883", clientCA.certFile,
+		clientCertFile, clientKeyFile, principal, now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dialOneTLSFailure(wrongCAConfig, serverCertificate, clientRoots, 0x0303, 0x0304); err == nil {
+		t.Fatal("server certificate issued by an untrusted CA unexpectedly passed")
+	}
+	expiredServerCertFile, expiredServerKeyFile := issueCertificate(
+		t, serverDirectory, serverCA, "expired-server", "bdm-broker",
+		now.Add(-2*time.Hour), now.Add(-time.Hour),
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, nil,
+		[]net.IP{net.ParseIP("127.0.0.1")},
+	)
+	expiredServerCertificate, err := tlsLoadPair(expiredServerCertFile, expiredServerKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dialOneTLSFailure(clientConfig, expiredServerCertificate, clientRoots, 0x0303, 0x0304); err == nil {
+		t.Fatal("expired server certificate unexpectedly passed")
+	}
 	if err := dialOneTLSFailure(clientConfig, serverCertificate, clientRoots, 0x0301, 0x0302); err == nil {
 		t.Fatal("TLS 1.0/1.1-only server unexpectedly passed")
 	}

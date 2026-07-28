@@ -128,6 +128,10 @@ artifact/
   开启 PLC Simulator 和 BDM 上行，避免现场拼装配置。无 Simulator 的生产
   模式才使用 `block-agent-bdm.example.json`。当前实验端点固定写为
   `mqtts://192.168.1.105:8883`；
+- Release 必须把样例中的 `softwareVersion` 精确替换为安装命令的
+  `--version`，把 `architecture` 设为 `arm64`，并把 `hardwareModel`、
+  `osVersion` 和 `streamGeneration` 替换为目标机的已核对事实；安装器拒绝
+  未替换的占位值、版本不一致和非法 generation；
 - 只用于验证 BDM Broker 服务端证书的 `bdm-server-ca.crt`；
 - CN 精确等于配置中不透明 `blk-<32位小写十六进制>` principal、含
   `clientAuth` EKU 的 Block 客户端证书及匹配私钥。

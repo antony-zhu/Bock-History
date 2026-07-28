@@ -378,6 +378,22 @@ make_inputs() {
   cp "${ROOT}/config/block-agent-simulator-bdm.example.json" "${directory}/agent-simulator-bdm.json"
   cp "${ROOT}/config/block-agent-simulator.example.json" "${directory}/agent-lab.json"
   cp "${ROOT}/config/plc-simulator.example.json" "${directory}/simulator.json"
+  python3 - \
+    "${directory}/agent-bdm.json" \
+    "${directory}/agent-simulator-bdm.json" <<'PY'
+import json
+import sys
+
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8") as handle:
+        value = json.load(handle)
+    value["bdm"]["softwareVersion"] = "1.2.3-bdm-lab-test"
+    value["bdm"]["architecture"] = "arm64"
+    value["bdm"]["hardwareModel"] = "rk3566"
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(value, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+PY
   make_certificate_fixture "${directory}/tls"
   make_bdm_certificate_fixture "${directory}/bdm-tls"
 }
@@ -718,6 +734,41 @@ assert_event_order \
 # the server CA bundle.
 bdm_root="${TEST_ROOT}/bdm-host"
 install -d -m 0755 "${bdm_root}/etc/systemd/system"
+
+# The checked-in examples are templates, not deployable host facts. An
+# unreplaced or mismatched release version must fail before host mutation.
+cp \
+  "${TEST_ROOT}/inputs/agent-simulator-bdm.json" \
+  "${TEST_ROOT}/inputs/agent-simulator-bdm.ready.json"
+python3 - "${TEST_ROOT}/inputs/agent-simulator-bdm.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    value = json.load(handle)
+value["bdm"]["softwareVersion"] = "replace-at-release"
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(value, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+PY
+if run_bdm_install \
+  "${bdm_root}" \
+  "${TEST_ROOT}/inputs" \
+  BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
+  >"${TEST_ROOT}/bdm-placeholder.out" 2>&1; then
+  fail "BDM-enabled install accepted an unreplaced softwareVersion"
+fi
+grep -Fq 'bdm.softwareVersion must exactly match --version' \
+  "${TEST_ROOT}/bdm-placeholder.out" ||
+  fail "BDM metadata rejection lacked the expected reason"
+[[ ! -e "${bdm_root}/opt/block/current" &&
+  ! -L "${bdm_root}/opt/block/current" ]] ||
+  fail "BDM metadata rejection mutated the target host"
+mv \
+  "${TEST_ROOT}/inputs/agent-simulator-bdm.ready.json" \
+  "${TEST_ROOT}/inputs/agent-simulator-bdm.json"
+
 run_bdm_install \
   "${bdm_root}" \
   "${TEST_ROOT}/inputs" \

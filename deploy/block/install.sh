@@ -121,7 +121,12 @@ print(value)' \
 
 validate_profile_config() {
   local adapter_type
+  local bdm_architecture
   local configured_bdm_enabled
+  local bdm_hardware_model
+  local bdm_os_version
+  local bdm_software_version
+  local bdm_stream_generation
 
   [[ "$(json_value "${agent_config}" localApiSocket)" == "/run/block-agent/api/block-agent.sock" ]] ||
     die "Agent localApiSocket must use the authoritative API path"
@@ -145,6 +150,27 @@ validate_profile_config() {
       die "Agent bdm.clientKeyFile must be /etc/block/bdm-certs/client.key"
     [[ "$(json_value "${agent_config}" bdm.principal)" =~ ^blk-[0-9a-f]{32}$ ]] ||
       die "Agent bdm.principal must be an opaque blk-<32 lowercase hex> identity"
+    bdm_software_version="$(json_value "${agent_config}" bdm.softwareVersion)"
+    [[ "${bdm_software_version}" == "${version}" ]] ||
+      die "Agent bdm.softwareVersion must exactly match --version"
+    bdm_os_version="$(json_value "${agent_config}" bdm.osVersion)"
+    [[ -n "${bdm_os_version}" && "${bdm_os_version}" != "replace-at-release" ]] ||
+      die "Agent bdm.osVersion must be replaced with the target OS fact"
+    bdm_architecture="$(json_value "${agent_config}" bdm.architecture)"
+    [[ "${bdm_architecture}" == "arm64" ]] ||
+      die "Agent bdm.architecture must be arm64 for this release"
+    bdm_hardware_model="$(json_value "${agent_config}" bdm.hardwareModel)"
+    [[ -n "${bdm_hardware_model}" && "${bdm_hardware_model}" != "replace-at-release" ]] ||
+      die "Agent bdm.hardwareModel must be replaced with the target hardware fact"
+    bdm_stream_generation="$(json_value "${agent_config}" bdm.streamGeneration)"
+    [[ "${bdm_stream_generation}" =~ ^[1-9][0-9]{0,15}$ ]] ||
+      die "Agent bdm.streamGeneration must be a canonical positive decimal string"
+    python3 -c \
+      'import sys
+value=int(sys.argv[1])
+raise SystemExit(0 if value <= 9007199254740991 else 1)' \
+      "${bdm_stream_generation}" ||
+      die "Agent bdm.streamGeneration exceeds the contract maximum"
   fi
 
   adapter_type="$(json_value "${agent_config}" adapter.type)"
