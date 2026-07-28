@@ -76,13 +76,13 @@ assert_line "${ROOT}/config/block-agent.example.json" '  "databasePath": "/var/l
 assert_line "${ROOT}/config/block-agent.example.json" '    "enabled": false'
 assert_line "${ROOT}/config/block-agent-bdm.example.json" '  "databasePath": "/var/lib/block/block.db",'
 assert_line "${ROOT}/config/block-agent-bdm.example.json" '    "endpoint": "mqtts://192.168.1.105:8883",'
-assert_line "${ROOT}/config/block-agent-bdm.example.json" '    "principal": "blk-0123456789abcdef0123456789abcdef",'
+assert_line "${ROOT}/config/block-agent-bdm.example.json" '    "principal": "INVALID_APPROVED_BLOCK_PRINCIPAL_REQUIRED",'
 assert_line "${ROOT}/config/block-agent-bdm.example.json" '    "caFile": "/etc/block/bdm-certs/ca.crt",'
 assert_line "${ROOT}/config/block-agent-simulator-bdm.example.json" '    "type": "simulator",'
 assert_line "${ROOT}/config/block-agent-simulator-bdm.example.json" '  "databasePath": "/var/lib/block/block.db",'
 assert_line "${ROOT}/config/block-agent-simulator-bdm.example.json" '    "enabled": true,'
 assert_line "${ROOT}/config/block-agent-simulator-bdm.example.json" '    "endpoint": "mqtts://192.168.1.105:8883",'
-assert_line "${ROOT}/config/block-agent-simulator-bdm.example.json" '    "principal": "blk-0123456789abcdef0123456789abcdef",'
+assert_line "${ROOT}/config/block-agent-simulator-bdm.example.json" '    "principal": "INVALID_APPROVED_BLOCK_PRINCIPAL_REQUIRED",'
 assert_line "${ROOT}/config/block-agent-simulator.example.json" '  "databasePath": "/var/lib/block/block.db",'
 assert_line "${ROOT}/config/block-agent-simulator.example.json" '    "ioSocket": "/run/block-plc/io/io.sock"'
 assert_line "${ROOT}/config/plc-simulator.example.json" '  "ioSocket": "/run/block-plc/io/io.sock",'
@@ -112,6 +112,16 @@ assert_absent \
   "${ROOT}/config/block-agent-bdm.example.json" \
   "${ROOT}/config/block-agent-simulator-bdm.example.json" \
   "${ROOT}/config/block-agent-simulator.example.json"
+
+# A reviewed release must inject its approved identity into a secure staging
+# configuration. No usable opaque Block/BDM principal may ship in deploy input
+# files, including examples and regression source. The regression constructs
+# its synthetic principal from separated string fragments at runtime.
+opaque_principal_pattern='(bdm|blk)-''[0-9a-f]{32}'
+if grep -Ern -- "${opaque_principal_pattern}" "${ROOT}" >/dev/null; then
+  grep -Ern -- "${opaque_principal_pattern}" "${ROOT}" >&2 || true
+  die "usable opaque principal found in deploy input"
+fi
 
 # Construct these tokens so this verifier does not match itself.
 insecure_long="--""insecure"

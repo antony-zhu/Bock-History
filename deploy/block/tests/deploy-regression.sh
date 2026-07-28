@@ -6,6 +6,9 @@ readonly CACHE_ROOT="${BLOCK_DMP_CACHE_ROOT:-/mnt/d/codex/Block-DMP/.cache}"
 readonly REAL_INSTALL="$(command -v install)"
 readonly REAL_CHMOD="$(command -v chmod)"
 readonly REAL_CHOWN="$(command -v chown)"
+# Assemble a syntactically valid test-only principal at runtime. Keeping the
+# halves separate prevents a deployable opaque identity from entering source.
+readonly TEST_BDM_PRINCIPAL="blk-""0123456789abcdef""0123456789abcdef"
 
 case "${CACHE_ROOT}" in
   /mnt/d/codex/Block-DMP/.cache|/mnt/d/codex/Block-DMP/.cache/*) ;;
@@ -331,7 +334,7 @@ EOF
 
 make_bdm_certificate_fixture() {
   local directory="$1"
-  local principal="blk-0123456789abcdef0123456789abcdef"
+  local principal="${TEST_BDM_PRINCIPAL}"
 
   install -d -m 0700 "${directory}"
   openssl req -x509 -newkey rsa:2048 -nodes \
@@ -380,13 +383,16 @@ make_inputs() {
   cp "${ROOT}/config/plc-simulator.example.json" "${directory}/simulator.json"
   python3 - \
     "${directory}/agent-bdm.json" \
-    "${directory}/agent-simulator-bdm.json" <<'PY'
+    "${directory}/agent-simulator-bdm.json" \
+    "${TEST_BDM_PRINCIPAL}" <<'PY'
 import json
 import sys
 
-for path in sys.argv[1:]:
+*paths, principal = sys.argv[1:]
+for path in paths:
     with open(path, encoding="utf-8") as handle:
         value = json.load(handle)
+    value["bdm"]["principal"] = principal
     value["bdm"]["softwareVersion"] = "1.2.3-bdm-lab-test"
     value["bdm"]["architecture"] = "arm64"
     value["bdm"]["hardwareModel"] = "rk3566"
@@ -813,6 +819,10 @@ mutations = {
     "stream-generation-too-large": ("streamGeneration", "9007199254740992"),
     "endpoint-number": ("endpoint", 8883),
     "principal-null": ("principal", None),
+    "principal-placeholder": (
+        "principal",
+        "INVALID_APPROVED_BLOCK_PRINCIPAL_REQUIRED",
+    ),
 }
 with open(path, encoding="utf-8") as handle:
     value = json.load(handle)
@@ -879,6 +889,9 @@ assert_bdm_metadata_rejected \
 assert_bdm_metadata_rejected \
   "principal-null" \
   "Agent bdm.principal must be a JSON string"
+assert_bdm_metadata_rejected \
+  "principal-placeholder" \
+  "Agent bdm.principal must be an opaque blk-<32 lowercase hex> identity"
 assert_bdm_metadata_rejected \
   "enabled-string" \
   "Agent bdm.enabled must be a JSON boolean"

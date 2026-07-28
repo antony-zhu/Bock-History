@@ -15,7 +15,7 @@
   "bdm": {
     "enabled": true,
     "endpoint": "mqtts://192.168.1.105:8883",
-    "principal": "blk-0123456789abcdef0123456789abcdef",
+    "principal": "INVALID_APPROVED_BLOCK_PRINCIPAL_REQUIRED",
     "caFile": "/etc/block/bdm-certs/ca.crt",
     "clientCertFile": "/etc/block/bdm-certs/client.crt",
     "clientKeyFile": "/etc/block/bdm-certs/client.key",
