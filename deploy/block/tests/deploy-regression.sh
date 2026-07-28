@@ -731,44 +731,167 @@ assert_event_order \
 
 # BDM server trust and Block client identity use deliberately separate CAs.
 # A valid installation must not try to verify the client certificate against
-# the server CA bundle.
-bdm_root="${TEST_ROOT}/bdm-host"
-install -d -m 0755 "${bdm_root}/etc/systemd/system"
-
-# The checked-in examples are templates, not deployable host facts. An
-# unreplaced or mismatched release version must fail before host mutation.
+# the server CA bundle. Invalid metadata must fail before any host mutation.
 cp \
   "${TEST_ROOT}/inputs/agent-simulator-bdm.json" \
   "${TEST_ROOT}/inputs/agent-simulator-bdm.ready.json"
-python3 - "${TEST_ROOT}/inputs/agent-simulator-bdm.json" <<'PY'
+
+snapshot_test_host() {
+  local host_root="$1"
+
+  python3 - "${host_root}" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+
+root = os.path.abspath(sys.argv[1])
+entries = []
+for current, directories, files in os.walk(root, topdown=True, followlinks=False):
+    directories.sort()
+    files.sort()
+    for name in directories + files:
+        path = os.path.join(current, name)
+        relative = os.path.relpath(path, root).replace(os.sep, "/")
+        metadata = os.lstat(path)
+        entry = {
+            "gid": metadata.st_gid,
+            "mode": stat.S_IMODE(metadata.st_mode),
+            "path": relative,
+            "uid": metadata.st_uid,
+        }
+        if stat.S_ISDIR(metadata.st_mode):
+            entry["type"] = "directory"
+        elif stat.S_ISREG(metadata.st_mode):
+            entry["type"] = "file"
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            entry["sha256"] = digest.hexdigest()
+        elif stat.S_ISLNK(metadata.st_mode):
+            entry["type"] = "symlink"
+            entry["target"] = os.readlink(path)
+        else:
+            entry["type"] = "special"
+        entries.append(entry)
+print(json.dumps(entries, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
+PY
+}
+
+assert_bdm_metadata_rejected() {
+  local case_name="$1"
+  local expected_reason="$2"
+  local case_root="${TEST_ROOT}/bdm-invalid-${case_name}"
+  local output="${TEST_ROOT}/bdm-invalid-${case_name}.out"
+  local snapshot_before
+  local snapshot_after
+
+  install -d -m 0755 "${case_root}/etc/systemd/system"
+  snapshot_before="$(snapshot_test_host "${case_root}")"
+  cp \
+    "${TEST_ROOT}/inputs/agent-simulator-bdm.ready.json" \
+    "${TEST_ROOT}/inputs/agent-simulator-bdm.json"
+  python3 - \
+    "${TEST_ROOT}/inputs/agent-simulator-bdm.json" \
+    "${case_name}" <<'PY'
 import json
 import sys
 
-path = sys.argv[1]
+path, case_name = sys.argv[1:]
+mutations = {
+    "software-placeholder": ("softwareVersion", "replace-at-release"),
+    "software-version-number": ("softwareVersion", 123),
+    "os-null": ("osVersion", None),
+    "os-blank": ("osVersion", " \t "),
+    "hardware-null": ("hardwareModel", None),
+    "hardware-blank": ("hardwareModel", "   "),
+    "architecture-null": ("architecture", None),
+    "stream-generation-number": ("streamGeneration", 1),
+    "stream-generation-leading-zero": ("streamGeneration", "01"),
+    "stream-generation-too-large": ("streamGeneration", "9007199254740992"),
+    "endpoint-number": ("endpoint", 8883),
+    "principal-null": ("principal", None),
+}
 with open(path, encoding="utf-8") as handle:
     value = json.load(handle)
-value["bdm"]["softwareVersion"] = "replace-at-release"
+if case_name == "enabled-string":
+    value["bdm"]["enabled"] = "True"
+elif case_name == "disabled-with-number":
+    value["bdm"]["enabled"] = False
+    value["bdm"]["streamGeneration"] = 1
+else:
+    field, replacement = mutations[case_name]
+    value["bdm"][field] = replacement
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(value, handle, ensure_ascii=False, indent=2)
     handle.write("\n")
 PY
-if run_bdm_install \
-  "${bdm_root}" \
-  "${TEST_ROOT}/inputs" \
-  BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
-  >"${TEST_ROOT}/bdm-placeholder.out" 2>&1; then
-  fail "BDM-enabled install accepted an unreplaced softwareVersion"
-fi
-grep -Fq 'bdm.softwareVersion must exactly match --version' \
-  "${TEST_ROOT}/bdm-placeholder.out" ||
-  fail "BDM metadata rejection lacked the expected reason"
-[[ ! -e "${bdm_root}/opt/block/current" &&
-  ! -L "${bdm_root}/opt/block/current" ]] ||
-  fail "BDM metadata rejection mutated the target host"
-mv \
+
+  if run_bdm_install \
+    "${case_root}" \
+    "${TEST_ROOT}/inputs" \
+    BLOCK_DEPLOY_TEST_SKIP_VERIFY=true \
+    >"${output}" 2>&1; then
+    fail "BDM-enabled install accepted invalid metadata case ${case_name}"
+  fi
+  grep -Fq "${expected_reason}" "${output}" ||
+    fail "BDM metadata rejection ${case_name} lacked the expected reason"
+  snapshot_after="$(snapshot_test_host "${case_root}")"
+  [[ "${snapshot_after}" == "${snapshot_before}" ]] ||
+    fail "BDM metadata rejection ${case_name} changed the target host tree"
+}
+
+assert_bdm_metadata_rejected \
+  "software-placeholder" \
+  "Agent bdm.softwareVersion must not contain a placeholder value"
+assert_bdm_metadata_rejected \
+  "software-version-number" \
+  "Agent bdm.softwareVersion must be a JSON string"
+assert_bdm_metadata_rejected \
+  "os-null" \
+  "Agent bdm.osVersion must be a JSON string"
+assert_bdm_metadata_rejected \
+  "os-blank" \
+  "Agent bdm.osVersion must not be empty or whitespace"
+assert_bdm_metadata_rejected \
+  "hardware-null" \
+  "Agent bdm.hardwareModel must be a JSON string"
+assert_bdm_metadata_rejected \
+  "hardware-blank" \
+  "Agent bdm.hardwareModel must not be empty or whitespace"
+assert_bdm_metadata_rejected \
+  "architecture-null" \
+  "Agent bdm.architecture must be a JSON string"
+assert_bdm_metadata_rejected \
+  "stream-generation-number" \
+  "Agent bdm.streamGeneration must be a JSON string"
+assert_bdm_metadata_rejected \
+  "stream-generation-leading-zero" \
+  "Agent bdm.streamGeneration must be a canonical positive decimal string"
+assert_bdm_metadata_rejected \
+  "stream-generation-too-large" \
+  "Agent bdm.streamGeneration exceeds the contract maximum"
+assert_bdm_metadata_rejected \
+  "endpoint-number" \
+  "Agent bdm.endpoint must be a JSON string"
+assert_bdm_metadata_rejected \
+  "principal-null" \
+  "Agent bdm.principal must be a JSON string"
+assert_bdm_metadata_rejected \
+  "enabled-string" \
+  "Agent bdm.enabled must be a JSON boolean"
+assert_bdm_metadata_rejected \
+  "disabled-with-number" \
+  "Agent bdm.streamGeneration must be a JSON string"
+
+cp \
   "${TEST_ROOT}/inputs/agent-simulator-bdm.ready.json" \
   "${TEST_ROOT}/inputs/agent-simulator-bdm.json"
 
+bdm_root="${TEST_ROOT}/bdm-host"
+install -d -m 0755 "${bdm_root}/etc/systemd/system"
 run_bdm_install \
   "${bdm_root}" \
   "${TEST_ROOT}/inputs" \

@@ -119,14 +119,105 @@ print(value)' \
     "${path}" "${expression}"
 }
 
+validate_bdm_metadata() {
+  python3 - "${agent_config}" "${version}" <<'PY_BDM_METADATA'
+import json
+import re
+import sys
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+config_path, release_version = sys.argv[1:]
+with open(config_path, encoding="utf-8") as handle:
+    config = json.load(handle)
+
+if type(config) is not dict:
+    fail("Agent configuration must be a JSON object")
+bdm = config.get("bdm")
+if type(bdm) is not dict:
+    fail("Agent bdm must be a JSON object")
+
+enabled = bdm.get("enabled")
+if type(enabled) is not bool:
+    fail("Agent bdm.enabled must be a JSON boolean")
+
+string_fields = (
+    "endpoint",
+    "principal",
+    "caFile",
+    "clientCertFile",
+    "clientKeyFile",
+    "softwareVersion",
+    "osVersion",
+    "architecture",
+    "hardwareModel",
+    "streamGeneration",
+)
+values = {}
+for field in string_fields:
+    if field not in bdm and not enabled:
+        continue
+    value = bdm.get(field)
+    if type(value) is not str:
+        fail(f"Agent bdm.{field} must be a JSON string")
+    trimmed = value.strip()
+    if not trimmed:
+        fail(f"Agent bdm.{field} must not be empty or whitespace")
+    if value != trimmed:
+        fail(f"Agent bdm.{field} must not have surrounding whitespace")
+    values[field] = value
+
+placeholder_values = {
+    "changeme",
+    "placeholder",
+    "replace-at-release",
+    "replace-me",
+    "replace_me",
+    "tbd",
+    "todo",
+}
+for field in string_fields:
+    if field in values and values[field].lower() in placeholder_values:
+        fail(f"Agent bdm.{field} must not contain a placeholder value")
+
+if not enabled:
+    print("False")
+    raise SystemExit(0)
+
+if values["endpoint"] != "mqtts://192.168.1.105:8883":
+    fail("current lab baseline requires bdm.endpoint mqtts://192.168.1.105:8883")
+if not re.fullmatch(r"blk-[0-9a-f]{32}", values["principal"], flags=re.ASCII):
+    fail("Agent bdm.principal must be an opaque blk-<32 lowercase hex> identity")
+expected_paths = {
+    "caFile": "/etc/block/bdm-certs/ca.crt",
+    "clientCertFile": "/etc/block/bdm-certs/client.crt",
+    "clientKeyFile": "/etc/block/bdm-certs/client.key",
+}
+for field, expected in expected_paths.items():
+    if values[field] != expected:
+        fail(f"Agent bdm.{field} must be {expected}")
+if values["softwareVersion"] != release_version:
+    fail("Agent bdm.softwareVersion must exactly match --version")
+if values["architecture"] != "arm64":
+    fail("Agent bdm.architecture must be arm64 for this release")
+
+generation = values["streamGeneration"]
+if not re.fullmatch(r"[1-9][0-9]{0,15}", generation, flags=re.ASCII):
+    fail("Agent bdm.streamGeneration must be a canonical positive decimal string")
+if int(generation) > 9007199254740991:
+    fail("Agent bdm.streamGeneration exceeds the contract maximum")
+
+print("True")
+PY_BDM_METADATA
+}
+
 validate_profile_config() {
   local adapter_type
-  local bdm_architecture
   local configured_bdm_enabled
-  local bdm_hardware_model
-  local bdm_os_version
-  local bdm_software_version
-  local bdm_stream_generation
 
   [[ "$(json_value "${agent_config}" localApiSocket)" == "/run/block-agent/api/block-agent.sock" ]] ||
     die "Agent localApiSocket must use the authoritative API path"
@@ -135,43 +226,10 @@ validate_profile_config() {
   [[ "$(json_value "${agent_config}" databasePath)" == "/var/lib/block/block.db" ]] ||
     die "Agent databasePath must be /var/lib/block/block.db"
 
-  configured_bdm_enabled="$(json_value "${agent_config}" bdm.enabled)"
-  [[ "${configured_bdm_enabled}" == "True" || "${configured_bdm_enabled}" == "False" ]] ||
-    die "Agent bdm.enabled must be a boolean"
-  bdm_enabled="${configured_bdm_enabled}"
-  if [[ "${bdm_enabled}" == "True" ]]; then
-    [[ "$(json_value "${agent_config}" bdm.endpoint)" == "mqtts://192.168.1.105:8883" ]] ||
-      die "current lab baseline requires bdm.endpoint mqtts://192.168.1.105:8883"
-    [[ "$(json_value "${agent_config}" bdm.caFile)" == "/etc/block/bdm-certs/ca.crt" ]] ||
-      die "Agent bdm.caFile must be /etc/block/bdm-certs/ca.crt"
-    [[ "$(json_value "${agent_config}" bdm.clientCertFile)" == "/etc/block/bdm-certs/client.crt" ]] ||
-      die "Agent bdm.clientCertFile must be /etc/block/bdm-certs/client.crt"
-    [[ "$(json_value "${agent_config}" bdm.clientKeyFile)" == "/etc/block/bdm-certs/client.key" ]] ||
-      die "Agent bdm.clientKeyFile must be /etc/block/bdm-certs/client.key"
-    [[ "$(json_value "${agent_config}" bdm.principal)" =~ ^blk-[0-9a-f]{32}$ ]] ||
-      die "Agent bdm.principal must be an opaque blk-<32 lowercase hex> identity"
-    bdm_software_version="$(json_value "${agent_config}" bdm.softwareVersion)"
-    [[ "${bdm_software_version}" == "${version}" ]] ||
-      die "Agent bdm.softwareVersion must exactly match --version"
-    bdm_os_version="$(json_value "${agent_config}" bdm.osVersion)"
-    [[ -n "${bdm_os_version}" && "${bdm_os_version}" != "replace-at-release" ]] ||
-      die "Agent bdm.osVersion must be replaced with the target OS fact"
-    bdm_architecture="$(json_value "${agent_config}" bdm.architecture)"
-    [[ "${bdm_architecture}" == "arm64" ]] ||
-      die "Agent bdm.architecture must be arm64 for this release"
-    bdm_hardware_model="$(json_value "${agent_config}" bdm.hardwareModel)"
-    [[ -n "${bdm_hardware_model}" && "${bdm_hardware_model}" != "replace-at-release" ]] ||
-      die "Agent bdm.hardwareModel must be replaced with the target hardware fact"
-    bdm_stream_generation="$(json_value "${agent_config}" bdm.streamGeneration)"
-    [[ "${bdm_stream_generation}" =~ ^[1-9][0-9]{0,15}$ ]] ||
-      die "Agent bdm.streamGeneration must be a canonical positive decimal string"
-    python3 -c \
-      'import sys
-value=int(sys.argv[1])
-raise SystemExit(0 if value <= 9007199254740991 else 1)' \
-      "${bdm_stream_generation}" ||
-      die "Agent bdm.streamGeneration exceeds the contract maximum"
+  if ! configured_bdm_enabled="$(validate_bdm_metadata)"; then
+    die "Agent BDM metadata validation failed"
   fi
+  bdm_enabled="${configured_bdm_enabled}"
 
   adapter_type="$(json_value "${agent_config}" adapter.type)"
   if [[ "${profile}" == "production" ]]; then
