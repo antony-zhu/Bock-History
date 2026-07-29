@@ -21,6 +21,9 @@ block-agent   -- /run/block-agent/api/block-agent.sock -- block-hmi
   或现场总线。
 - `cmd/block-agent`：采样、数据新鲜度、单写命令队列、`commandId` 幂等、
   SQLite WAL、本地报警/历史/审计、HMI 兼容适配层和可选 BDM 上行。
+- `cmd/ssh-bootstrapd`：独立 HTTPS `9443/tcp` 管理服务，严格实现 Common
+  `contracts/ssh-bootstrap/v1` 的 SuperToken ED25519 验签、SQLite nonce
+  唯一登记和五分钟 OpenSSH 用户证书签发；不进入 Block 本地业务依赖。
 - `internal/bdm`、`internal/mqtt5`：MQTT 5 持久会话、重连、MQTTS/mTLS、
   上行发布和唯一允许的 `/down/sync` 处理。
 - `internal/storage`、`internal/uplink`：稳定 `messageId`、可靠流 Epoch/序号、
@@ -52,6 +55,8 @@ go build -trimpath -o `
   'D:\codex\Block-DMP\.cache\block-agent\bin\block-agent' ./cmd/block-agent
 go build -trimpath -o `
   'D:\codex\Block-DMP\.cache\block-agent\bin\plc-simulator' ./cmd/plc-simulator
+go build -trimpath -o `
+  'D:\codex\Block-DMP\.cache\block-agent\bin\ssh-bootstrapd' ./cmd/ssh-bootstrapd
 ```
 
 ## 配置与启动
@@ -148,3 +153,5 @@ Agent 本地 API socket：
   远程升级、MES、AGV 或企业服务器。
 
 部署、健康检查、版本记录和回滚见 `deploy/block/README.md`。
+SSH 短期证书管理入口的独立配置、systemd、sshd drop-in、静态验证和回滚见
+`deploy/block/ssh-bootstrap/README.md`。
