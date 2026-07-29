@@ -1,0 +1,19 @@
+{
+  "listenAddress": "0.0.0.0:9443",
+  "targetNode": "BLOCK",
+  "siteId": "site-lab",
+  "blockId": "block-001",
+  "deviceId": "device-001",
+  "advertisedHost": "192.168.1.104",
+  "sshPort": 22,
+  "administratorKid": "admin-lab-2026-01",
+  "administratorPublicKeyPath": "/etc/ssh-bootstrap/admin-ed25519-public.pem",
+  "tlsCertificatePath": "/etc/ssh-bootstrap/tls/server.crt",
+  "tlsPrivateKeyPath": "/etc/ssh-bootstrap/tls/server.key",
+  "sshUserCaPrivateKeyPath": "/etc/ssh-bootstrap/ssh-user-ca",
+  "sshUserCaPublicKeyPath": "/etc/ssh-bootstrap/ssh-user-ca.pub",
+  "sshHostKeyFingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "nonceDatabasePath": "/var/lib/ssh-bootstrap/nonces.db",
+  "releaseUsername": "release",
+  "debugUsername": "debug"
+}

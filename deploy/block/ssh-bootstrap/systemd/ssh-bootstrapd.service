@@ -1,0 +1,30 @@
+[Unit]
+Description=Block HTTPS SSH certificate bootstrap
+After=network.target ssh.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=ssh-bootstrap
+Group=ssh-bootstrap
+UMask=0077
+StateDirectory=ssh-bootstrap
+StateDirectoryMode=0700
+ExecStart=/opt/ssh-bootstrap/current/bin/ssh-bootstrapd -config /etc/ssh-bootstrap/config.json
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_INET AF_INET6
+ReadOnlyPaths=/etc/ssh-bootstrap
+ReadWritePaths=/var/lib/ssh-bootstrap
+MemoryMax=128M
+TasksMax=64
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

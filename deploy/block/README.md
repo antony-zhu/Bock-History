@@ -8,6 +8,11 @@ BDM；本目录不部署 MQTT Broker、Pad、远程命令、远程升级或真�
 
 真实 Block 上的写操作只允许 `BLK-REL`/设备管理员执行。开发智能体只能做源代码和静态验证。
 
+短期 SSH 用户证书签发是独立管理面，部署入口位于
+`ssh-bootstrap/README.md`。它绑定 Common `contracts/ssh-bootstrap/v1`，
+只监听 HTTPS `9443/tcp`，不并入本地业务发布事务，也不成为 Agent/HMI 的
+启动或运行依赖。
+
 ## 支持基线
 
 - Ubuntu 18.04.5 LTS。
