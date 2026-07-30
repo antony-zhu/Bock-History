@@ -15,7 +15,8 @@ for script in \
   "${ROOT}/rollback.sh" \
   "${ROOT}/verify-install.sh" \
   "${ROOT}/verify-static.sh" \
-  "${ROOT}/tests/deploy-regression.sh"; do
+  "${ROOT}/tests/deploy-regression.sh" \
+  "${ROOT}/tests/install-failure-rollback.sh"; do
   [[ -x "${script}" ]] || die "script is not executable: ${script#${ROOT}/}"
   bash -n "${script}"
 done

@@ -16,11 +16,29 @@ health_host=""
 server_name=""
 git_commit=""
 common_baseline=""
+transaction=""
+rollback_armed="false"
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
 }
+
+rollback_install_error() {
+  local status="$?"
+  trap - ERR
+  if [[ "${rollback_armed}" == "true" ]]; then
+    printf 'ERROR: SSH bootstrap install failed; rolling back transaction %s\n' \
+      "${transaction}" >&2
+    if ! "${ROOT}/rollback.sh" --execute; then
+      printf 'ERROR: automatic rollback failed for transaction %s\n' \
+        "${transaction}" >&2
+    fi
+  fi
+  exit "${status}"
+}
+
+trap rollback_install_error ERR
 
 usage() {
   cat <<'EOF'
@@ -138,7 +156,9 @@ fi
 
 release_root="/opt/ssh-bootstrap/releases/${version}"
 [[ ! -e "${release_root}" ]] || die "release already exists: ${release_root}"
-transaction="/var/lib/ssh-bootstrap-release/transactions/$(date -u +%Y%m%dT%H%M%SZ)-${version}"
+state_root="/var/lib/ssh-bootstrap-release"
+pointer="${state_root}/current-transaction"
+transaction="${state_root}/transactions/$(date -u +%Y%m%dT%H%M%SZ)-${version}"
 mkdir -p "${transaction}/backup" "${release_root}/bin" "${release_root}/deploy"
 chmod 0700 "${transaction}"
 
@@ -170,6 +190,15 @@ if [[ -L /opt/ssh-bootstrap/current ]]; then
 fi
 systemctl is-enabled ssh-bootstrapd.service >"${transaction}/previous-enabled" 2>/dev/null || true
 systemctl is-active ssh-bootstrapd.service >"${transaction}/previous-active" 2>/dev/null || true
+if [[ -f "${pointer}" ]]; then
+  cp -a "${pointer}" "${transaction}/previous-transaction"
+fi
+
+printf 'prepared\n' >"${transaction}/state"
+printf '%s\n' "${transaction}" >"${pointer}.new"
+chmod 0600 "${pointer}.new"
+mv -Tf "${pointer}.new" "${pointer}"
+rollback_armed="true"
 
 install -m 0755 "${artifact_dir}/bin/ssh-bootstrapd" "${release_root}/bin/ssh-bootstrapd"
 cp -a "${ROOT}/." "${release_root}/deploy/"
@@ -218,5 +247,7 @@ if [[ -n "${server_name}" ]]; then
   health_args+=(--server-name "${server_name}")
 fi
 "${ROOT}/verify-install.sh" "${health_args[@]}"
-printf '%s\n' "${transaction}" >/var/lib/ssh-bootstrap-release/current-transaction
+printf 'committed\n' >"${transaction}/state"
+rollback_armed="false"
+trap - ERR
 printf 'installed ssh-bootstrapd %s; transaction=%s\n' "${version}" "${transaction}"

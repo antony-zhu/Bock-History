@@ -92,6 +92,9 @@ sudo env BLOCK_RELEASE_ROLE=BLK-REL ./rollback.sh --execute
 sshd drop-in 和 `current` 链接，执行 `sshd -t` 后 reload。现场防火墙中的
 `9443/tcp` 放行由 Release 按同一变更记录撤销。nonce 数据库和 release
 文件保留到回滚确认后再按现场记录处理，不删除 Block 本地业务数据。
+安装器在首次替换受管文件前原子记录本次事务；后续 `sshd -t`、SSH reload、
+服务启动或健康检查失败时，会自动用该事务恢复安装前状态。此流程不读取、
+删除或覆盖任何用户的 `authorized_keys`。
 
 ## v1 明确未实现
 
