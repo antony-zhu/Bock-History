@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -22,6 +23,120 @@ import (
 	"testing"
 	"time"
 )
+
+func TestStatusPageTemplateMatchesFrozenContract(t *testing.T) {
+	const wantSHA256 = "7e12d38ab7d5e5afc8c3606077dd6e048f67689bd71280bd4949860a88bee676"
+	got := fmt.Sprintf("%x", sha256.Sum256([]byte(statusPageTemplate)))
+	if got != wantSHA256 {
+		t.Fatalf("status page template SHA-256 = %s, want %s", got, wantSHA256)
+	}
+}
+
+func TestHandlerServesExactUnauthenticatedStatusPage(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	request := httptest.NewRequest(http.MethodGet, "https://bootstrap.test/", nil)
+	recorder := httptest.NewRecorder()
+
+	fixture.handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	want := strings.NewReplacer(
+		"{{nodeRole}}", "BLOCK",
+		"{{siteId}}", "site-lab",
+		"{{blockId}}", "block-001",
+		"{{deviceId}}", "device-001",
+		"{{advertisedHost}}", "192.168.1.104",
+	).Replace(statusPageTemplate)
+	if recorder.Body.String() != want {
+		t.Fatalf("status page differs from frozen template:\n%s", recorder.Body)
+	}
+	for _, required := range []string{
+		"ssh-bootstrap",
+		"1.0.0",
+		"BLOCK",
+		"site-lab",
+		"block-001",
+		"device-001",
+		"POST /v1/ssh/cert",
+		"300",
+		"https://192.168.1.104:9443",
+		"ssh-bootstrapctl request",
+		"ssh-bootstrapctl connect",
+		"返回短期 SSH 证书，不返回私钥/密码",
+	} {
+		if !strings.Contains(recorder.Body.String(), required) {
+			t.Fatalf("status page misses %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"<script",
+		"<form",
+		"<input",
+		"<button",
+		"Authorization:",
+		"SuperToken",
+		"signature=",
+		"/health",
+		"/etc/",
+		"PRIVATE KEY",
+	} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("status page contains forbidden %q", forbidden)
+		}
+	}
+}
+
+func TestHandlerEscapesStatusPageValues(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	fixture.handler.config.SiteID = `<site&"'>`
+	fixture.handler.config.BlockID = `<block>`
+	fixture.handler.config.DeviceID = `device&one`
+	fixture.handler.config.AdvertisedHost = `host.example"><script>alert(1)</script>`
+	request := httptest.NewRequest(http.MethodGet, "https://bootstrap.test/", nil)
+	recorder := httptest.NewRecorder()
+
+	fixture.handler.ServeHTTP(recorder, request)
+
+	body := recorder.Body.String()
+	for _, escaped := range []string{
+		"&lt;site&amp;&#34;&#39;&gt;",
+		"&lt;block&gt;",
+		"device&amp;one",
+		"host.example&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;",
+	} {
+		if !strings.Contains(body, escaped) {
+			t.Fatalf("status page misses escaped value %q: %s", escaped, body)
+		}
+	}
+	for _, unescaped := range []string{`<site&"'>`, "<block>", "<script>alert(1)</script>"} {
+		if strings.Contains(body, unescaped) {
+			t.Fatalf("status page contains unescaped value %q", unescaped)
+		}
+	}
+}
+
+func TestHandlerReturnsNotFoundForOtherGETPaths(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	for _, target := range []string{
+		"https://bootstrap.test/health",
+		"https://bootstrap.test/v1/ssh/cert",
+		"https://bootstrap.test/?extra=true",
+	} {
+		t.Run(target, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, target, nil)
+			recorder := httptest.NewRecorder()
+			fixture.handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body)
+			}
+		})
+	}
+}
 
 type fakeIssuer struct{}
 

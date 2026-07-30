@@ -68,6 +68,16 @@ func NewHandler(
 }
 
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if request.Method == http.MethodGet {
+		if request.URL.Path == "/" && request.URL.RawQuery == "" {
+			writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = io.WriteString(writer, renderStatusPage(h.config))
+			return
+		}
+		http.NotFound(writer, request)
+		return
+	}
+
 	requestID, err := h.requestID()
 	if err != nil {
 		panic(err)

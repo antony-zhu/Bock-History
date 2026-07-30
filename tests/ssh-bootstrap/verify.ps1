@@ -26,6 +26,8 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $GoBinary vet ./...
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $GoBinary test -race -p 1 ./...
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $env:CGO_ENABLED = '0'
     $env:GOOS = 'linux'
@@ -39,4 +41,4 @@ finally {
     Pop-Location
 }
 
-Write-Output 'Block SSH Bootstrap v1 contract, Go test/vet and linux/arm64 build passed.'
+Write-Output 'Block SSH Bootstrap v1 contract, Go test/vet/race and linux/arm64 build passed.'

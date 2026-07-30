@@ -23,7 +23,8 @@ block-agent   -- /run/block-agent/api/block-agent.sock -- block-hmi
   SQLite WAL、本地报警/历史/审计、HMI 兼容适配层和可选 BDM 上行。
 - `cmd/ssh-bootstrapd`：独立 HTTPS `9443/tcp` 管理服务，严格实现 Common
   `contracts/ssh-bootstrap/v1` 的 SuperToken ED25519 验签、SQLite nonce
-  唯一登记和五分钟 OpenSSH 用户证书签发；不进入 Block 本地业务依赖。
+  唯一登记和五分钟 OpenSSH 用户证书签发；同一 HTTPS listener 的精确
+  `GET /` 提供无需认证的冻结只读状态/使用页；不进入 Block 本地业务依赖。
 - `internal/bdm`、`internal/mqtt5`：MQTT 5 持久会话、重连、MQTTS/mTLS、
   上行发布和唯一允许的 `/down/sync` 处理。
 - `internal/storage`、`internal/uplink`：稳定 `messageId`、可靠流 Epoch/序号、
