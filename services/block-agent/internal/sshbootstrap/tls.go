@@ -8,9 +8,19 @@ import (
 	"time"
 )
 
+const tlsHandshakeTimeout = 10 * time.Second
+
 type tlsHandshakeListener struct {
 	net.Listener
 	config *tls.Config
+	now    func() time.Time
+}
+
+func (l *tlsHandshakeListener) handshakeDeadline() time.Time {
+	if l.now != nil {
+		return l.now().Add(tlsHandshakeTimeout)
+	}
+	return time.Now().Add(tlsHandshakeTimeout)
 }
 
 func (l *tlsHandshakeListener) Accept() (net.Conn, error) {
@@ -20,7 +30,7 @@ func (l *tlsHandshakeListener) Accept() (net.Conn, error) {
 			return nil, err
 		}
 		tlsConnection := tls.Server(connection, l.config)
-		_ = tlsConnection.SetDeadline(time.Now().Add(10 * time.Second))
+		_ = tlsConnection.SetDeadline(l.handshakeDeadline())
 		if err := tlsConnection.HandshakeContext(context.Background()); err != nil {
 			_ = connection.Close()
 			continue
