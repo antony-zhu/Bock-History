@@ -13,10 +13,12 @@ for script in \
   "${ROOT}/install-users.sh" \
   "${ROOT}/install.sh" \
   "${ROOT}/rollback.sh" \
+  "${ROOT}/sshd-config.sh" \
   "${ROOT}/verify-install.sh" \
   "${ROOT}/verify-static.sh" \
   "${ROOT}/tests/deploy-regression.sh" \
-  "${ROOT}/tests/install-failure-rollback.sh"; do
+  "${ROOT}/tests/install-failure-rollback.sh" \
+  "${ROOT}/tests/sshd-config-compat.sh"; do
   [[ -x "${script}" ]] || die "script is not executable: ${script#${ROOT}/}"
   bash -n "${script}"
 done
@@ -28,7 +30,7 @@ grep -Fqx 'User=ssh-bootstrap' "${ROOT}/systemd/ssh-bootstrapd.service"
 grep -Fqx 'Group=ssh-bootstrap' "${ROOT}/systemd/ssh-bootstrapd.service"
 grep -Fqx 'ExecStart=/opt/ssh-bootstrap/current/bin/ssh-bootstrapd -config /etc/ssh-bootstrap/config.json' "${ROOT}/systemd/ssh-bootstrapd.service"
 grep -Fqx 'TrustedUserCAKeys /etc/ssh-bootstrap/ssh-user-ca.pub' "${ROOT}/sshd/60-ssh-bootstrap.conf"
-grep -Fqx 'AuthorizedPrincipalsFile /etc/ssh-bootstrap/principals/%u' "${ROOT}/sshd/60-ssh-bootstrap.conf"
+grep -Fqx 'AuthorizedPrincipalsFile /opt/ssh-bootstrap/principals/%u' "${ROOT}/sshd/60-ssh-bootstrap.conf"
 [[ "$(cat "${ROOT}/principals/release")" == "release" ]]
 [[ "$(cat "${ROOT}/principals/debug")" == "debug" ]]
 [[ ! -e "${ROOT}/principals/root" ]]

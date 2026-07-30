@@ -36,16 +36,29 @@ transaction_root="$(target_path "${transaction}")"
   printf 'ERROR: transaction pointer is invalid\n' >&2
   exit 1
 }
+sshd_mode="$(cat "${transaction_root}/sshd-mode")"
+[[ "${sshd_mode}" == "drop-in" || "${sshd_mode}" == "inline" ]] || {
+  printf 'ERROR: transaction has an invalid sshd configuration mode\n' >&2
+  exit 1
+}
 
 systemctl disable --now ssh-bootstrapd.service 2>/dev/null || true
 while IFS=$'\t' read -r path state key; do
   destination="$(target_path "${path}")"
   if [[ "${state}" == "present" ]]; then
     install -d "$(dirname "${destination}")"
-    rm -f "${destination}"
+    if [[ -d "${destination}" && ! -L "${destination}" ]]; then
+      rm -rf -- "${destination}"
+    else
+      rm -f -- "${destination}"
+    fi
     cp -a "${transaction_root}/backup/${key}" "${destination}"
   else
-    rm -f "${destination}"
+    if [[ -d "${destination}" && ! -L "${destination}" ]]; then
+      rm -rf -- "${destination}"
+    else
+      rm -f -- "${destination}"
+    fi
   fi
 done <"${transaction_root}/managed.tsv"
 

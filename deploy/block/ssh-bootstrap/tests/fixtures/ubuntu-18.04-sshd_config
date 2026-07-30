@@ -1,0 +1,4 @@
+# Ubuntu 18.04 / OpenSSH 7.6 fixture: the daemon rejects the Include directive.
+Port 22
+UsePAM yes
+PasswordAuthentication yes

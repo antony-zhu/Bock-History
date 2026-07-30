@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+source "${ROOT}/sshd-config.sh"
 execute="false"
 version=""
 artifact_dir=""
@@ -18,6 +19,7 @@ git_commit=""
 common_baseline=""
 transaction=""
 rollback_armed="false"
+sshd_mode=""
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -170,8 +172,8 @@ managed=(
   /etc/ssh-bootstrap/tls/ca.crt
   /etc/ssh-bootstrap/ssh-user-ca
   /etc/ssh-bootstrap/ssh-user-ca.pub
-  /etc/ssh-bootstrap/principals/release
-  /etc/ssh-bootstrap/principals/debug
+  /etc/ssh-bootstrap/sshd-mode
+  /opt/ssh-bootstrap/principals
   /etc/ssh/sshd_config
   /etc/ssh/sshd_config.d/60-ssh-bootstrap.conf
   /etc/systemd/system/ssh-bootstrapd.service
@@ -200,6 +202,18 @@ chmod 0600 "${pointer}.new"
 mv -Tf "${pointer}.new" "${pointer}"
 rollback_armed="true"
 
+include_probe="${transaction}/include-probe.conf"
+include_probe_error="${transaction}/include-probe.stderr"
+if ssh_bootstrap_detect_include_support sshd "${include_probe}" "${include_probe_error}"; then
+  sshd_mode="drop-in"
+else
+  include_status="$?"
+  [[ "${include_status}" -eq 1 ]] ||
+    die "sshd Include capability detection failed"
+  sshd_mode="inline"
+fi
+printf '%s\n' "${sshd_mode}" >"${transaction}/sshd-mode"
+
 install -m 0755 "${artifact_dir}/bin/ssh-bootstrapd" "${release_root}/bin/ssh-bootstrapd"
 cp -a "${ROOT}/." "${release_root}/deploy/"
 find "${release_root}/deploy" -type f -name '*.sh' -exec chmod 0755 {} +
@@ -212,7 +226,7 @@ binarySHA256=$(sha256sum "${release_root}/bin/ssh-bootstrapd" | awk '{print $1}'
 EOF
 
 install -d -m 0750 -o root -g ssh-bootstrap /etc/ssh-bootstrap /etc/ssh-bootstrap/tls
-install -d -m 0755 -o root -g root /etc/ssh-bootstrap/principals /etc/ssh/sshd_config.d
+install -d -m 0755 -o root -g root /opt/ssh-bootstrap/principals
 install -d -m 0700 -o ssh-bootstrap -g ssh-bootstrap /var/lib/ssh-bootstrap
 install -m 0640 -o root -g ssh-bootstrap "${config}" /etc/ssh-bootstrap/config.json
 install -m 0644 -o root -g root "${admin_public_key}" /etc/ssh-bootstrap/admin-ed25519-public.pem
@@ -221,19 +235,22 @@ install -m 0640 -o root -g ssh-bootstrap "${tls_key}" /etc/ssh-bootstrap/tls/ser
 install -m 0644 -o root -g root "${tls_ca}" /etc/ssh-bootstrap/tls/ca.crt
 install -m 0640 -o root -g ssh-bootstrap "${ssh_ca_private}" /etc/ssh-bootstrap/ssh-user-ca
 install -m 0644 -o root -g root "${ssh_ca_public}" /etc/ssh-bootstrap/ssh-user-ca.pub
-install -m 0644 -o root -g root "${ROOT}/principals/release" /etc/ssh-bootstrap/principals/release
-install -m 0644 -o root -g root "${ROOT}/principals/debug" /etc/ssh-bootstrap/principals/debug
-install -m 0644 -o root -g root "${ROOT}/sshd/60-ssh-bootstrap.conf" /etc/ssh/sshd_config.d/60-ssh-bootstrap.conf
+install -m 0644 -o root -g root "${ROOT}/principals/release" /opt/ssh-bootstrap/principals/release
+install -m 0644 -o root -g root "${ROOT}/principals/debug" /opt/ssh-bootstrap/principals/debug
+install -m 0644 -o root -g root /dev/null /etc/ssh-bootstrap/sshd-mode
+printf '%s\n' "${sshd_mode}" >/etc/ssh-bootstrap/sshd-mode
 install -m 0644 -o root -g root "${ROOT}/systemd/ssh-bootstrapd.service" /etc/systemd/system/ssh-bootstrapd.service
 
-if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf([[:space:]]|$)' /etc/ssh/sshd_config; then
-  {
-    printf 'Include /etc/ssh/sshd_config.d/*.conf\n'
-    cat /etc/ssh/sshd_config
-  } >/etc/ssh/sshd_config.new
-  chown --reference=/etc/ssh/sshd_config /etc/ssh/sshd_config.new
-  chmod --reference=/etc/ssh/sshd_config /etc/ssh/sshd_config.new
-  mv /etc/ssh/sshd_config.new /etc/ssh/sshd_config
+if [[ "${sshd_mode}" == "drop-in" ]]; then
+  install -d -m 0755 -o root -g root /etc/ssh/sshd_config.d
+  install -m 0644 -o root -g root \
+    "${ROOT}/sshd/60-ssh-bootstrap.conf" \
+    /etc/ssh/sshd_config.d/60-ssh-bootstrap.conf
+  ssh_bootstrap_ensure_drop_in_include /etc/ssh/sshd_config
+else
+  ssh_bootstrap_ensure_inline_block \
+    /etc/ssh/sshd_config \
+    "${ROOT}/sshd/60-ssh-bootstrap.conf"
 fi
 sshd -t
 systemctl reload ssh.service 2>/dev/null || systemctl reload sshd.service

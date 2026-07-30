@@ -22,16 +22,25 @@ SSH 用户 CA。Block CA 不得复制给 BDM。
 /etc/ssh-bootstrap/tls/ca.crt
 /etc/ssh-bootstrap/ssh-user-ca
 /etc/ssh-bootstrap/ssh-user-ca.pub
-/etc/ssh-bootstrap/principals/release
-/etc/ssh-bootstrap/principals/debug
+/opt/ssh-bootstrap/principals/release
+/opt/ssh-bootstrap/principals/debug
 /var/lib/ssh-bootstrap/nonces.db
 ```
 
 `ssh-bootstrap` 是锁定密码、无登录 shell 的非 root 服务用户。
 `release`、`debug` 是锁定密码的非 root SSH 用户。sshd drop-in 只信任本机
 CA，并从 `%u` 对应文件读取唯一同名 principal；没有 root principal 文件。
-若 Ubuntu 18.04 的基础 `sshd_config` 尚未包含 drop-in 目录，安装器会先
-备份该文件，再在顶部加入 OpenSSH 支持的 `Include`，回滚时恢复原文件。
+principals 目录固定为 root-owned `0755` 的
+`/opt/ssh-bootstrap/principals`，避免异常的 `/etc` 父目录权限导致
+OpenSSH `StrictModes` 拒绝证书登录。
+
+安装器在修改 sshd 配置前先探测目标 daemon 是否支持 `Include`。支持时使用
+`/etc/ssh/sshd_config.d/60-ssh-bootstrap.conf`；Ubuntu 18.04 现场的
+OpenSSH 7.6 不支持时，安装器在完整备份原 `sshd_config` 后，向文件尾部追加
+唯一的 `BEGIN/END SSH-BOOTSTRAP MANAGED BLOCK`。重复安装复用已有的完全匹配
+block，不会重复追加。两种模式都在 reload 前执行 `sshd -t`，回滚精确恢复
+原 `sshd_config`（包括原本不存在）、principals、drop-in、unit、服务状态和
+`current`，且不读取或修改任何 `authorized_keys`。
 现有 SSH 密码/密钥策略不由本部署修改。
 
 ## 构建和静态验证

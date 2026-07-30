@@ -34,5 +34,6 @@ fi
 grep -Fqx 'release' "${ROOT}/principals/release"
 grep -Fqx 'debug' "${ROOT}/principals/debug"
 ! grep -Rqx 'root' "${ROOT}/principals"
+"${ROOT}/tests/sshd-config-compat.sh"
 "${ROOT}/tests/install-failure-rollback.sh"
 printf 'SSH bootstrap deployment regression passed\n'
