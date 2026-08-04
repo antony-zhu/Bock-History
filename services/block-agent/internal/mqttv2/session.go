@@ -147,7 +147,7 @@ type clientConfig struct {
 	OnMessage     func(Inbound) error
 }
 
-// client is intentionally limited to the MQTT 3.1.1 features used by v2:
+// client is intentionally limited to the MQTT 5.0 features used by v2:
 // mTLS, QoS 0 publication, two QoS 0 subscriptions and a simple reconnect.
 type client struct {
 	config clientConfig
@@ -203,7 +203,7 @@ func (c *client) Publish(_ context.Context, publication Publication) error {
 	if connection == nil {
 		return ErrDisconnected
 	}
-	return c.writePacket(connection, 0x30, append(mqttString(publication.Topic), publication.Payload...))
+	return c.writePacket(connection, 0x30, publishPayload(publication))
 }
 
 func (c *client) connect(ctx context.Context) (net.Conn, error) {
@@ -217,29 +217,34 @@ func (c *client) connect(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	header, payload, err := readPacket(connection)
-	if err != nil || header != 0x20 || len(payload) != 2 || payload[1] != 0 {
+	if err != nil {
 		_ = connection.Close()
-		if err == nil {
-			err = errors.New("MQTT CONNACK rejected")
-		}
+		return nil, err
+	}
+	if header != 0x20 {
+		_ = connection.Close()
+		return nil, errors.New("MQTT CONNACK is invalid")
+	}
+	if err := validateConnack(payload); err != nil {
+		_ = connection.Close()
 		return nil, err
 	}
 	if len(c.config.Subscriptions) > 0 {
-		body := []byte{0, 1}
-		for _, topic := range c.config.Subscriptions {
-			body = append(body, mqttString(topic)...)
-			body = append(body, 0)
-		}
-		if err := c.writePacket(connection, 0x82, body); err != nil {
+		if err := c.writePacket(connection, 0x82, subscribePayload(c.config.Subscriptions)); err != nil {
 			_ = connection.Close()
 			return nil, err
 		}
 		header, payload, err = readPacket(connection)
-		if err != nil || header != 0x90 || len(payload) != 2+len(c.config.Subscriptions) {
+		if err != nil {
 			_ = connection.Close()
-			if err == nil {
-				err = errors.New("MQTT SUBACK rejected")
-			}
+			return nil, err
+		}
+		if header != 0x90 {
+			_ = connection.Close()
+			return nil, errors.New("MQTT SUBACK is invalid")
+		}
+		if err := validateSuback(payload, len(c.config.Subscriptions)); err != nil {
+			_ = connection.Close()
 			return nil, err
 		}
 	}
@@ -289,10 +294,15 @@ func (c *client) handlePublish(header byte, payload []byte) error {
 	if length == 0 || len(payload) < 2+length {
 		return ErrInvalidRequest
 	}
+	propertiesLength, propertiesStart, err := decodeVariableByteInteger(payload[2+length:])
+	if err != nil || propertiesLength > len(payload)-(2+length+propertiesStart) {
+		return ErrInvalidRequest
+	}
+	payloadStart := 2 + length + propertiesStart + propertiesLength
 	if c.config.OnMessage == nil {
 		return nil
 	}
-	return c.config.OnMessage(Inbound{Topic: string(payload[2 : 2+length]), Payload: append([]byte(nil), payload[2+length:]...), QoS: qos, Retain: header&0x01 != 0})
+	return c.config.OnMessage(Inbound{Topic: string(payload[2 : 2+length]), Payload: append([]byte(nil), payload[payloadStart:]...), QoS: qos, Retain: header&0x01 != 0})
 }
 
 func (c *client) setConnection(connection net.Conn) {
@@ -338,8 +348,22 @@ func (c *client) writePacket(connection net.Conn, header byte, payload []byte) e
 }
 
 func connectPayload(clientID string) []byte {
-	payload := append(mqttString("MQTT"), 4, 0x02, 0, 30)
+	// Clean Start plus the default session-expiry interval of zero keeps this
+	// connection stateless. The zero byte is the MQTT 5 CONNECT property length.
+	payload := append(mqttString("MQTT"), 5, 0x02, 0, 30, 0)
 	return append(payload, mqttString(clientID)...)
+}
+func publishPayload(publication Publication) []byte {
+	payload := append(mqttString(publication.Topic), 0) // MQTT 5 PUBLISH properties length.
+	return append(payload, publication.Payload...)
+}
+func subscribePayload(subscriptions []string) []byte {
+	payload := []byte{0, 1, 0} // packet identifier 1 and MQTT 5 properties length.
+	for _, topic := range subscriptions {
+		payload = append(payload, mqttString(topic)...)
+		payload = append(payload, 0)
+	}
+	return payload
 }
 func mqttString(value string) []byte {
 	return append([]byte{byte(len(value) >> 8), byte(len(value))}, value...)
@@ -357,6 +381,60 @@ func encodeRemainingLength(length int) []byte {
 			return encoded
 		}
 	}
+}
+
+func validateConnack(payload []byte) error {
+	if len(payload) < 3 {
+		return errors.New("MQTT CONNACK is invalid")
+	}
+	ackFlags, reasonCode := payload[0], payload[1]
+	if ackFlags&^byte(0x01) != 0 || ackFlags&0x01 != 0 {
+		return errors.New("MQTT CONNACK session flags are invalid")
+	}
+	propertiesLength, propertiesStart, err := decodeVariableByteInteger(payload[2:])
+	if err != nil || propertiesLength != len(payload)-(2+propertiesStart) {
+		return errors.New("MQTT CONNACK properties are invalid")
+	}
+	if reasonCode != 0 {
+		return fmt.Errorf("MQTT CONNACK rejected: reason code 0x%02x", reasonCode)
+	}
+	return nil
+}
+
+func validateSuback(payload []byte, subscriptions int) error {
+	if len(payload) < 3 || payload[0] != 0 || payload[1] != 1 {
+		return errors.New("MQTT SUBACK is invalid")
+	}
+	propertiesLength, propertiesStart, err := decodeVariableByteInteger(payload[2:])
+	if err != nil {
+		return errors.New("MQTT SUBACK properties are invalid")
+	}
+	reasonsStart := 2 + propertiesStart + propertiesLength
+	if reasonsStart > len(payload) || len(payload)-reasonsStart != subscriptions {
+		return errors.New("MQTT SUBACK is invalid")
+	}
+	for _, reasonCode := range payload[reasonsStart:] {
+		if reasonCode != 0 {
+			return fmt.Errorf("MQTT SUBACK rejected: reason code 0x%02x", reasonCode)
+		}
+	}
+	return nil
+}
+
+func decodeVariableByteInteger(payload []byte) (int, int, error) {
+	value, multiplier := 0, 1
+	for offset := 0; offset < 4; offset++ {
+		if offset >= len(payload) {
+			return 0, 0, errors.New("MQTT variable byte integer is truncated")
+		}
+		digit := payload[offset]
+		value += int(digit&127) * multiplier
+		if digit&128 == 0 {
+			return value, offset + 1, nil
+		}
+		multiplier *= 128
+	}
+	return 0, 0, errors.New("MQTT variable byte integer is invalid")
 }
 func readPacket(connection net.Conn) (byte, []byte, error) {
 	var first [1]byte
