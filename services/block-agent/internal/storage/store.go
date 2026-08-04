@@ -164,7 +164,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		return fmt.Errorf("SQLite journal mode is %q, want wal", journalMode)
 	}
 	for _, migration := range []string{
-		"001_init.sql", "002_uplink.sql", "003_mqtt_inflight.sql", "004_auth.sql",
+		"001_init.sql", "002_uplink.sql", "003_mqtt_inflight.sql", "004_auth.sql", "005_alarm_history_v2.sql",
 	} {
 		contents, err := migrations.ReadFile("migrations/" + migration)
 		if err != nil {

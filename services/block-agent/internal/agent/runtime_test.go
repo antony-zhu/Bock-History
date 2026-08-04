@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"block.local/block-agent/internal/alarmhistory"
 	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
+	"block.local/block-agent/internal/storage"
 	"golang.org/x/net/websocket"
 )
 
@@ -223,6 +225,56 @@ func TestRuntimeDoesNotCreateSQLitePointFiles(t *testing.T) {
 	}
 }
 
+func TestAlarmHistoryPersistsLocallyWithoutMQTTS(t *testing.T) {
+	directory := t.TempDir()
+	store, err := storage.Open(filepath.Join(directory, "block.db"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runtime, address, cancel, done := startRuntimeWithOptions(t, RuntimeOptions{AlarmStore: store})
+	defer stopRuntime(t, cancel, done)
+	if runtime.mqtt.Enabled {
+		t.Fatal("MQTTS v2 must default to disabled")
+	}
+	connection := dial(t, address)
+	defer connection.Close()
+	send(t, connection, map[string]any{
+		"protocolVersion": "1.0", "type": "runtime.configure", "scanIntervalMs": 50,
+		"points": []any{map[string]any{
+			"pointId": "machine.fault", "address": "D600.0", "type": "bool", "access": "read", "readPoint": "machine.fault",
+			"alarm": map[string]any{"normalValue": false, "alarmValue": true, "message": "Machine fault"},
+		}},
+	})
+	if configured := receive(t, connection); configured["type"] != "runtime.configured" {
+		t.Fatalf("configured event = %#v", configured)
+	}
+	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+	active := true
+	if err := runtime.UpdateConfirmed(map[string]pointstore.PointValue{
+		"machine.fault": {Value: true, Quality: "good", UpdatedAt: now, AlarmActive: &active},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = receive(t, connection)
+	inactive := false
+	if err := runtime.UpdateConfirmed(map[string]pointstore.PointValue{
+		"machine.fault": {Value: false, Quality: "good", UpdatedAt: now.Add(time.Second), AlarmActive: &inactive},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = receive(t, connection)
+	records, hasMore, err := store.List(context.Background(), alarmhistory.Query{
+		FromOccurredAt: now.Add(-time.Second), ToOccurredAt: now.Add(time.Minute), Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasMore || len(records) != 2 || records[0].EventKind != "RAISED" || records[1].EventKind != "CLEARED" {
+		t.Fatalf("local alarm history = %#v, hasMore=%t", records, hasMore)
+	}
+}
+
 func TestOnlyLoopbackBindingIsAccepted(t *testing.T) {
 	if _, err := NewLocalRuntime("0.0.0.0:8080", time.Now); err == nil {
 		t.Fatal("wildcard local HTTP address was accepted")
@@ -239,7 +291,17 @@ func startRuntime(t *testing.T) (*Runtime, string, context.CancelFunc, <-chan er
 
 func startRuntimeWithFactory(t *testing.T, factory plcworker.Factory) (*Runtime, string, context.CancelFunc, <-chan error) {
 	t.Helper()
-	runtime, err := NewLocalRuntimeWithWorkerFactory("127.0.0.1:0", time.Now, factory)
+	return startRuntimeWithOptionsAndFactory(t, factory, RuntimeOptions{})
+}
+
+func startRuntimeWithOptions(t *testing.T, options RuntimeOptions) (*Runtime, string, context.CancelFunc, <-chan error) {
+	t.Helper()
+	return startRuntimeWithOptionsAndFactory(t, nil, options)
+}
+
+func startRuntimeWithOptionsAndFactory(t *testing.T, factory plcworker.Factory, options RuntimeOptions) (*Runtime, string, context.CancelFunc, <-chan error) {
+	t.Helper()
+	runtime, err := NewLocalRuntimeWithOptions("127.0.0.1:0", time.Now, factory, nil, nil, options)
 	if err != nil {
 		t.Fatal(err)
 	}

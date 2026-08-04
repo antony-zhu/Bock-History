@@ -15,6 +15,7 @@ import (
 
 	agentapp "block.local/block-agent/internal/agent"
 	"block.local/block-agent/internal/auth"
+	"block.local/block-agent/internal/mqttv2"
 	"block.local/block-agent/internal/sshbootstrap"
 	"block.local/block-agent/internal/storage"
 )
@@ -30,6 +31,15 @@ func main() {
 	maintenanceAuthorizedKeys := flag.String("maintenance-authorized-keys", "", "managed SSH authorized_keys path")
 	maintenanceDeviceID := flag.String("maintenance-device-id", "block-0001", "device ID used in generated SSH key filenames")
 	maintenanceAdvertisedHost := flag.String("maintenance-advertised-host", "", "Block host or IP returned with the SSH key")
+	mqttsV2Enabled := flag.Bool("mqtts-v2-enabled", false, "enable optional MQTTS v2 current-state and alarm-history sync")
+	mqttsV2Endpoint := flag.String("mqtts-v2-endpoint", "", "MQTTS v2 broker endpoint, mqtts://HOST:8883")
+	mqttsV2CA := flag.String("mqtts-v2-ca", "", "MQTTS v2 CA certificate path")
+	mqttsV2ClientCert := flag.String("mqtts-v2-client-cert", "", "MQTTS v2 Block client certificate path")
+	mqttsV2ClientKey := flag.String("mqtts-v2-client-key", "", "MQTTS v2 Block client private-key path")
+	mqttsV2Principal := flag.String("mqtts-v2-principal", "", "MQTTS v2 mTLS principal and client certificate CN")
+	mqttsV2SiteID := flag.String("mqtts-v2-site-id", "", "MQTTS v2 source site ID")
+	mqttsV2BlockID := flag.String("mqtts-v2-block-id", "", "MQTTS v2 source Block ID")
+	mqttsV2DeviceID := flag.String("mqtts-v2-device-id", "", "MQTTS v2 source device ID")
 	flag.Parse()
 	var hmi fs.FS
 	if *hmiStaticDirectory != "" {
@@ -57,7 +67,18 @@ func main() {
 		log.Fatalf("initialize Block authentication: %v", err)
 	}
 	defer authService.Close()
-	runtime, err = agentapp.NewLocalRuntimeWithServices(*localHTTPAddress, time.Now, nil, hmi, authService)
+	runtime, err = agentapp.NewLocalRuntimeWithOptions(*localHTTPAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
+		AlarmStore: store,
+		MQTT: agentapp.MQTTOptions{
+			Enabled: *mqttsV2Enabled,
+			Connection: mqttv2.ConnectionConfig{
+				Endpoint: *mqttsV2Endpoint, CAFile: *mqttsV2CA,
+				ClientCertFile: *mqttsV2ClientCert, ClientKeyFile: *mqttsV2ClientKey,
+				Principal: *mqttsV2Principal,
+				Source:    mqttv2.Source{SiteID: *mqttsV2SiteID, BlockID: *mqttsV2BlockID, DeviceID: *mqttsV2DeviceID},
+			},
+		},
+	})
 	if err != nil {
 		log.Fatalf("initialize Block local runtime: %v", err)
 	}

@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"block.local/block-agent/internal/alarmhistory"
 	"block.local/block-agent/internal/auth"
+	"block.local/block-agent/internal/mqttv2"
 	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
@@ -33,6 +36,9 @@ type Runtime struct {
 	server  *http.Server
 	factory plcworker.Factory
 	auth    *auth.Service
+	mqtt    MQTTOptions
+	alarms  *alarmhistory.Service
+	alarmID atomic.Uint64
 
 	mu         sync.Mutex
 	owner      *wsClient
@@ -45,8 +51,23 @@ type runtimeSession struct {
 	config     runtimeconfig.Config
 	worker     *plcworker.Worker
 	cancel     context.CancelFunc
+	mqtt       *mqttv2.Session
+	mqttCancel context.CancelFunc
+	alarms     map[string]bool
 	broadcasts bool
 	deviceID   string
+}
+
+// MQTTOptions defaults to disabled so a Block retains full local PLC/HMI
+// behavior when BDM or Wi-Fi is absent.
+type MQTTOptions struct {
+	Enabled    bool
+	Connection mqttv2.ConnectionConfig
+}
+
+type RuntimeOptions struct {
+	AlarmStore alarmhistory.Store
+	MQTT       MQTTOptions
 }
 
 // NewLocalRuntime creates the empty local runtime. It performs no PLC, MQTT
@@ -66,13 +87,23 @@ func NewLocalRuntimeWithWorkerFactory(address string, now func() time.Time, fact
 // build owned by the frontend. A nil HMI filesystem keeps the runtime idle
 // until a bundle is supplied by deployment.
 func NewLocalRuntimeWithServices(address string, now func() time.Time, factory plcworker.Factory, hmi fs.FS, authService *auth.Service) (*Runtime, error) {
+	return NewLocalRuntimeWithOptions(address, now, factory, hmi, authService, RuntimeOptions{})
+}
+
+// NewLocalRuntimeWithOptions adds optional local alarm history and MQTTS-v2
+// integration. Both are disabled by default; neither is required for the
+// loopback HMI or PLC worker to run.
+func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory plcworker.Factory, hmi fs.FS, authService *auth.Service, options RuntimeOptions) (*Runtime, error) {
 	if err := validateLoopbackAddress(address); err != nil {
 		return nil, err
 	}
 	if now == nil {
 		now = time.Now
 	}
-	runtime := &Runtime{address: address, now: now, store: pointstore.New(), factory: factory, auth: authService}
+	runtime := &Runtime{address: address, now: now, store: pointstore.New(), factory: factory, auth: authService, mqtt: options.MQTT}
+	if options.AlarmStore != nil {
+		runtime.alarms = alarmhistory.New(options.AlarmStore, runtimeAlarmNotifier{runtime: runtime})
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", runtime.health)
 	mux.HandleFunc("/api/auth/bootstrap", runtime.bootstrap)
@@ -144,8 +175,12 @@ func (r *Runtime) StopSession() {
 	r.owner = nil
 	r.session = nil
 	worker, cancel := detachWorkerLocked(session)
+	mqttCancel := detachMQTTLocked(session)
 	r.mu.Unlock()
 	r.cancelScan()
+	if mqttCancel != nil {
+		mqttCancel()
+	}
 	stopWorker(worker, cancel)
 	r.store.Clear()
 	if owner != nil {
@@ -158,19 +193,12 @@ func (r *Runtime) StopSession() {
 func (r *Runtime) UpdateConfirmed(values map[string]pointstore.PointValue) error {
 	r.mu.Lock()
 	owner := r.owner
+	session := r.session
 	r.mu.Unlock()
 	if owner == nil {
 		return errors.New("runtime session is not active")
 	}
-	changed, err := r.store.Update(values)
-	if err != nil {
-		return err
-	}
-	if len(changed) == 0 {
-		return nil
-	}
-	owner.enqueue(eventEnvelope(r.now, "points.changed", changed), false)
-	return nil
+	return r.applyValues(session, owner, true, values)
 }
 
 func (r *Runtime) updateFromWorker(session *runtimeSession, worker *plcworker.Worker, values map[string]pointstore.PointValue) error {
@@ -183,11 +211,29 @@ func (r *Runtime) updateFromWorker(session *runtimeSession, worker *plcworker.Wo
 	broadcasts := session.broadcasts
 	r.mu.Unlock()
 
+	return r.applyValues(session, owner, broadcasts, values)
+}
+
+func (r *Runtime) applyValues(session *runtimeSession, owner *wsClient, broadcasts bool, values map[string]pointstore.PointValue) error {
 	changed, err := r.store.Update(values)
-	if err != nil || len(changed) == 0 || !broadcasts {
+	if err != nil || len(changed) == 0 {
 		return err
 	}
-	owner.enqueue(eventEnvelope(r.now, "points.changed", changed), false)
+	if err := r.recordAlarmChanges(session, changed); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	mqtt := (*mqttv2.Session)(nil)
+	if r.session == session && session != nil {
+		mqtt = session.mqtt
+	}
+	r.mu.Unlock()
+	if mqtt != nil {
+		mqtt.ObserveSnapshot(toMQTTSnapshot(r.store.Snapshot(), r.now))
+	}
+	if broadcasts {
+		owner.enqueue(eventEnvelope(r.now, "points.changed", changed), false)
+	}
 	return nil
 }
 
@@ -290,7 +336,11 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	session := &runtimeSession{config: config}
+	mqttSession, mqttContext, mqttCancel, err := r.newMQTTSession()
+	if err != nil {
+		return err
+	}
+	session := &runtimeSession{config: config, mqtt: mqttSession, mqttCancel: mqttCancel, alarms: make(map[string]bool)}
 
 	r.mu.Lock()
 	if r.owner != nil && r.owner != client {
@@ -305,6 +355,9 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	r.session = session
 	client.enqueue(configuredEnvelope(r.now, config.ScanIntervalMs), false)
 	r.mu.Unlock()
+	if mqttSession != nil {
+		go mqttSession.Run(mqttContext)
+	}
 	return nil
 }
 
