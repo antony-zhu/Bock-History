@@ -27,6 +27,10 @@ type passwordRequest struct {
 	ConfirmPassword string `json:"confirmPassword"`
 }
 
+type sessionPolicyRequest struct {
+	IdleTimeoutSeconds int `json:"idleTimeoutSeconds"`
+}
+
 func (r *Runtime) bootstrap(writer http.ResponseWriter, request *http.Request) {
 	if !requireAuthMethod(writer, request, http.MethodPost) {
 		return
@@ -91,7 +95,7 @@ func (r *Runtime) activity(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	r.setSessionCookie(writer, auth.LoginResult{Token: token, Session: session})
-	writeJSON(writer, http.StatusOK, sessionResponse(session))
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (r *Runtime) logout(writer http.ResponseWriter, request *http.Request) {
@@ -127,6 +131,30 @@ func (r *Runtime) changePassword(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	if err := r.auth.ChangePassword(request.Context(), token, body.CurrentPassword, body.NewPassword, body.ConfirmPassword); err != nil {
+		writeAuthError(writer, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (r *Runtime) setSessionPolicy(writer http.ResponseWriter, request *http.Request) {
+	if !requireAuthMethod(writer, request, http.MethodPut) {
+		return
+	}
+	if r.auth == nil {
+		http.NotFound(writer, request)
+		return
+	}
+	token, ok := sessionToken(request)
+	if !ok {
+		writeAuthError(writer, auth.ErrUnauthenticated)
+		return
+	}
+	var body sessionPolicyRequest
+	if !decodeJSON(writer, request, &body) {
+		return
+	}
+	if err := r.auth.SetIdleTimeout(request.Context(), token, time.Duration(body.IdleTimeoutSeconds)*time.Second); err != nil {
 		writeAuthError(writer, err)
 		return
 	}

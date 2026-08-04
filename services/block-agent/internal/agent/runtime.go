@@ -106,11 +106,12 @@ func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory pl
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", runtime.health)
-	mux.HandleFunc("/api/auth/bootstrap", runtime.bootstrap)
-	mux.HandleFunc("/api/auth/login", runtime.login)
-	mux.HandleFunc("/api/auth/activity", runtime.activity)
-	mux.HandleFunc("/api/auth/logout", runtime.logout)
-	mux.HandleFunc("/api/auth/password", runtime.changePassword)
+	mux.HandleFunc("/api/v2/auth/initial-admin", runtime.bootstrap)
+	mux.HandleFunc("/api/v2/auth/login", runtime.login)
+	mux.HandleFunc("/api/v2/auth/activity", runtime.activity)
+	mux.HandleFunc("/api/v2/auth/logout", runtime.logout)
+	mux.HandleFunc("/api/v2/auth/password", runtime.changePassword)
+	mux.HandleFunc("/api/v2/config/session", runtime.setSessionPolicy)
 	mux.Handle("/ws", websocket.Server{Handler: websocket.Handler(runtime.serveWS), Handshake: runtime.checkHandshake})
 	mux.Handle("/", staticHMI(hmi))
 	runtime.server = &http.Server{
