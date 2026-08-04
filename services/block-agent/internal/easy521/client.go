@@ -19,6 +19,8 @@ const (
 	maxReadRegisters                  = 125
 )
 
+var ErrTransportDisconnected = errors.New("PLC transport disconnected")
+
 type Config struct {
 	Endpoint       string
 	UnitID         byte
@@ -137,13 +139,13 @@ func (c *Client) exchange(ctx context.Context, pdu []byte) ([]byte, error) {
 	_ = c.conn.SetDeadline(deadline)
 	if _, err := c.conn.Write(frame); err != nil {
 		c.Close()
-		return nil, err
+		return nil, transportError(err)
 	}
 
 	header := make([]byte, 7)
 	if _, err := io.ReadFull(c.conn, header); err != nil {
 		c.Close()
-		return nil, err
+		return nil, transportError(err)
 	}
 	length := binary.BigEndian.Uint16(header[4:6])
 	if binary.BigEndian.Uint16(header[0:2]) != transactionID || binary.BigEndian.Uint16(header[2:4]) != 0 ||
@@ -154,7 +156,7 @@ func (c *Client) exchange(ctx context.Context, pdu []byte) ([]byte, error) {
 	response := make([]byte, int(length)-1)
 	if _, err := io.ReadFull(c.conn, response); err != nil {
 		c.Close()
-		return nil, err
+		return nil, transportError(err)
 	}
 	if response[0] == pdu[0]|0x80 {
 		c.Close()
@@ -176,10 +178,24 @@ func (c *Client) ensureConnection(ctx context.Context) error {
 	}
 	connection, err := c.dial(ctx, "tcp", c.cfg.Endpoint)
 	if err != nil {
-		return err
+		return transportError(err)
 	}
 	c.conn = connection
 	return nil
+}
+
+func transportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrTransportDisconnected, err)
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		return fmt.Errorf("%w: %w", ErrTransportDisconnected, err)
+	}
+	return err
 }
 
 func validateConfig(config Config) error {

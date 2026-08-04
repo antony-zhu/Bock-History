@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"block.local/block-agent/internal/easy521"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
 )
@@ -151,9 +152,9 @@ func TestQueueRejectsTheSixtyFifthCommand(t *testing.T) {
 	}
 }
 
-func TestUnavailableInitialReadPublishesUnknownValueWithoutInventingFalse(t *testing.T) {
+func TestSingleReadFailurePublishesErrorWithoutInventingFalse(t *testing.T) {
 	adapter := newFakeAdapter(0)
-	adapter.readErr = errors.New("PLC disconnected")
+	adapter.readErr = errors.New("temporary FC03 failure")
 	published := make(chan map[string]pointstore.PointValue, 1)
 	worker := newWorker(t, testConfig("pulse", 100), adapter, func(values map[string]pointstore.PointValue) error {
 		published <- values
@@ -163,8 +164,34 @@ func TestUnavailableInitialReadPublishesUnknownValueWithoutInventingFalse(t *tes
 	defer cancel()
 	go worker.Run(ctx)
 	values := <-published
+	if value := values["feedback"]; value.Value != nil || value.Quality != "error" || value.AlarmActive != nil {
+		t.Fatalf("single read failure value = %#v", value)
+	}
+}
+
+func TestConfirmedTransportDisconnectPublishesStaleAndNotifies(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.readErr = easy521.ErrTransportDisconnected
+	published := make(chan map[string]pointstore.PointValue, 2)
+	disconnected := make(chan struct{}, 1)
+	worker := newWorker(t, testConfig("pulse", 100), adapter, func(values map[string]pointstore.PointValue) error {
+		published <- values
+		return nil
+	})
+	worker.SetDisconnectHandler(func() { disconnected <- struct{}{} })
+	ctx, cancel := context.WithCancel(context.Background())
+	go worker.Run(ctx)
+	values := <-published
+	cancel()
+	waitDone(t, worker)
+
 	if value := values["feedback"]; value.Value != nil || value.Quality != "stale" || value.AlarmActive != nil {
-		t.Fatalf("unavailable first value = %#v", value)
+		t.Fatalf("transport disconnect value = %#v", value)
+	}
+	select {
+	case <-disconnected:
+	default:
+		t.Fatal("transport disconnect did not notify")
 	}
 }
 

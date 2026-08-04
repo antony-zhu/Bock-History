@@ -115,6 +115,7 @@ func (r *Runtime) handlePLCConnect(client *wsClient, raw []byte) {
 		client.enqueue(plcConnectResultEnvelope(r.now, request.RequestID, request.DeviceID, false, "", "INTERNAL_ERROR", err.Error()), false)
 		return
 	}
+	worker.SetDisconnectHandler(func() { r.notifyPLCDisconnected(session, worker) })
 	workerContext, workerCancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	if r.owner != client || r.session != session {
@@ -126,6 +127,7 @@ func (r *Runtime) handlePLCConnect(client *wsClient, raw []byte) {
 	session.worker = worker
 	session.cancel = workerCancel
 	session.deviceID = request.DeviceID
+	session.disconnecting = false
 	session.broadcasts = false
 	client.enqueue(plcConnectionEnvelope(r.now, request.DeviceID, "connecting"), false)
 	r.mu.Unlock()
@@ -167,14 +169,18 @@ func (r *Runtime) handlePLCDisconnect(client *wsClient, raw []byte) {
 		client.enqueue(plcDisconnectResultEnvelope(r.now, request.RequestID, true), false)
 		return
 	}
-	deviceID := session.deviceID
-	worker, cancel := detachWorkerLocked(session)
+	worker, cancel := session.worker, session.cancel
+	session.disconnecting = true
 	r.mu.Unlock()
 	stopWorker(worker, cancel)
-	r.store.ClearValues()
-	if deviceID != "" {
-		client.enqueue(plcConnectionEnvelope(r.now, deviceID, "disconnected"), false)
+	if worker != nil {
+		_ = worker.ConfirmDisconnected()
 	}
+	r.mu.Lock()
+	if r.session == session && session.worker == worker {
+		detachWorkerLocked(session)
+	}
+	r.mu.Unlock()
 	client.enqueue(plcDisconnectResultEnvelope(r.now, request.RequestID, true), false)
 }
 
@@ -184,15 +190,20 @@ func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, wo
 		readyErr = context.Canceled
 	}
 	r.mu.Lock()
-	if r.owner != client || r.session != session || session.worker != worker {
+	if r.owner != client || r.session != session || session.worker != worker || session.disconnecting {
 		r.mu.Unlock()
 		return
 	}
 	state := "connected"
 	if readyErr != nil {
 		state = "error"
+		if worker.Disconnected() {
+			state = "disconnected"
+		}
 	}
-	client.enqueue(plcConnectionEnvelope(r.now, deviceID, state), false)
+	if state != "disconnected" {
+		client.enqueue(plcConnectionEnvelope(r.now, deviceID, state), false)
+	}
 	if readyErr != nil {
 		client.enqueue(plcConnectResultEnvelope(r.now, requestID, deviceID, false, state, "PLC_READ_FAILED", "initial PLC read failed"), false)
 	} else {
@@ -201,6 +212,19 @@ func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, wo
 	client.enqueue(snapshotEnvelope(r.now, r.store.Snapshot()), false)
 	session.broadcasts = true
 	r.mu.Unlock()
+}
+
+func (r *Runtime) notifyPLCDisconnected(session *runtimeSession, worker *plcworker.Worker) {
+	r.mu.Lock()
+	if r.session != session || session.worker != worker || r.owner == nil {
+		r.mu.Unlock()
+		return
+	}
+	client, deviceID := r.owner, session.deviceID
+	r.mu.Unlock()
+	if deviceID != "" {
+		client.enqueue(plcConnectionEnvelope(r.now, deviceID, "disconnected"), false)
+	}
 }
 
 func (r *Runtime) newPLCWorker(config runtimeconfig.Config, endpoint plcEndpoint, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
@@ -263,6 +287,7 @@ func detachWorkerLocked(session *runtimeSession) (*plcworker.Worker, context.Can
 	session.worker = nil
 	session.cancel = nil
 	session.deviceID = ""
+	session.disconnecting = false
 	session.broadcasts = false
 	return worker, cancel
 }

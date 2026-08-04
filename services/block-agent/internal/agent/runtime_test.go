@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"block.local/block-agent/internal/alarmhistory"
+	"block.local/block-agent/internal/easy521"
 	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
@@ -150,7 +151,7 @@ func TestPointCommandUsesWorkerReadbackAndFC22Sequence(t *testing.T) {
 	}
 }
 
-func TestPLCDisconnectStopsWorkerAndClearsValues(t *testing.T) {
+func TestPLCDisconnectStopsWorkerAndPublishesStaleValues(t *testing.T) {
 	adapter := &runtimeFakeAdapter{registers: map[uint16]uint16{504: 0}}
 	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
 		return plcworker.New(config, adapter, publish, time.Now)
@@ -175,8 +176,35 @@ func TestPLCDisconnectStopsWorkerAndClearsValues(t *testing.T) {
 	if result := receiveType(t, connection, "plc.disconnect.result"); result["success"] != true || result["state"] != "disconnected" {
 		t.Fatalf("disconnect result = %#v", result)
 	}
-	if !runtime.Store().Configured() || len(runtime.Store().Snapshot()) != 0 {
-		t.Fatalf("disconnect did not preserve config and clear values: configured=%t values=%#v", runtime.Store().Configured(), runtime.Store().Snapshot())
+	values := runtime.Store().Snapshot()
+	if !runtime.Store().Configured() || values["machine.startFeedback"].Quality != "stale" || values["machine.startCommand"].Quality != "stale" {
+		t.Fatalf("disconnect did not preserve stale values: configured=%t values=%#v", runtime.Store().Configured(), values)
+	}
+}
+
+func TestPLCTransportDisconnectPublishesStaleValuesAndEvent(t *testing.T) {
+	adapter := &runtimeFakeAdapter{registers: map[uint16]uint16{504: 0}}
+	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
+		return plcworker.New(config, adapter, publish, time.Now)
+	})
+	runtime, address, cancel, done := startRuntimeWithFactory(t, factory)
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+	configure(t, connection)
+	_ = receive(t, connection)
+	send(t, connection, map[string]any{"type": "plc.connect", "requestId": "connect", "deviceId": "easy521://127.0.0.1:1502?unitId=1"})
+	_ = receiveType(t, connection, "plc.connection.changed")
+	_ = receiveType(t, connection, "plc.connect.result")
+	_ = receiveType(t, connection, "points.snapshot")
+
+	adapter.setReadErr(easy521.ErrTransportDisconnected)
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "disconnected" {
+		t.Fatalf("transport disconnect event = %#v", event)
+	}
+	values := runtime.Store().Snapshot()
+	if values["machine.startFeedback"].Quality != "stale" || values["machine.startCommand"].Quality != "stale" {
+		t.Fatalf("transport disconnect values = %#v", values)
 	}
 }
 
@@ -437,11 +465,15 @@ type runtimeFakeAdapter struct {
 	mu        sync.Mutex
 	registers map[uint16]uint16
 	writes    []runtimeWriteCall
+	readErr   error
 }
 
 func (f *runtimeFakeAdapter) ReadHoldingRegisters(_ context.Context, address, quantity uint16) ([]uint16, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
 	values := make([]uint16, quantity)
 	for index := range values {
 		values[index] = f.registers[address+uint16(index)]
@@ -468,4 +500,10 @@ func (f *runtimeFakeAdapter) writeCalls() []runtimeWriteCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]runtimeWriteCall(nil), f.writes...)
+}
+
+func (f *runtimeFakeAdapter) setReadErr(err error) {
+	f.mu.Lock()
+	f.readErr = err
+	f.mu.Unlock()
 }

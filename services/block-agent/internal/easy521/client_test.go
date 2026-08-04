@@ -3,6 +3,7 @@ package easy521
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -120,12 +121,37 @@ func TestMaskWriteBitDoesNotRetryAfterException(t *testing.T) {
 	}()
 	if err := client.MaskWriteBit(context.Background(), 504, 1, true); err == nil {
 		t.Fatal("FC22 exception unexpectedly succeeded")
+	} else if errors.Is(err, ErrTransportDisconnected) {
+		t.Fatalf("Modbus exception was classified as a transport disconnect: %v", err)
 	}
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	if dials != 1 {
 		t.Fatalf("writes were retried: dials=%d", dials)
+	}
+}
+
+func TestReadTransportDisconnectIsClassified(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) { return clientConnection, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := readFrame(serverConnection)
+		_ = serverConnection.Close()
+		done <- err
+	}()
+	_, err = client.ReadHoldingRegisters(context.Background(), 504, 1)
+	if !errors.Is(err, ErrTransportDisconnected) {
+		t.Fatalf("read error = %v, want transport disconnect", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -48,14 +48,15 @@ type Runtime struct {
 }
 
 type runtimeSession struct {
-	config     runtimeconfig.Config
-	worker     *plcworker.Worker
-	cancel     context.CancelFunc
-	mqtt       *mqttv2.Session
-	mqttCancel context.CancelFunc
-	alarms     map[string]bool
-	broadcasts bool
-	deviceID   string
+	config        runtimeconfig.Config
+	worker        *plcworker.Worker
+	cancel        context.CancelFunc
+	mqtt          *mqttv2.Session
+	mqttCancel    context.CancelFunc
+	alarms        map[string]bool
+	broadcasts    bool
+	deviceID      string
+	disconnecting bool
 }
 
 // MQTTOptions defaults to disabled so a Block retains full local PLC/HMI

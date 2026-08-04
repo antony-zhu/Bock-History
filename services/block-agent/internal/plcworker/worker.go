@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"block.local/block-agent/internal/easy521"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
 )
@@ -64,21 +65,24 @@ type Result struct {
 type Factory func(runtimeconfig.Config, func(map[string]pointstore.PointValue) error) (*Worker, error)
 
 type Worker struct {
-	adapter   Adapter
-	publish   func(map[string]pointstore.PointValue) error
-	now       func() time.Time
-	timeout   time.Duration
-	points    map[string]pointPlan
-	byWord    map[uint16][]pointPlan
-	batches   []readBatch
-	last      map[string]pointstore.PointValue
-	commands  chan commandRequest
-	done      chan struct{}
-	doneOnce  sync.Once
-	ready     chan error
-	readyOnce sync.Once
-	lifeMu    sync.Mutex
-	stopping  bool
+	adapter      Adapter
+	publish      func(map[string]pointstore.PointValue) error
+	now          func() time.Time
+	timeout      time.Duration
+	points       map[string]pointPlan
+	byWord       map[uint16][]pointPlan
+	batches      []readBatch
+	last         map[string]pointstore.PointValue
+	commands     chan commandRequest
+	done         chan struct{}
+	doneOnce     sync.Once
+	ready        chan error
+	readyOnce    sync.Once
+	lifeMu       sync.Mutex
+	stopping     bool
+	stateMu      sync.Mutex
+	disconnected bool
+	onDisconnect func()
 }
 
 type pointPlan struct {
@@ -158,6 +162,35 @@ func (w *Worker) Done() <-chan struct{} {
 // enqueue the first complete snapshot before it enables ordinary changes.
 func (w *Worker) Ready() <-chan error {
 	return w.ready
+}
+
+// SetDisconnectHandler receives only confirmed transport or explicit
+// disconnect transitions. It does not implement reconnection or retries.
+func (w *Worker) SetDisconnectHandler(handler func()) {
+	w.stateMu.Lock()
+	w.onDisconnect = handler
+	w.stateMu.Unlock()
+}
+
+func (w *Worker) Disconnected() bool {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	return w.disconnected
+}
+
+// ConfirmDisconnected records a known disconnect and publishes a complete
+// stale snapshot. Ordinary FC03 failures are errors until this explicit state
+// transition occurs.
+func (w *Worker) ConfirmDisconnected() error {
+	values, changed := w.confirmDisconnected()
+	if !changed {
+		return nil
+	}
+	if err := w.publish(values); err != nil {
+		return err
+	}
+	w.notifyDisconnected()
+	return nil
 }
 
 // Run is the only place that calls the adapter. It does one initial scan, then
@@ -322,6 +355,7 @@ func (w *Worker) writeBit(address bitAddress, value bool) error {
 func (w *Worker) readAll() (map[string]pointstore.PointValue, error) {
 	values := make(map[string]pointstore.PointValue, len(w.points))
 	var readErr error
+	confirmedDisconnect := false
 	for _, batch := range w.batches {
 		ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
 		registers, err := w.adapter.ReadHoldingRegisters(ctx, batch.start, uint16(len(batch.words)))
@@ -333,18 +367,31 @@ func (w *Worker) readAll() (map[string]pointstore.PointValue, error) {
 			if readErr == nil {
 				readErr = err
 			}
+			if errors.Is(err, easy521.ErrTransportDisconnected) && w.markDisconnected() {
+				confirmedDisconnect = true
+			}
 			w.failureValues(values, batch)
 			continue
 		}
 		w.goodValues(values, batch, registers)
 	}
+	if readErr == nil {
+		w.markConnected()
+	} else if w.Disconnected() {
+		values = w.staleValues()
+	}
 	if err := w.publish(values); err != nil && readErr == nil {
 		readErr = err
+	}
+	if confirmedDisconnect {
+		w.notifyDisconnected()
 	}
 	return values, readErr
 }
 
 func (w *Worker) goodValues(values map[string]pointstore.PointValue, batch readBatch, registers []uint16) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	for index, word := range batch.words {
 		for _, point := range w.pointsAt(word) {
 			value := registers[index]&(uint16(1)<<point.address.bit) != 0
@@ -359,14 +406,77 @@ func (w *Worker) goodValues(values map[string]pointstore.PointValue, batch readB
 	}
 }
 
+func (w *Worker) markDisconnected() bool {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.disconnected {
+		return false
+	}
+	w.disconnected = true
+	return true
+}
+
+func (w *Worker) markConnected() {
+	w.stateMu.Lock()
+	w.disconnected = false
+	w.stateMu.Unlock()
+}
+
+func (w *Worker) confirmDisconnected() (map[string]pointstore.PointValue, bool) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.disconnected {
+		return nil, false
+	}
+	w.disconnected = true
+	return w.staleValuesLocked(), true
+}
+
+func (w *Worker) staleValues() map[string]pointstore.PointValue {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	return w.staleValuesLocked()
+}
+
+func (w *Worker) staleValuesLocked() map[string]pointstore.PointValue {
+	now := w.now().UTC()
+	values := make(map[string]pointstore.PointValue, len(w.points))
+	for pointID := range w.points {
+		item, exists := w.last[pointID]
+		if !exists {
+			item = pointstore.PointValue{}
+		}
+		item.Quality = "stale"
+		item.UpdatedAt = now
+		values[pointID] = item
+		w.last[pointID] = cloneValue(item)
+	}
+	return values
+}
+
+func (w *Worker) notifyDisconnected() {
+	w.stateMu.Lock()
+	handler := w.onDisconnect
+	w.stateMu.Unlock()
+	if handler != nil {
+		handler()
+	}
+}
+
 func (w *Worker) failureValues(values map[string]pointstore.PointValue, batch readBatch) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	quality := "error"
+	if w.disconnected {
+		quality = "stale"
+	}
 	for _, word := range batch.words {
 		for _, point := range w.pointsAt(word) {
 			item, exists := w.last[point.definition.PointID]
 			if !exists {
 				item = pointstore.PointValue{}
 			}
-			item.Quality = "stale"
+			item.Quality = quality
 			item.UpdatedAt = w.now().UTC()
 			values[point.definition.PointID] = item
 			w.last[point.definition.PointID] = cloneValue(item)
