@@ -1,4 +1,17 @@
 const debounceMilliseconds = 50;
+const defaultPLCAddressRange = "192.168.1.0/24";
+function requestID() {
+    return crypto.randomUUID();
+}
+function request(type, fields, id = requestID(), timestamp = new Date().toISOString()) {
+    return {
+        protocolVersion: "1.0",
+        type,
+        requestId: id,
+        timestamp,
+        ...fields
+    };
+}
 export function isDisplayPath(value) {
     return /^[a-z]+(?:[a-z]*)(?:\.[a-z]+(?:[a-z]*)?)+$/.test(value);
 }
@@ -18,9 +31,8 @@ export class ActivationFilter {
         return !duplicate;
     }
 }
-export function buildRuntimeConfigure(points) {
-    return {
-        type: "runtime.configure",
+export function buildRuntimeConfigure(points, id = requestID(), timestamp = new Date().toISOString()) {
+    return request("runtime.configure", {
         scanIntervalMs: 50,
         points: points.map((point) => ({
             pointId: point.pointId,
@@ -37,12 +49,31 @@ export function buildRuntimeConfigure(points) {
                 pulseMs: point.write.pulseMs
             }
         }))
-    };
+    }, id, timestamp);
+}
+export function buildPointsSnapshotGet(id = requestID(), timestamp = new Date().toISOString()) {
+    return request("points.snapshot.get", {}, id, timestamp);
+}
+export function buildPLCScan(addressRange = defaultPLCAddressRange, id = requestID(), timestamp = new Date().toISOString()) {
+    return request("plc.scan", { addressRange }, id, timestamp);
+}
+export function buildPLCConnect(deviceId, id = requestID(), timestamp = new Date().toISOString()) {
+    return request("plc.connect", { deviceId }, id, timestamp);
+}
+export function buildPLCDisconnect(id = requestID(), timestamp = new Date().toISOString()) {
+    return request("plc.disconnect", {}, id, timestamp);
+}
+export function buildPointCommand(pointId, action, id = requestID(), timestamp = new Date().toISOString()) {
+    return request("point.command", { pointId, action }, id, timestamp);
 }
 export function applyAbsoluteValues(target, values) {
     for (const [pointId, pointValue] of Object.entries(values)) {
         target.set(pointId, { ...pointValue });
     }
+}
+export function clearTransientRuntime(values, devices) {
+    values.clear();
+    devices.splice(0, devices.length);
 }
 function configurationFrom(value) {
     if (typeof value !== "object" || value === null) {
@@ -108,8 +139,10 @@ class HMI {
     reconnectDelay = 1000;
     reconnectTimer = null;
     lastActivityAt = Number.NEGATIVE_INFINITY;
+    plcState = "disconnected";
     activationFilter = new ActivationFilter();
     values = new Map();
+    plcDevices = [];
     commandButtons = [];
     pointViews = new Map();
     notice = document.querySelector("#notice");
@@ -117,8 +150,14 @@ class HMI {
     authPanel = document.querySelector("#auth-panel");
     runtimePanel = document.querySelector("#runtime-panel");
     runtimeLayout = document.querySelector("#runtime-layout");
+    plcStatus = document.querySelector("#plc-status");
+    plcCandidates = document.querySelector("#plc-candidates");
+    plcScanButton = document.querySelector("#plc-scan-button");
+    plcDisconnectButton = document.querySelector("#plc-disconnect-button");
+    snapshotButton = document.querySelector("#snapshot-button");
     async start() {
         this.bindAuthForms();
+        this.bindRuntimeControls();
         this.bindActivityReporting();
         try {
             this.config = await loadConfiguration();
@@ -148,6 +187,24 @@ class HMI {
         document.querySelector("#logout-button").addEventListener("click", () => {
             void this.logout();
         });
+    }
+    bindRuntimeControls() {
+        this.plcScanButton.addEventListener("click", (event) => {
+            if (this.activationFilter.accept(event) && this.canSendCommands()) {
+                this.sendPLCScan();
+            }
+        });
+        this.plcDisconnectButton.addEventListener("click", (event) => {
+            if (this.activationFilter.accept(event) && this.canSendCommands()) {
+                this.sendPLCDisconnect();
+            }
+        });
+        this.snapshotButton.addEventListener("click", (event) => {
+            if (this.activationFilter.accept(event) && this.canSendCommands()) {
+                this.sendPointsSnapshotGet();
+            }
+        });
+        this.setRuntimeControlsEnabled();
     }
     bindActivityReporting() {
         const report = () => {
@@ -231,11 +288,10 @@ class HMI {
     endSession(message) {
         this.signedIn = false;
         this.configured = false;
-        this.values.clear();
+        this.discardTransientRuntime();
         this.closeSocket();
         this.authPanel.hidden = false;
         this.runtimePanel.hidden = true;
-        this.renderValues();
         this.setNotice(message);
         this.setStatus("请登录后连接设备");
     }
@@ -252,8 +308,7 @@ class HMI {
             }
             this.reconnectDelay = 1000;
             this.configured = false;
-            this.values.clear();
-            this.renderValues();
+            this.discardTransientRuntime();
             this.setCommandsEnabled();
             socket.send(JSON.stringify(buildRuntimeConfigure(this.config.points)));
             this.setStatus("正在同步点位表");
@@ -267,8 +322,7 @@ class HMI {
             }
             this.socket = null;
             this.configured = false;
-            this.values.clear();
-            this.renderValues();
+            this.discardTransientRuntime();
             this.setCommandsEnabled();
             if (event.code === 4401) {
                 this.endSession("会话已过期，请重新登录");
@@ -313,6 +367,7 @@ class HMI {
         if (message.type === "runtime.configured") {
             this.configured = true;
             this.setCommandsEnabled();
+            this.setRuntimeControlsEnabled();
             this.setStatus("点位表已同步，等待 PLC 读取");
             return;
         }
@@ -328,8 +383,31 @@ class HMI {
             this.renderValues();
             return;
         }
-        if (message.type === "point.result" && message.success === false) {
-            this.setNotice(message.error?.message ?? "PLC 操作失败，等待新鲜反馈");
+        if (message.type === "plc.scan.result" && message.success === true && Array.isArray(message.devices)) {
+            this.plcDevices.splice(0, this.plcDevices.length, ...message.devices);
+            this.setRuntimeControlsEnabled();
+            this.setStatus("发现 " + String(this.plcDevices.length) + " 个 PLC 候选设备");
+            return;
+        }
+        if (message.type === "plc.connection.changed" && message.state !== undefined) {
+            this.plcState = message.state;
+            if (message.deviceId !== undefined) {
+                for (const device of this.plcDevices) {
+                    if (device.deviceId === message.deviceId) {
+                        device.state = message.state;
+                        device.selected = message.state === "connected";
+                    }
+                }
+            }
+            if (message.state === "disconnected") {
+                this.plcDevices.splice(0, this.plcDevices.length);
+            }
+            this.setRuntimeControlsEnabled();
+            this.setStatus(plcStateText(message.state, message.deviceId));
+            return;
+        }
+        if (message.success === false) {
+            this.setNotice(errorText(message.error?.code));
         }
     }
     renderLayout() {
@@ -360,6 +438,7 @@ class HMI {
         }
         this.renderValues();
         this.setCommandsEnabled();
+        this.setRuntimeControlsEnabled();
     }
     renderBinding(binding) {
         if (binding.component === "button") {
@@ -417,14 +496,57 @@ class HMI {
         });
         return button;
     }
+    renderPLCCandidates() {
+        this.plcCandidates.replaceChildren();
+        this.plcStatus.textContent = plcStateText(this.plcState);
+        if (this.plcDevices.length === 0) {
+            const empty = document.createElement("li");
+            empty.textContent = "尚未扫描 PLC";
+            this.plcCandidates.append(empty);
+            return;
+        }
+        for (const device of this.plcDevices) {
+            const row = document.createElement("li");
+            const identity = document.createElement("strong");
+            identity.textContent = device.deviceId;
+            const detail = document.createElement("span");
+            detail.textContent = device.name + " · " + device.address + " · " + plcStateText(device.state);
+            const connect = document.createElement("button");
+            connect.type = "button";
+            connect.textContent = "连接";
+            connect.disabled = !this.canSendCommands() || device.state === "connected" || device.state === "connecting";
+            connect.addEventListener("click", (event) => {
+                if (this.activationFilter.accept(event) && this.canSendCommands()) {
+                    this.sendPLCConnect(device.deviceId);
+                }
+            });
+            row.append(identity, detail, connect);
+            this.plcCandidates.append(row);
+        }
+    }
     canSendCommands() {
         return this.configured && this.socket?.readyState === WebSocket.OPEN;
     }
-    sendCommand(pointId, action) {
+    sendPointsSnapshotGet() {
+        this.sendRuntimeRequest(buildPointsSnapshotGet());
+    }
+    sendPLCScan() {
+        this.sendRuntimeRequest(buildPLCScan());
+    }
+    sendPLCConnect(deviceId) {
+        this.sendRuntimeRequest(buildPLCConnect(deviceId));
+    }
+    sendPLCDisconnect() {
+        this.sendRuntimeRequest(buildPLCDisconnect());
+    }
+    sendRuntimeRequest(message) {
         if (!this.canSendCommands() || this.socket === null) {
             return;
         }
-        this.socket.send(JSON.stringify({ type: "point.command", pointId, action }));
+        this.socket.send(JSON.stringify(message));
+    }
+    sendCommand(pointId, action) {
+        this.sendRuntimeRequest(buildPointCommand(pointId, action));
     }
     renderValues() {
         for (const [pointId, nodes] of this.pointViews) {
@@ -443,6 +565,19 @@ class HMI {
             button.disabled = !enabled;
         }
     }
+    setRuntimeControlsEnabled() {
+        const enabled = this.canSendCommands();
+        this.plcScanButton.disabled = !enabled;
+        this.snapshotButton.disabled = !enabled;
+        this.plcDisconnectButton.disabled = !enabled || this.plcState === "disconnected";
+        this.renderPLCCandidates();
+    }
+    discardTransientRuntime() {
+        clearTransientRuntime(this.values, this.plcDevices);
+        this.plcState = "disconnected";
+        this.renderValues();
+        this.setRuntimeControlsEnabled();
+    }
     setNotice(message) {
         this.notice.textContent = message;
     }
@@ -455,6 +590,30 @@ function formatValue(value) {
         return "无";
     }
     return String(value);
+}
+function plcStateText(state, deviceId) {
+    const text = {
+        disconnected: "PLC 未连接",
+        connecting: "正在连接 PLC",
+        connected: "PLC 已连接",
+        reconnecting: "PLC 正在重连",
+        error: "PLC 连接错误"
+    };
+    return text[state] + (deviceId === undefined ? "" : "：" + deviceId);
+}
+function errorText(code) {
+    const messages = {
+        BUSY: "PLC 扫描正在进行，请稍后再试",
+        PLC_NOT_CONNECTED: "PLC 尚未连接",
+        PLC_READ_FAILED: "PLC 读取失败",
+        PLC_WRITE_FAILED: "PLC 写入失败",
+        POINT_NOT_FOUND: "点位不存在",
+        POINT_NOT_WRITABLE: "点位不可写",
+        TIMEOUT: "PLC 请求超时",
+        INVALID_REQUEST: "PLC 请求无效",
+        INTERNAL_ERROR: "PLC 服务内部错误"
+    };
+    return code === undefined ? "PLC 请求失败" : messages[code] ?? "PLC 请求失败：" + code;
 }
 if (typeof document !== "undefined") {
     const hmi = new HMI();

@@ -38,6 +38,18 @@
     </section>
 
     <section id="runtime-panel" hidden>
+      <section class="panel" aria-labelledby="plc-title">
+        <h2 id="plc-title">PLC 连接</h2>
+        <p id="plc-status" role="status">PLC 未连接</p>
+        <p>
+          <button id="plc-scan-button" type="button" disabled>扫描 PLC</button>
+          <button id="plc-disconnect-button" class="secondary" type="button" disabled>断开 PLC</button>
+          <button id="snapshot-button" class="secondary" type="button" disabled>刷新当前状态</button>
+        </p>
+        <ul id="plc-candidates" aria-live="polite">
+          <li>尚未扫描 PLC</li>
+        </ul>
+      </section>
       <div id="runtime-layout" class="runtime-layout"></div>
       <section class="panel password-panel" aria-labelledby="password-title">
         <h2 id="password-title">修改密码</h2>
