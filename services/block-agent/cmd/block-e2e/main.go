@@ -1,0 +1,550 @@
+// Command block-e2e exercises the local Block HMI API from the device side.
+// It is a test tool: it never stores configuration or credentials.
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"golang.org/x/net/websocket"
+)
+
+const (
+	defaultBaseURL    = "http://127.0.0.1:8080"
+	defaultPointsPath = "/opt/block/current/web/assets/points.json"
+	defaultScanCIDR   = "192.168.1.0/24"
+	requestTimeout    = 15 * time.Second
+)
+
+type options struct {
+	baseURL    string
+	pointsPath string
+	scanCIDR   string
+	username   string
+	password   string
+	output     io.Writer
+}
+
+type pointFile struct {
+	Points json.RawMessage `json:"points"`
+}
+
+type pointDefinition struct {
+	PointID    string  `json:"pointId"`
+	WritePoint *string `json:"writePoint"`
+	Write      *struct {
+		Mode string `json:"mode"`
+	} `json:"write"`
+}
+
+type device struct {
+	DeviceID string `json:"deviceId"`
+}
+
+type resultLine struct {
+	Stage     string         `json:"stage"`
+	Status    string         `json:"status"`
+	Details   map[string]any `json:"details,omitempty"`
+	ErrorCode string         `json:"errorCode,omitempty"`
+}
+
+type workflow struct {
+	base   *url.URL
+	client *http.Client
+	ws     *websocket.Conn
+	output *json.Encoder
+}
+
+type protocolFailure struct {
+	code string
+}
+
+func (e protocolFailure) Error() string {
+	if e.code == "" {
+		return "Block returned an unsuccessful response"
+	}
+	return "Block returned " + e.code
+}
+
+func main() {
+	baseURL := flag.String("base-url", defaultBaseURL, "Block local base URL")
+	pointsPath := flag.String("points", defaultPointsPath, "path to HMI points.json")
+	scanCIDR := flag.String("scan-cidr", defaultScanCIDR, "IPv4 CIDR to scan for the PLC")
+	flag.Parse()
+
+	username := os.Getenv("BLOCK_E2E_USERNAME")
+	password := os.Getenv("BLOCK_E2E_PASSWORD")
+	if username == "" || password == "" {
+		fmt.Fprintln(os.Stderr, "block-e2e: BLOCK_E2E_USERNAME and BLOCK_E2E_PASSWORD are required")
+		os.Exit(2)
+	}
+
+	err := run(context.Background(), options{
+		baseURL: *baseURL, pointsPath: *pointsPath, scanCIDR: *scanCIDR,
+		username: username, password: password, output: os.Stdout,
+	})
+	if err != nil {
+		_ = json.NewEncoder(os.Stdout).Encode(resultLine{Stage: "workflow", Status: "failed", ErrorCode: errorCode(err)})
+		fmt.Fprintln(os.Stderr, "block-e2e: workflow failed")
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, options options) error {
+	if options.username == "" || options.password == "" {
+		return errors.New("credentials are required")
+	}
+	if options.output == nil {
+		return errors.New("output is required")
+	}
+	base, err := parseBaseURL(options.baseURL)
+	if err != nil {
+		return err
+	}
+	points, definitions, err := loadPoints(options.pointsPath)
+	if err != nil {
+		return err
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return err
+	}
+	workflow := &workflow{
+		base:   base,
+		client: &http.Client{Jar: jar, Timeout: requestTimeout},
+		output: json.NewEncoder(options.output),
+	}
+	if err := workflow.authenticate(ctx, options.username, options.password); err != nil {
+		return err
+	}
+	if err := workflow.openWebSocket(); err != nil {
+		return err
+	}
+	defer workflow.ws.Close()
+
+	if err := workflow.configure(points, len(definitions)); err != nil {
+		return err
+	}
+	deviceID, err := workflow.scan(options.scanCIDR)
+	if err != nil {
+		return err
+	}
+	if err := workflow.connect(deviceID); err != nil {
+		return err
+	}
+	if err := workflow.runActions(definitions); err != nil {
+		return err
+	}
+	if err := workflow.snapshot("points.snapshot.get"); err != nil {
+		return err
+	}
+	if err := workflow.disconnect(); err != nil {
+		return err
+	}
+	return workflow.logout(ctx)
+}
+
+func parseBaseURL(raw string) (*url.URL, error) {
+	base, err := url.Parse(raw)
+	if err != nil || base.Scheme != "http" || base.Host == "" {
+		return nil, errors.New("base URL must be an absolute http URL")
+	}
+	return base, nil
+}
+
+func loadPoints(path string) (json.RawMessage, []pointDefinition, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	var file pointFile
+	if err := json.Unmarshal(contents, &file); err != nil {
+		return nil, nil, err
+	}
+	var definitions []pointDefinition
+	if len(file.Points) == 0 || json.Unmarshal(file.Points, &definitions) != nil || len(definitions) == 0 {
+		return nil, nil, errors.New("points.json must contain a non-empty points array")
+	}
+	return file.Points, definitions, nil
+}
+
+func (w *workflow) authenticate(ctx context.Context, username, password string) error {
+	response, err := w.postJSON(ctx, "/api/v2/auth/initial-admin", map[string]string{
+		"username": username, "password": password, "confirmPassword": password,
+	})
+	if err != nil {
+		return err
+	}
+	status := response.StatusCode
+	_ = response.Body.Close()
+	switch status {
+	case http.StatusCreated:
+		return w.report("auth.initial-admin", "created", nil)
+	case http.StatusConflict:
+		if err := w.report("auth.initial-admin", "already_initialized", nil); err != nil {
+			return err
+		}
+	default:
+		return httpStatusError{status: status}
+	}
+
+	response, err = w.postJSON(ctx, "/api/v2/auth/login", map[string]string{"username": username, "password": password})
+	if err != nil {
+		return err
+	}
+	status = response.StatusCode
+	_ = response.Body.Close()
+	if status != http.StatusOK {
+		return httpStatusError{status: status}
+	}
+	return w.report("auth.login", "authenticated", nil)
+}
+
+func (w *workflow) openWebSocket() error {
+	cookie := ""
+	for _, value := range w.client.Jar.Cookies(w.base) {
+		if value.Name == "block_session" && value.Value != "" {
+			cookie = value.Name + "=" + value.Value
+			break
+		}
+	}
+	if cookie == "" {
+		return errors.New("login did not return a local session cookie")
+	}
+	location := *w.base
+	location.Scheme = "ws"
+	location.Path = strings.TrimRight(location.Path, "/") + "/ws"
+	location.RawQuery = ""
+	config, err := websocket.NewConfig(location.String(), w.base.String())
+	if err != nil {
+		return err
+	}
+	config.Header.Set("Cookie", cookie)
+	connection, err := websocket.DialConfig(config)
+	if err != nil {
+		return err
+	}
+	w.ws = connection
+	return w.report("ws.connect", "connected", nil)
+}
+
+func (w *workflow) configure(points json.RawMessage, pointCount int) error {
+	if err := w.send("runtime.configure", map[string]any{"scanIntervalMs": 50, "points": points}); err != nil {
+		return err
+	}
+	message, err := w.receive("runtime.configured")
+	if err != nil {
+		return err
+	}
+	if err := successful(message); err != nil {
+		return err
+	}
+	return w.report("runtime.configure", "configured", map[string]any{"pointCount": pointCount})
+}
+
+func (w *workflow) scan(addressRange string) (string, error) {
+	if err := w.send("plc.scan", map[string]any{"addressRange": addressRange}); err != nil {
+		return "", err
+	}
+	message, err := w.receive("plc.scan.result")
+	if err != nil {
+		return "", err
+	}
+	if err := successful(message); err != nil {
+		return "", err
+	}
+	var payload struct {
+		Devices []device `json:"devices"`
+	}
+	if err := decodeMessage(message, &payload); err != nil {
+		return "", err
+	}
+	if len(payload.Devices) == 0 || payload.Devices[0].DeviceID == "" {
+		return "", errors.New("PLC scan returned no device")
+	}
+	if err := w.report("plc.scan", "found", map[string]any{"deviceCount": len(payload.Devices), "deviceId": payload.Devices[0].DeviceID}); err != nil {
+		return "", err
+	}
+	return payload.Devices[0].DeviceID, nil
+}
+
+func (w *workflow) connect(deviceID string) error {
+	if err := w.send("plc.connect", map[string]any{"deviceId": deviceID}); err != nil {
+		return err
+	}
+	message, err := w.receive("plc.connect.result")
+	if err != nil {
+		return err
+	}
+	if err := successful(message); err != nil {
+		return err
+	}
+	if err := w.report("plc.connect", "connected", map[string]any{"deviceId": deviceID}); err != nil {
+		return err
+	}
+	return w.snapshot("points.snapshot.initial")
+}
+
+func (w *workflow) runActions(points []pointDefinition) error {
+	for _, mode := range []string{"pulse", "momentary", "toggle"} {
+		point, found := actionPoint(points, mode)
+		if !found {
+			if err := w.report("point.command", "skipped", map[string]any{"mode": mode, "reason": "points.json has no matching action"}); err != nil {
+				return err
+			}
+			continue
+		}
+		switch mode {
+		case "pulse":
+			if err := w.command(point, "pulse", 1); err != nil {
+				return err
+			}
+		case "momentary":
+			if err := w.command(point, "press", 1); err != nil {
+				return err
+			}
+			if err := w.command(point, "release", 1); err != nil {
+				return err
+			}
+		case "toggle":
+			if err := w.command(point, "toggle", 1); err != nil {
+				return err
+			}
+			if err := w.command(point, "toggle", 2); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func actionPoint(points []pointDefinition, mode string) (pointDefinition, bool) {
+	for _, point := range points {
+		if point.Write != nil && point.Write.Mode == mode && point.commandID() != "" {
+			return point, true
+		}
+	}
+	return pointDefinition{}, false
+}
+
+func (p pointDefinition) commandID() string {
+	if p.WritePoint != nil && *p.WritePoint != "" {
+		return *p.WritePoint
+	}
+	return p.PointID
+}
+
+func (w *workflow) command(point pointDefinition, action string, attempt int) error {
+	pointID := point.commandID()
+	if err := w.send("point.command", map[string]any{"pointId": pointID, "action": action}); err != nil {
+		return err
+	}
+	message, err := w.receive("point.result")
+	if err != nil {
+		return err
+	}
+	if err := successful(message); err != nil {
+		return err
+	}
+	var payload struct {
+		PointID string `json:"pointId"`
+	}
+	if err := decodeMessage(message, &payload); err != nil {
+		return err
+	}
+	if payload.PointID != pointID {
+		return errors.New("point command result did not match the requested point")
+	}
+	return w.report("point.command", "completed", map[string]any{"mode": point.Write.Mode, "pointId": pointID, "action": action, "attempt": attempt})
+}
+
+func (w *workflow) snapshot(stage string) error {
+	if stage == "points.snapshot.get" {
+		if err := w.send("points.snapshot.get", nil); err != nil {
+			return err
+		}
+	}
+	message, err := w.receive("points.snapshot")
+	if err != nil {
+		return err
+	}
+	var payload struct {
+		Values map[string]json.RawMessage `json:"values"`
+	}
+	if err := decodeMessage(message, &payload); err != nil {
+		return err
+	}
+	return w.report(stage, "received", map[string]any{"pointCount": len(payload.Values)})
+}
+
+func (w *workflow) disconnect() error {
+	if err := w.send("plc.disconnect", nil); err != nil {
+		return err
+	}
+	message, err := w.receive("plc.disconnect.result")
+	if err != nil {
+		return err
+	}
+	if err := successful(message); err != nil {
+		return err
+	}
+	return w.report("plc.disconnect", "disconnected", nil)
+}
+
+func (w *workflow) logout(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint("/api/v2/auth/logout"), nil)
+	if err != nil {
+		return err
+	}
+	response, err := w.client.Do(request)
+	if err != nil {
+		return err
+	}
+	status := response.StatusCode
+	_ = response.Body.Close()
+	if status != http.StatusNoContent {
+		return httpStatusError{status: status}
+	}
+	return w.report("auth.logout", "logged_out", nil)
+}
+
+func (w *workflow) postJSON(ctx context.Context, path string, body any) (*http.Response, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint(path), bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	return w.client.Do(request)
+}
+
+func (w *workflow) endpoint(path string) string {
+	location := *w.base
+	location.Path = path
+	location.RawQuery = ""
+	return location.String()
+}
+
+func (w *workflow) send(messageType string, fields map[string]any) error {
+	requestID, err := newRequestID()
+	if err != nil {
+		return err
+	}
+	message := map[string]any{
+		"protocolVersion": "1.0",
+		"type":            messageType,
+		"requestId":       requestID,
+		"timestamp":       time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	for key, value := range fields {
+		message[key] = value
+	}
+	if err := w.ws.SetDeadline(time.Now().Add(requestTimeout)); err != nil {
+		return err
+	}
+	return websocket.JSON.Send(w.ws, message)
+}
+
+func (w *workflow) receive(expectedType string) (map[string]json.RawMessage, error) {
+	for {
+		if err := w.ws.SetDeadline(time.Now().Add(requestTimeout)); err != nil {
+			return nil, err
+		}
+		var message map[string]json.RawMessage
+		if err := websocket.JSON.Receive(w.ws, &message); err != nil {
+			return nil, err
+		}
+		messageType := ""
+		if err := json.Unmarshal(message["type"], &messageType); err != nil {
+			return nil, errors.New("WebSocket message has no type")
+		}
+		if messageType == "error" {
+			return nil, failureFrom(message)
+		}
+		if messageType == expectedType {
+			return message, nil
+		}
+	}
+}
+
+func successful(message map[string]json.RawMessage) error {
+	if raw, exists := message["success"]; exists {
+		var success bool
+		if err := json.Unmarshal(raw, &success); err != nil {
+			return err
+		}
+		if !success {
+			return failureFrom(message)
+		}
+	}
+	return nil
+}
+
+func failureFrom(message map[string]json.RawMessage) error {
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	_ = decodeMessage(message, &payload)
+	return protocolFailure{code: payload.Error.Code}
+}
+
+func decodeMessage(message map[string]json.RawMessage, target any) error {
+	contents, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(contents, target)
+}
+
+func (w *workflow) report(stage, status string, details map[string]any) error {
+	return w.output.Encode(resultLine{Stage: stage, Status: status, Details: details})
+}
+
+func newRequestID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	value[6] = value[6]&0x0f | 0x40
+	value[8] = value[8]&0x3f | 0x80
+	encoded := hex.EncodeToString(value[:])
+	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32], nil
+}
+
+type httpStatusError struct {
+	status int
+}
+
+func (e httpStatusError) Error() string {
+	return fmt.Sprintf("unexpected HTTP status %d", e.status)
+}
+
+func errorCode(err error) string {
+	var protocol protocolFailure
+	if errors.As(err, &protocol) && protocol.code != "" {
+		return protocol.code
+	}
+	var status httpStatusError
+	if errors.As(err, &status) {
+		return fmt.Sprintf("HTTP_%d", status.status)
+	}
+	return "FAILED"
+}
