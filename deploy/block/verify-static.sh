@@ -63,10 +63,10 @@ if config["BLOCK_MQTTS_V2_ENDPOINT"] != "mqtts://bdm.example.invalid:8883":
     raise SystemExit("BDM connection defaults must be MQTTS on 8883")
 PY
 
-UNIT_LIST=$(find "$SCRIPT_DIR/systemd" -maxdepth 1 -type f -name '*.service' -printf '%f\n' | sort)
-EXPECTED_UNITS='block-kiosk.service
-block.service'
-[ "$UNIT_LIST" = "$EXPECTED_UNITS" ] || fail "exactly block.service and block-kiosk.service are required"
+UNIT_COUNT=$(find "$SCRIPT_DIR/systemd" -maxdepth 1 -type f -name '*.service' | wc -l)
+if [ "$UNIT_COUNT" -ne 2 ] || [ ! -f "$SCRIPT_DIR/systemd/block.service" ] || [ ! -f "$SCRIPT_DIR/systemd/block-kiosk.service" ]; then
+  fail "exactly block.service and block-kiosk.service are required"
+fi
 
 grep -Fx 'EnvironmentFile=/etc/block/block.env' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -local-http-address $BLOCK_LOCAL_HTTP_ADDRESS \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
