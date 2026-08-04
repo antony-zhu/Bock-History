@@ -64,19 +64,21 @@ type Result struct {
 type Factory func(runtimeconfig.Config, func(map[string]pointstore.PointValue) error) (*Worker, error)
 
 type Worker struct {
-	adapter  Adapter
-	publish  func(map[string]pointstore.PointValue) error
-	now      func() time.Time
-	timeout  time.Duration
-	points   map[string]pointPlan
-	byWord   map[uint16][]pointPlan
-	batches  []readBatch
-	last     map[string]pointstore.PointValue
-	commands chan commandRequest
-	done     chan struct{}
-	doneOnce sync.Once
-	lifeMu   sync.Mutex
-	stopping bool
+	adapter   Adapter
+	publish   func(map[string]pointstore.PointValue) error
+	now       func() time.Time
+	timeout   time.Duration
+	points    map[string]pointPlan
+	byWord    map[uint16][]pointPlan
+	batches   []readBatch
+	last      map[string]pointstore.PointValue
+	commands  chan commandRequest
+	done      chan struct{}
+	doneOnce  sync.Once
+	ready     chan error
+	readyOnce sync.Once
+	lifeMu    sync.Mutex
+	stopping  bool
 }
 
 type pointPlan struct {
@@ -125,7 +127,7 @@ func New(config runtimeconfig.Config, adapter Adapter, publish func(map[string]p
 	return &Worker{
 		adapter: adapter, publish: publish, now: now, timeout: 2 * time.Second,
 		points: points, byWord: byWord, batches: batches, last: make(map[string]pointstore.PointValue, len(points)),
-		commands: make(chan commandRequest, CommandQueueCapacity), done: make(chan struct{}),
+		commands: make(chan commandRequest, CommandQueueCapacity), done: make(chan struct{}), ready: make(chan error, 1),
 	}, nil
 }
 
@@ -152,6 +154,12 @@ func (w *Worker) Done() <-chan struct{} {
 	return w.done
 }
 
+// Ready reports the result of the one initial PLC read. It lets the runtime
+// enqueue the first complete snapshot before it enables ordinary changes.
+func (w *Worker) Ready() <-chan error {
+	return w.ready
+}
+
 // Run is the only place that calls the adapter. It does one initial scan, then
 // coalesces 50 ms ticks in pollPending while always giving an already queued
 // external command priority over the next ordinary poll.
@@ -160,10 +168,15 @@ func (w *Worker) Run(ctx context.Context) {
 	defer w.doneOnce.Do(func() { close(w.done) })
 	defer w.rejectQueued()
 	defer w.stopAdmitting()
+	defer w.readyOnce.Do(func() {
+		w.ready <- context.Canceled
+		close(w.ready)
+	})
 
 	ticker := time.NewTicker(PollInterval)
 	defer ticker.Stop()
 	pollPending := true // configuration begins with the current PLC snapshot.
+	initial := true
 
 	for {
 		if ctx.Err() != nil {
@@ -181,7 +194,14 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 
 		if pollPending {
-			_, _ = w.readAll()
+			_, err := w.readAll()
+			if initial {
+				w.readyOnce.Do(func() {
+					w.ready <- err
+					close(w.ready)
+				})
+				initial = false
+			}
 			pollPending = false
 			continue
 		}

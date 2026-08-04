@@ -52,6 +52,14 @@ func (s *Store) Clear() {
 	s.mu.Unlock()
 }
 
+// ClearValues drops PLC observations while preserving the current complete
+// HMI point table, for example after the user disconnects the selected PLC.
+func (s *Store) ClearValues() {
+	s.mu.Lock()
+	s.values = map[string]PointValue{}
+	s.mu.Unlock()
+}
+
 func (s *Store) Configured() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

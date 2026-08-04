@@ -32,7 +32,7 @@ func TestWebSocketRequiresRuntimeConfigureFirst(t *testing.T) {
 	}
 }
 
-func TestConfigureSendsConfiguredThenSnapshot(t *testing.T) {
+func TestConfigureThenSnapshotGet(t *testing.T) {
 	runtime, address, cancel, done := startRuntime(t)
 	defer stopRuntime(t, cancel, done)
 	connection := dial(t, address)
@@ -40,9 +40,10 @@ func TestConfigureSendsConfiguredThenSnapshot(t *testing.T) {
 
 	configure(t, connection)
 	configured := receive(t, connection)
-	if configured["type"] != "runtime.configured" || configured["pointCount"] != float64(2) {
+	if configured["type"] != "runtime.configured" || configured["scanIntervalMs"] != float64(50) {
 		t.Fatalf("configured event = %#v", configured)
 	}
+	send(t, connection, map[string]any{"type": "points.snapshot.get"})
 	snapshot := receive(t, connection)
 	if snapshot["type"] != "points.snapshot" {
 		t.Fatalf("snapshot event = %#v", snapshot)
@@ -74,7 +75,6 @@ func TestChangedEventContainsAbsoluteValue(t *testing.T) {
 	defer connection.Close()
 	configure(t, connection)
 	_ = receive(t, connection)
-	_ = receive(t, connection)
 
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
 	if err := runtime.UpdateConfirmed(map[string]pointstore.PointValue{
@@ -100,7 +100,6 @@ func TestPointCommandIsValidatedButDoesNotWriteWithoutPLC(t *testing.T) {
 	defer connection.Close()
 	configure(t, connection)
 	_ = receive(t, connection)
-	_ = receive(t, connection)
 
 	send(t, connection, map[string]any{
 		"type": "point.command", "requestId": "one", "pointId": "machine.startCommand", "action": "pulse",
@@ -125,7 +124,14 @@ func TestPointCommandUsesWorkerReadbackAndFC22Sequence(t *testing.T) {
 	if configured := receive(t, connection); configured["type"] != "runtime.configured" {
 		t.Fatalf("configured event = %#v", configured)
 	}
-	if snapshot := receive(t, connection); snapshot["type"] != "points.snapshot" {
+	send(t, connection, map[string]any{"type": "plc.connect", "requestId": "connect-one", "deviceId": "easy521://127.0.0.1:1502?unitId=1"})
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "connecting" {
+		t.Fatalf("connecting event = %#v", event)
+	}
+	if result := receiveType(t, connection, "plc.connect.result"); result["success"] != true {
+		t.Fatalf("connect result = %#v", result)
+	}
+	if snapshot := receiveType(t, connection, "points.snapshot"); snapshot["type"] != "points.snapshot" {
 		t.Fatalf("snapshot event = %#v", snapshot)
 	}
 
@@ -142,12 +148,58 @@ func TestPointCommandUsesWorkerReadbackAndFC22Sequence(t *testing.T) {
 	}
 }
 
+func TestPLCDisconnectStopsWorkerAndClearsValues(t *testing.T) {
+	adapter := &runtimeFakeAdapter{registers: map[uint16]uint16{504: 0}}
+	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
+		return plcworker.New(config, adapter, publish, time.Now)
+	})
+	runtime, address, cancel, done := startRuntimeWithFactory(t, factory)
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+	configure(t, connection)
+	_ = receive(t, connection)
+	send(t, connection, map[string]any{"type": "plc.connect", "requestId": "connect", "deviceId": "easy521://127.0.0.1:1502?unitId=1"})
+	_ = receiveType(t, connection, "plc.connection.changed")
+	_ = receiveType(t, connection, "plc.connect.result")
+	_ = receiveType(t, connection, "points.snapshot")
+	if len(runtime.Store().Snapshot()) == 0 {
+		t.Fatal("PLC initial read did not populate the point store")
+	}
+	send(t, connection, map[string]any{"type": "plc.disconnect", "requestId": "disconnect"})
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "disconnected" {
+		t.Fatalf("disconnect event = %#v", event)
+	}
+	if result := receiveType(t, connection, "plc.disconnect.result"); result["success"] != true || result["state"] != "disconnected" {
+		t.Fatalf("disconnect result = %#v", result)
+	}
+	if !runtime.Store().Configured() || len(runtime.Store().Snapshot()) != 0 {
+		t.Fatalf("disconnect did not preserve config and clear values: configured=%t values=%#v", runtime.Store().Configured(), runtime.Store().Snapshot())
+	}
+}
+
+func TestPLCScanReturnsOneCompleteResult(t *testing.T) {
+	_, address, cancel, done := startRuntime(t)
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+	configure(t, connection)
+	_ = receive(t, connection)
+	send(t, connection, map[string]any{"type": "plc.scan", "requestId": "scan", "addressRange": "127.0.0.1/32"})
+	result := receiveType(t, connection, "plc.scan.result")
+	if result["success"] != true {
+		t.Fatalf("scan result = %#v", result)
+	}
+	if _, ok := result["devices"].([]any); !ok {
+		t.Fatalf("scan devices = %#v", result["devices"])
+	}
+}
+
 func TestDisconnectStopsAndClearsSession(t *testing.T) {
 	runtime, address, cancel, done := startRuntime(t)
 	defer stopRuntime(t, cancel, done)
 	connection := dial(t, address)
 	configure(t, connection)
-	_ = receive(t, connection)
 	_ = receive(t, connection)
 	if err := connection.Close(); err != nil {
 		t.Fatal(err)
@@ -253,6 +305,14 @@ func configure(t *testing.T, connection *websocket.Conn) {
 
 func send(t *testing.T, connection *websocket.Conn, value any) {
 	t.Helper()
+	if message, ok := value.(map[string]any); ok {
+		if _, exists := message["protocolVersion"]; !exists {
+			message["protocolVersion"] = protocolVersion
+		}
+		if _, exists := message["timestamp"]; !exists {
+			message["timestamp"] = time.Now().UTC().Format(time.RFC3339)
+		}
+	}
 	if err := websocket.JSON.Send(connection, value); err != nil {
 		t.Fatal(err)
 	}

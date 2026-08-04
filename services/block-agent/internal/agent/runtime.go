@@ -34,16 +34,19 @@ type Runtime struct {
 	factory plcworker.Factory
 	auth    *auth.Service
 
-	mu      sync.Mutex
-	owner   *wsClient
-	session *runtimeSession
+	mu         sync.Mutex
+	owner      *wsClient
+	session    *runtimeSession
+	scanMu     sync.Mutex
+	scanCancel context.CancelFunc
 }
 
 type runtimeSession struct {
+	config     runtimeconfig.Config
 	worker     *plcworker.Worker
 	cancel     context.CancelFunc
-	done       chan struct{}
 	broadcasts bool
+	deviceID   string
 }
 
 // NewLocalRuntime creates the empty local runtime. It performs no PLC, MQTT
@@ -140,13 +143,10 @@ func (r *Runtime) StopSession() {
 	session := r.session
 	r.owner = nil
 	r.session = nil
-	if session != nil && session.cancel != nil {
-		session.cancel()
-	}
+	worker, cancel := detachWorkerLocked(session)
 	r.mu.Unlock()
-	if session != nil {
-		<-session.done
-	}
+	r.cancelScan()
+	stopWorker(worker, cancel)
 	r.store.Clear()
 	if owner != nil {
 		owner.close()
@@ -173,9 +173,9 @@ func (r *Runtime) UpdateConfirmed(values map[string]pointstore.PointValue) error
 	return nil
 }
 
-func (r *Runtime) updateFromWorker(session *runtimeSession, values map[string]pointstore.PointValue) error {
+func (r *Runtime) updateFromWorker(session *runtimeSession, worker *plcworker.Worker, values map[string]pointstore.PointValue) error {
 	r.mu.Lock()
-	if r.session != session || r.owner == nil {
+	if r.session != session || session.worker != worker || r.owner == nil {
 		r.mu.Unlock()
 		return nil
 	}
@@ -208,7 +208,11 @@ func (r *Runtime) health(w http.ResponseWriter, request *http.Request) {
 
 func (r *Runtime) serveWS(connection *websocket.Conn) {
 	connection.MaxPayloadBytes = maxWSFrameBytes
-	client := newWSClient(connection)
+	client, err := r.newWSClient(connection)
+	if err != nil {
+		_ = connection.Close()
+		return
+	}
 	defer r.disconnect(client)
 	defer client.close()
 	go client.writeLoop()
@@ -243,11 +247,19 @@ func (r *Runtime) serveWS(connection *websocket.Conn) {
 		case "runtime.configure":
 			client.enqueue(errorEnvelope(r.now, "", "INVALID_REQUEST", "runtime.configure is only allowed as the first WebSocket message"), false)
 		case "points.snapshot.get":
-			if err := validateSnapshotRequest(raw); err != nil {
+			requestID, err := validateSnapshotRequest(raw)
+			if err != nil {
 				client.enqueue(errorEnvelope(r.now, "", "INVALID_REQUEST", err.Error()), false)
 				continue
 			}
+			_ = requestID
 			client.enqueue(snapshotEnvelope(r.now, r.store.Snapshot()), false)
+		case "plc.scan":
+			r.handlePLCScan(client, raw)
+		case "plc.connect":
+			r.handlePLCConnect(client, raw)
+		case "plc.disconnect":
+			r.handlePLCDisconnect(client, raw)
 		case "point.command":
 			r.handlePointCommand(client, raw)
 		default:
@@ -260,75 +272,51 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	var request struct {
 		ProtocolVersion string                          `json:"protocolVersion"`
 		Type            string                          `json:"type"`
+		Timestamp       string                          `json:"timestamp"`
+		RequestID       string                          `json:"requestId"`
 		ScanIntervalMs  int                             `json:"scanIntervalMs"`
 		Points          []runtimeconfig.PointDefinition `json:"points"`
 	}
-	if err := decodeAllowed(raw, &request, "protocolVersion", "type", "timestamp", "scanIntervalMs", "points"); err != nil {
+	if err := decodeAllowed(raw, &request, "protocolVersion", "type", "timestamp", "requestId", "scanIntervalMs", "points"); err != nil {
 		return err
 	}
 	if request.Type != "runtime.configure" {
 		return errors.New("type must be runtime.configure")
 	}
-	if request.ProtocolVersion != "" && request.ProtocolVersion != protocolVersion {
-		return fmt.Errorf("protocolVersion must be %s", protocolVersion)
+	if err := validateRequestEnvelope(request.ProtocolVersion, request.Timestamp); err != nil {
+		return err
 	}
 	config, err := runtimeconfig.Normalize(runtimeconfig.Config{ScanIntervalMs: request.ScanIntervalMs, Points: request.Points})
 	if err != nil {
 		return err
 	}
-	session := &runtimeSession{done: make(chan struct{})}
-	var worker *plcworker.Worker
-	if r.factory != nil {
-		worker, err = r.factory(config, func(values map[string]pointstore.PointValue) error {
-			return r.updateFromWorker(session, values)
-		})
-		if err != nil {
-			return err
-		}
-	}
-	workerContext, workerCancel := context.WithCancel(context.Background())
+	session := &runtimeSession{config: config}
 
 	r.mu.Lock()
 	if r.owner != nil && r.owner != client {
 		r.mu.Unlock()
-		workerCancel()
-		if worker != nil {
-			worker.Run(workerContext)
-		}
 		return errors.New("another local HMI session is already active")
 	}
 	if err := r.store.Replace(config); err != nil {
 		r.mu.Unlock()
-		workerCancel()
-		if worker != nil {
-			worker.Run(workerContext)
-		}
 		return err
 	}
 	r.owner = client
 	r.session = session
-	session.worker = worker
-	session.cancel = workerCancel
-	client.enqueue(configuredEnvelope(r.now, len(config.Points)), false)
-	client.enqueue(snapshotEnvelope(r.now, r.store.Snapshot()), false)
-	session.broadcasts = true
+	client.enqueue(configuredEnvelope(r.now, config.ScanIntervalMs), false)
 	r.mu.Unlock()
-
-	if worker == nil {
-		close(session.done)
-		return nil
-	}
-	go func() {
-		worker.Run(workerContext)
-		close(session.done)
-	}()
 	return nil
 }
 
 func (r *Runtime) handlePointCommand(client *wsClient, raw []byte) {
+	if !client.canOperate() {
+		client.enqueue(pointErrorEnvelope(r.now, "", "", "FORBIDDEN", "operator permission is required"), false)
+		return
+	}
 	var request struct {
 		ProtocolVersion string           `json:"protocolVersion"`
 		Type            string           `json:"type"`
+		Timestamp       string           `json:"timestamp"`
 		RequestID       string           `json:"requestId"`
 		PointID         string           `json:"pointId"`
 		Action          string           `json:"action"`
@@ -338,12 +326,16 @@ func (r *Runtime) handlePointCommand(client *wsClient, raw []byte) {
 		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", err.Error()), false)
 		return
 	}
-	if request.ProtocolVersion != "" && request.ProtocolVersion != protocolVersion {
-		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "protocolVersion is unsupported"), false)
+	if err := validateRequestEnvelope(request.ProtocolVersion, request.Timestamp); err != nil {
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", err.Error()), false)
 		return
 	}
 	if request.Type != "point.command" || request.PointID == "" || request.Action == "" {
 		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "pointId and action are required"), false)
+		return
+	}
+	if err := r.recordActivity(client); err != nil {
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "UNAUTHENTICATED", err.Error()), true)
 		return
 	}
 	definition, exists := r.store.Definition(request.PointID)
@@ -433,21 +425,23 @@ func allowsAction(definition runtimeconfig.PointDefinition, action string) bool 
 	}
 }
 
-func validateSnapshotRequest(raw []byte) error {
+func validateSnapshotRequest(raw []byte) (string, error) {
 	var request struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Type            string `json:"type"`
+		Timestamp       string `json:"timestamp"`
+		RequestID       string `json:"requestId"`
 	}
 	if err := decodeAllowed(raw, &request, "protocolVersion", "type", "timestamp", "requestId"); err != nil {
-		return err
+		return "", err
 	}
 	if request.Type != "points.snapshot.get" {
-		return errors.New("type must be points.snapshot.get")
+		return "", errors.New("type must be points.snapshot.get")
 	}
-	if request.ProtocolVersion != "" && request.ProtocolVersion != protocolVersion {
-		return fmt.Errorf("protocolVersion must be %s", protocolVersion)
+	if err := validateRequestEnvelope(request.ProtocolVersion, request.Timestamp); err != nil {
+		return "", err
 	}
-	return nil
+	return request.RequestID, nil
 }
 
 func decodeAllowed(raw []byte, target any, allowed ...string) error {
@@ -525,6 +519,8 @@ type wsClient struct {
 	send       chan outboundMessage
 	done       chan struct{}
 	closeOnce  sync.Once
+	token      string
+	role       auth.Role
 }
 
 type outboundMessage struct {
@@ -534,6 +530,29 @@ type outboundMessage struct {
 
 func newWSClient(connection *websocket.Conn) *wsClient {
 	return &wsClient{connection: connection, send: make(chan outboundMessage, wsQueueSize), done: make(chan struct{})}
+}
+
+func (r *Runtime) newWSClient(connection *websocket.Conn) (*wsClient, error) {
+	client := newWSClient(connection)
+	if r.auth == nil {
+		client.role = auth.RoleAdmin
+		return client, nil
+	}
+	token, ok := sessionToken(connection.Request())
+	if !ok {
+		return nil, auth.ErrUnauthenticated
+	}
+	session, err := r.auth.Session(token)
+	if err != nil {
+		return nil, err
+	}
+	client.token = token
+	client.role = session.Role
+	return client, nil
+}
+
+func (c *wsClient) canOperate() bool {
+	return c.role == auth.RoleOperator || c.role == auth.RoleAdmin
 }
 
 func (c *wsClient) enqueue(value any, closeAfter bool) bool {
@@ -584,8 +603,9 @@ func (c *wsClient) close() {
 }
 
 type protocolError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details"`
 }
 
 func baseEnvelope(now func() time.Time, messageType string) map[string]any {
@@ -596,9 +616,9 @@ func baseEnvelope(now func() time.Time, messageType string) map[string]any {
 	}
 }
 
-func configuredEnvelope(now func() time.Time, pointCount int) map[string]any {
+func configuredEnvelope(now func() time.Time, scanIntervalMs int) map[string]any {
 	envelope := baseEnvelope(now, "runtime.configured")
-	envelope["pointCount"] = pointCount
+	envelope["scanIntervalMs"] = scanIntervalMs
 	return envelope
 }
 
@@ -619,7 +639,8 @@ func errorEnvelope(now func() time.Time, requestID, code, message string) map[st
 	if requestID != "" {
 		envelope["requestId"] = requestID
 	}
-	envelope["error"] = protocolError{Code: code, Message: message}
+	envelope["success"] = false
+	envelope["error"] = protocolError{Code: code, Message: message, Details: map[string]any{}}
 	return envelope
 }
 
@@ -630,7 +651,50 @@ func pointErrorEnvelope(now func() time.Time, requestID, pointID, code, message 
 	}
 	envelope["success"] = false
 	envelope["pointId"] = pointID
-	envelope["error"] = protocolError{Code: code, Message: message}
+	envelope["error"] = protocolError{Code: code, Message: message, Details: map[string]any{}}
+	return envelope
+}
+
+func plcScanResultEnvelope(now func() time.Time, requestID string, devices []plcDevice) map[string]any {
+	envelope := baseEnvelope(now, "plc.scan.result")
+	if requestID != "" {
+		envelope["requestId"] = requestID
+	}
+	envelope["success"] = true
+	envelope["devices"] = devices
+	return envelope
+}
+
+func plcConnectionEnvelope(now func() time.Time, deviceID, state string) map[string]any {
+	envelope := baseEnvelope(now, "plc.connection.changed")
+	if deviceID != "" {
+		envelope["deviceId"] = deviceID
+	}
+	envelope["state"] = state
+	return envelope
+}
+
+func plcConnectResultEnvelope(now func() time.Time, requestID, deviceID string, success bool, state, code, message string) map[string]any {
+	envelope := baseEnvelope(now, "plc.connect.result")
+	if requestID != "" {
+		envelope["requestId"] = requestID
+	}
+	envelope["success"] = success
+	envelope["deviceId"] = deviceID
+	envelope["state"] = state
+	if !success {
+		envelope["error"] = protocolError{Code: code, Message: message, Details: map[string]any{}}
+	}
+	return envelope
+}
+
+func plcDisconnectResultEnvelope(now func() time.Time, requestID string, success bool) map[string]any {
+	envelope := baseEnvelope(now, "plc.disconnect.result")
+	if requestID != "" {
+		envelope["requestId"] = requestID
+	}
+	envelope["success"] = success
+	envelope["state"] = "disconnected"
 	return envelope
 }
 
