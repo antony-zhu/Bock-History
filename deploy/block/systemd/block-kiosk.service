@@ -1,0 +1,18 @@
+[Unit]
+Description=Block Chromium kiosk
+After=graphical.target block.service
+Wants=block.service
+
+[Service]
+Type=simple
+User=block-ui
+Group=block-ui
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/block-ui/.Xauthority
+ExecStartPre=/opt/block/current/deploy/health-check.sh --url http://127.0.0.1:8080/healthz --retries 30 --delay 1
+ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble http://127.0.0.1:8080/
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=graphical.target

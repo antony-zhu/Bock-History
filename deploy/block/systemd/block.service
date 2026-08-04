@@ -1,0 +1,29 @@
+[Unit]
+Description=Block local runtime
+After=local-fs.target network.target
+Wants=local-fs.target network.target
+
+[Service]
+Type=simple
+User=block
+Group=block
+WorkingDirectory=/opt/block/current
+UMask=0077
+
+# Single v2 runtime command seam.  The current known binary and flag are kept
+# here; a future runtime rename changes this one line, never adds a second
+# service or a compatibility wrapper.
+ExecStart=/opt/block/current/bin/block-agent -config /etc/block/block.json
+
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/block
+ReadOnlyPaths=/etc/block /opt/block/current
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -1,60 +1,84 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${BLOCK_HMI_CA:?set BLOCK_HMI_CA to the trusted CA certificate path}"
-: "${BLOCK_HMI_HEALTH_URL:=https://127.0.0.1:8443/healthz}"
-: "${BLOCK_AGENT_SOCKET:=/run/block-agent/api/block-agent.sock}"
-: "${BLOCK_SIMULATOR_IO_SOCKET:=/run/block-plc/io/io.sock}"
-: "${BLOCK_EXPECT_SIMULATOR:=false}"
-readonly TEST_MODE="${BLOCK_DEPLOY_TEST_MODE:-false}"
+URL=http://127.0.0.1:8080/healthz
+EXPECTED_VERSION=
+RETRIES=1
+DELAY_SECONDS=1
 
-socket_exists() {
-  local path="$1"
-  if [[ "${TEST_MODE}" == "true" ]]; then
-    [[ -e "${path}" && ! -L "${path}" ]]
-  else
-    [[ -S "${path}" ]]
-  fi
+usage() {
+  cat <<'EOF'
+Usage:
+  deploy/block/health-check.sh [--url <local-health-url>]
+      [--expected-version <version>] [--retries <count>] [--delay <seconds>]
+
+The health endpoint is intentionally loopback HTTP.  External maintenance
+health remains HTTPS on port 8443 and is not probed with an unknown certificate.
+EOF
 }
 
-case "${BLOCK_HMI_HEALTH_URL}" in
-  https://127.0.0.1:8443/*|https://localhost:8443/*|https://\[::1\]:8443/*) ;;
-  *)
-    printf 'ERROR: HMI health URL must be loopback HTTPS on port 8443\n' >&2
-    exit 2
-    ;;
+fail() {
+  printf 'health-check: %s\n' "$*" >&2
+  exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --url)
+      [ "$#" -ge 2 ] || fail "--url needs a value"
+      URL=$2
+      shift 2
+      ;;
+    --expected-version)
+      [ "$#" -ge 2 ] || fail "--expected-version needs a value"
+      EXPECTED_VERSION=$2
+      shift 2
+      ;;
+    --retries)
+      [ "$#" -ge 2 ] || fail "--retries needs a value"
+      RETRIES=$2
+      shift 2
+      ;;
+    --delay)
+      [ "$#" -ge 2 ] || fail "--delay needs a value"
+      DELAY_SECONDS=$2
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1"
+      ;;
+  esac
+done
+
+case "$RETRIES" in
+  ''|*[!0-9]*) fail "--retries must be a positive integer" ;;
 esac
+[ "$RETRIES" -gt 0 ] || fail "--retries must be a positive integer"
+case "$DELAY_SECONDS" in
+  ''|*[!0-9]*) fail "--delay must be a non-negative integer" ;;
+esac
+command -v curl >/dev/null 2>&1 || fail "curl is required"
 
-if [[ ! -r "${BLOCK_HMI_CA}" ]]; then
-  printf 'ERROR: trusted CA is not readable: %s\n' "${BLOCK_HMI_CA}" >&2
-  exit 2
+if [ -n "$EXPECTED_VERSION" ]; then
+  SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+  CURRENT_VERSION=$(cat "$SCRIPT_DIR/../VERSION")
+  [ "$CURRENT_VERSION" = "$EXPECTED_VERSION" ] || fail "current release version is $CURRENT_VERSION, expected $EXPECTED_VERSION"
 fi
 
-if ! socket_exists "${BLOCK_AGENT_SOCKET}"; then
-  printf 'ERROR: Agent Unix socket is missing: %s\n' "${BLOCK_AGENT_SOCKET}" >&2
-  exit 1
-fi
+ATTEMPT=1
+while [ "$ATTEMPT" -le "$RETRIES" ]; do
+  if curl --fail --silent --show-error --max-time 5 "$URL" >/dev/null; then
+    printf 'health check passed: %s\n' "$URL"
+    exit 0
+  fi
+  if [ "$ATTEMPT" -lt "$RETRIES" ]; then
+    sleep "$DELAY_SECONDS"
+  fi
+  ATTEMPT=$((ATTEMPT + 1))
+done
 
-curl --fail --silent --show-error \
-  --connect-timeout 3 \
-  --max-time 8 \
-  --proto '=https' \
-  --tlsv1.2 \
-  --cacert "${BLOCK_HMI_CA}" \
-  "${BLOCK_HMI_HEALTH_URL}"
-
-curl --fail --silent --show-error \
-  --connect-timeout 3 \
-  --max-time 8 \
-  --proto '=http' \
-  --unix-socket "${BLOCK_AGENT_SOCKET}" \
-  http://localhost/healthz
-
-if [[ "${BLOCK_EXPECT_SIMULATOR}" == "true" ]] &&
-  ! socket_exists "${BLOCK_SIMULATOR_IO_SOCKET}"; then
-  printf 'ERROR: Simulator I/O Unix socket is missing: %s\n' "${BLOCK_SIMULATOR_IO_SOCKET}" >&2
-  exit 1
-fi
-
-printf 'OK: trusted HMI TLS, Agent UDS%s\n' \
-  "$([[ "${BLOCK_EXPECT_SIMULATOR}" == "true" ]] && printf ', Simulator UDS' || true)"
+fail "health endpoint did not respond: $URL"
