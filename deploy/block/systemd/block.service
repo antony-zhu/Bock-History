@@ -10,10 +10,29 @@ Group=block
 WorkingDirectory=/opt/block/current
 UMask=0077
 
-# Single v2 runtime command seam.  The current known binary and flag are kept
-# here; a future runtime rename changes this one line, never adds a second
-# service or a compatibility wrapper.
-ExecStart=/opt/block/current/bin/block-agent -config /etc/block/block.json
+# Single v2 runtime command seam.  Runtime settings live in one local
+# EnvironmentFile; there is no second service or old JSON -config path.
+EnvironmentFile=/etc/block/block.env
+ExecStart=/opt/block/current/bin/block-agent \
+  -local-http-address $BLOCK_LOCAL_HTTP_ADDRESS \
+  -state-db $BLOCK_STATE_DB \
+  -hmi-static-dir $BLOCK_HMI_STATIC_DIR \
+  -maintenance-https-address $BLOCK_MAINTENANCE_HTTPS_ADDRESS \
+  -maintenance-tls-cert $BLOCK_MAINTENANCE_TLS_CERT \
+  -maintenance-tls-key $BLOCK_MAINTENANCE_TLS_KEY \
+  -maintenance-super-key-hash $BLOCK_MAINTENANCE_SUPER_KEY_HASH \
+  -maintenance-authorized-keys $BLOCK_MAINTENANCE_AUTHORIZED_KEYS \
+  -maintenance-device-id $BLOCK_MAINTENANCE_DEVICE_ID \
+  -maintenance-advertised-host $BLOCK_MAINTENANCE_ADVERTISED_HOST \
+  -mqtts-v2-enabled $BLOCK_MQTTS_V2_ENABLED \
+  -mqtts-v2-endpoint $BLOCK_MQTTS_V2_ENDPOINT \
+  -mqtts-v2-ca $BLOCK_MQTTS_V2_CA \
+  -mqtts-v2-client-cert $BLOCK_MQTTS_V2_CLIENT_CERT \
+  -mqtts-v2-client-key $BLOCK_MQTTS_V2_CLIENT_KEY \
+  -mqtts-v2-principal $BLOCK_MQTTS_V2_PRINCIPAL \
+  -mqtts-v2-site-id $BLOCK_MQTTS_V2_SITE_ID \
+  -mqtts-v2-block-id $BLOCK_MQTTS_V2_BLOCK_ID \
+  -mqtts-v2-device-id $BLOCK_MQTTS_V2_DEVICE_ID
 
 Restart=on-failure
 RestartSec=2s

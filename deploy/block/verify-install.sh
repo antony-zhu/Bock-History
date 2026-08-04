@@ -3,7 +3,7 @@ set -euo pipefail
 
 EXPECTED_VERSION=
 CURRENT_LINK=/opt/block/current
-CONFIG_FILE=/etc/block/block.json
+CONFIG_FILE=/etc/block/block.env
 
 usage() {
   cat <<'EOF'
@@ -40,7 +40,7 @@ done
 [ -f "$CURRENT_LINK/web/index.html" ] || fail "missing HMI index.html"
 [ -f "$CURRENT_LINK/web/assets/points.json" ] || fail "missing HMI points.json"
 [ -f "$CONFIG_FILE" ] || fail "missing Block configuration"
-if grep -Eq '"points"[[:space:]]*:' "$CONFIG_FILE"; then
+if grep -Eq '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*POINTS?[A-Za-z0-9_]*=' "$CONFIG_FILE"; then
   fail "Block configuration persists points"
 fi
 

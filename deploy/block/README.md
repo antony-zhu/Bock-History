@@ -11,23 +11,27 @@ block.service 直接使用，不是独立服务。
 
 ## 运行时命令接缝
 
-当前已知的 Go 命令为：
+当前已知的 Go 命令由 systemd 的环境文件提供参数：
 
 ~~~
-/opt/block/current/bin/block-agent -config /etc/block/block.json
+/opt/block/current/bin/block-agent \
+  -local-http-address 127.0.0.1:8080 \
+  -state-db /var/lib/block/block.db \
+  -hmi-static-dir /opt/block/current/web
 ~~~
 
-这条命令只在 systemd/block.service 中出现。后续统一运行时若改名或改参数，
-只改这一处及 install.sh 对发布产物的检查；不要通过增加第二个服务或兼容
-包装器来并行运行旧架构。
+完整 flag 值保存在 /etc/block/block.env，并由 systemd/block.service 的
+EnvironmentFile 读取。后续统一运行时若改名或改参数，只改这一处及
+install.sh 对发布产物的检查；不要通过增加第二个服务或兼容包装器来并行运行
+旧架构。
 
 ## 配置与前端资源
 
-config/block.example.json 只包含身份、路径、监听地址、会话设置、PLC 默认项
-和 MQTTS 连接默认项。它没有 points 字段，安装脚本也会拒绝带 points 的
-配置。点位表和页面布局由发布产物中的 web/assets/points.json 提供；用户
-建立本地 HMI 会话后，前端把完整点位表发送给 Block。Block 重启或 WebSocket
-断开后不从配置或 SQLite 恢复点位和扫描计划。
+config/block.env.example 只包含身份、路径、监听地址、维护 HTTPS 与 MQTTS
+连接默认项。它没有 points 变量，安装脚本也会拒绝点位变量。点位表和页面
+布局由发布产物中的 web/assets/points.json 提供；用户建立本地 HMI 会话后，
+前端把完整点位表发送给 Block。Block 重启或 WebSocket 断开后不从配置或
+SQLite 恢复点位和扫描计划。
 
 默认 mqtt.enabled 为 false，所以没有 BDM 或 Wi-Fi 时 Block 仍可启动，并
 保持空闲的本地 HTTP/WS 和维护 HTTPS；PLC 和 MQTTS 只在有效的本地 HMI
@@ -58,7 +62,7 @@ VERSION
 ~~~
 sudo deploy/block/install.sh --execute \
   --artifact-dir /opt/block/uploads/block-1.0.0 \
-  --config /path/to/block.json \
+  --config /path/to/block.env \
   --version 1.0.0
 ~~~
 

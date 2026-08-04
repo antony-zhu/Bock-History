@@ -18,7 +18,7 @@ usage() {
   cat <<'EOF'
 Usage:
   sudo deploy/block/install.sh --execute --artifact-dir <artifact-dir>
-      --config <block-config.json> --version <version>
+      --config <block.env> --version <version>
 
 The artifact must contain bin/block-agent, web/index.html,
 web/assets/points.json, and VERSION.  This script changes only local release
@@ -85,7 +85,7 @@ esac
 [ -f "$ARTIFACT_DIR/VERSION" ] || fail "missing artifact VERSION"
 [ -f "$CONFIG_FILE" ] || fail "missing config file"
 [ "$(cat "$ARTIFACT_DIR/VERSION")" = "$VERSION" ] || fail "artifact VERSION does not match --version"
-if grep -Eq '"points"[[:space:]]*:' "$CONFIG_FILE"; then
+if grep -Eq '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*POINTS?[A-Za-z0-9_]*=' "$CONFIG_FILE"; then
   fail "Block configuration must not persist points"
 fi
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
@@ -112,12 +112,12 @@ for TOOL in build.sh install-users.sh install.sh health-check.sh version.sh roll
   install -m 0755 -o root -g root "$SCRIPT_DIR/$TOOL" "$RELEASE_DIR/deploy/$TOOL"
 done
 install -m 0644 -o root -g root "$SCRIPT_DIR/README.md" "$RELEASE_DIR/deploy/README.md"
-install -m 0644 -o root -g root "$SCRIPT_DIR/config/block.example.json" "$RELEASE_DIR/deploy/config/block.example.json"
+install -m 0644 -o root -g root "$SCRIPT_DIR/config/block.env.example" "$RELEASE_DIR/deploy/config/block.env.example"
 install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block.service" "$RELEASE_DIR/deploy/systemd/block.service"
 install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block-kiosk.service" "$RELEASE_DIR/deploy/systemd/block-kiosk.service"
 install -m 0755 -o root -g root "$SCRIPT_DIR/tests/deploy-regression.sh" "$RELEASE_DIR/deploy/tests/deploy-regression.sh"
 
-install -m 0640 -o root -g block "$CONFIG_FILE" "$CONFIG_ROOT/block.json"
+install -m 0640 -o root -g block "$CONFIG_FILE" "$CONFIG_ROOT/block.env"
 install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block.service" "$SYSTEMD_ROOT/block.service"
 install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block-kiosk.service" "$SYSTEMD_ROOT/block-kiosk.service"
 

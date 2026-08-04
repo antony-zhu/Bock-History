@@ -12,47 +12,55 @@ for SCRIPT in build.sh install-users.sh install.sh health-check.sh version.sh ro
   bash -n "$SCRIPT_DIR/$SCRIPT"
 done
 
-python3 - "$SCRIPT_DIR/config/block.example.json" <<'PY'
-import json
+python3 - "$SCRIPT_DIR/config/block.env.example" <<'PY'
 import sys
 
 path = sys.argv[1]
-with open(path, encoding="utf-8") as source:
-    config = json.load(source)
+config = {}
+for line in open(path, encoding="utf-8"):
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if "=" not in line:
+        raise SystemExit(f"invalid environment line: {line}")
+    key, value = line.split("=", 1)
+    config[key] = value
 
-expected_top_level = {"identity", "paths", "server", "plc", "mqtt", "session", "ssh"}
-if set(config) != expected_top_level:
-    raise SystemExit(f"unexpected configuration sections: {set(config)}")
-
-def reject_points(value, path=""):
-    if isinstance(value, dict):
-        for key, item in value.items():
-            current = f"{path}.{key}" if path else key
-            if key == "points":
-                raise SystemExit(f"points must not be persisted in configuration: {current}")
-            reject_points(item, current)
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            reject_points(item, f"{path}[{index}]")
-
-reject_points(config)
-if config["server"]["localHttpAddress"] != "127.0.0.1:8080":
+expected_keys = {
+    "BLOCK_LOCAL_HTTP_ADDRESS",
+    "BLOCK_STATE_DB",
+    "BLOCK_HMI_STATIC_DIR",
+    "BLOCK_MAINTENANCE_HTTPS_ADDRESS",
+    "BLOCK_MAINTENANCE_TLS_CERT",
+    "BLOCK_MAINTENANCE_TLS_KEY",
+    "BLOCK_MAINTENANCE_SUPER_KEY_HASH",
+    "BLOCK_MAINTENANCE_AUTHORIZED_KEYS",
+    "BLOCK_MAINTENANCE_DEVICE_ID",
+    "BLOCK_MAINTENANCE_ADVERTISED_HOST",
+    "BLOCK_MQTTS_V2_ENABLED",
+    "BLOCK_MQTTS_V2_ENDPOINT",
+    "BLOCK_MQTTS_V2_CA",
+    "BLOCK_MQTTS_V2_CLIENT_CERT",
+    "BLOCK_MQTTS_V2_CLIENT_KEY",
+    "BLOCK_MQTTS_V2_PRINCIPAL",
+    "BLOCK_MQTTS_V2_SITE_ID",
+    "BLOCK_MQTTS_V2_BLOCK_ID",
+    "BLOCK_MQTTS_V2_DEVICE_ID",
+}
+if set(config) != expected_keys:
+    raise SystemExit(f"unexpected environment keys: {set(config)}")
+if any(key == "POINT" or key == "POINTS" or key.startswith("POINT_") or key.startswith("POINTS_") or "_POINT_" in key or "_POINTS_" in key or "WIFI" in key for key in config):
+    raise SystemExit("points and Wi-Fi must not be persisted in deployment configuration")
+if config["BLOCK_LOCAL_HTTP_ADDRESS"] != "127.0.0.1:8080":
     raise SystemExit("local HTTP must bind only 127.0.0.1:8080")
-if config["server"]["maintenanceHttpsAddress"] != "0.0.0.0:8443":
+if config["BLOCK_MAINTENANCE_HTTPS_ADDRESS"] != "0.0.0.0:8443":
     raise SystemExit("maintenance HTTPS must bind 0.0.0.0:8443")
-if config["paths"]["webRoot"] != "/opt/block/current/web":
+if config["BLOCK_HMI_STATIC_DIR"] != "/opt/block/current/web":
     raise SystemExit("the Block process must serve release web resources")
-if config["plc"]["pollInterval"] != "50ms":
-    raise SystemExit("PLC poll interval must be 50ms")
-if config["mqtt"]["enabled"] is not False:
+if config["BLOCK_MQTTS_V2_ENABLED"] != "false":
     raise SystemExit("the default configuration must start without BDM")
-if config["mqtt"]["scheme"] != "mqtts" or config["mqtt"]["port"] != 8883:
+if config["BLOCK_MQTTS_V2_ENDPOINT"] != "mqtts://bdm.example.invalid:8883":
     raise SystemExit("BDM connection defaults must be MQTTS on 8883")
-if config["mqtt"]["qos"] != 0:
-    raise SystemExit("MQTTS v2 status must use QoS 0")
-for forbidden in ("outbox", "replayAfterDisconnect", "wifi"):
-    if forbidden in config["mqtt"] or forbidden in config:
-        raise SystemExit(f"forbidden deployment configuration field: {forbidden}")
 PY
 
 UNIT_LIST=$(find "$SCRIPT_DIR/systemd" -maxdepth 1 -type f -name '*.service' -printf '%f\n' | sort)
@@ -60,7 +68,13 @@ EXPECTED_UNITS='block-kiosk.service
 block.service'
 [ "$UNIT_LIST" = "$EXPECTED_UNITS" ] || fail "exactly block.service and block-kiosk.service are required"
 
-grep -Fx 'ExecStart=/opt/block/current/bin/block-agent -config /etc/block/block.json' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx 'EnvironmentFile=/etc/block/block.env' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -local-http-address $BLOCK_LOCAL_HTTP_ADDRESS \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -state-db $BLOCK_STATE_DB \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -hmi-static-dir $BLOCK_HMI_STATIC_DIR \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -maintenance-https-address $BLOCK_MAINTENANCE_HTTPS_ADDRESS \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -mqtts-v2-enabled $BLOCK_MQTTS_V2_ENABLED \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -mqtts-v2-device-id $BLOCK_MQTTS_V2_DEVICE_ID' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx 'ReadWritePaths=/var/lib/block' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx 'ExecStartPre=/opt/block/current/deploy/health-check.sh --url http://127.0.0.1:8080/healthz --retries 30 --delay 1' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble http://127.0.0.1:8080/' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null

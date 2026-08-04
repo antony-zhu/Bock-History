@@ -17,7 +17,7 @@ fail() {
 "$DEPLOY_DIR/verify-install.sh" --help >/dev/null
 "$DEPLOY_DIR/health-check.sh" --help >/dev/null
 
-if "$DEPLOY_DIR/install.sh" --artifact-dir /tmp/block-artifact --config /tmp/block.json --version test >/dev/null 2>&1; then
+if "$DEPLOY_DIR/install.sh" --artifact-dir /tmp/block-artifact --config /tmp/block.env --version test >/dev/null 2>&1; then
   fail "install must require --execute"
 fi
 if "$DEPLOY_DIR/rollback.sh" >/dev/null 2>&1; then
