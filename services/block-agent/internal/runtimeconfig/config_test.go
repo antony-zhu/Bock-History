@@ -1,6 +1,9 @@
 package runtimeconfig
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestNormalizeAcceptsCompleteTableAndDefaultsPulse(t *testing.T) {
 	value, err := Normalize(Config{
@@ -45,5 +48,27 @@ func TestNormalizeRejectsIncompleteOrInconsistentTable(t *testing.T) {
 				t.Fatal("Normalize unexpectedly accepted invalid table")
 			}
 		})
+	}
+}
+
+func TestDecodeIgnoresFrontendOnlyPointFields(t *testing.T) {
+	config, err := Decode(json.RawMessage(`{
+		"scanIntervalMs": 50,
+		"points": [{
+			"pointId": "machine.ready",
+			"address": "M0.1",
+			"type": "bool",
+			"access": "read",
+			"readPoint": "machine.ready",
+			"displayPath": "home.ready",
+			"component": "indicator",
+			"label": "设备就绪"
+		}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Points) != 1 || config.Points[0].PointID != "machine.ready" {
+		t.Fatalf("decoded configuration = %#v", config)
 	}
 }

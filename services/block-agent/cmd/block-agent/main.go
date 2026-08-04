@@ -9,27 +9,19 @@ import (
 	"time"
 
 	agentapp "block.local/block-agent/internal/agent"
-	"block.local/block-agent/internal/config"
 )
 
 func main() {
-	configPath := flag.String("config", "", "absolute path to the block-agent JSON configuration")
+	localHTTPAddress := flag.String("local-http-address", "127.0.0.1:8080", "loopback HTTP and WebSocket address")
 	flag.Parse()
-	if *configPath == "" {
-		log.Fatal("-config is required")
-	}
-	cfg, err := config.LoadAgent(*configPath)
+	runtime, err := agentapp.NewLocalRuntime(*localHTTPAddress, time.Now)
 	if err != nil {
-		log.Fatalf("load block-agent config: %v", err)
-	}
-	runtime, err := agentapp.Open(cfg, time.Now)
-	if err != nil {
-		log.Fatalf("initialize block-agent: %v", err)
+		log.Fatalf("initialize Block local runtime: %v", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Printf("block-agent %s/%s/%s using %s adapter and Unix socket %s", cfg.SiteID, cfg.BlockID, cfg.DeviceID, cfg.Adapter.Type, cfg.LocalAPISocket)
+	log.Printf("block-agent listening on %s", *localHTTPAddress)
 	if err := runtime.Run(ctx); err != nil {
-		log.Fatalf("run block-agent: %v", err)
+		log.Fatalf("run Block local runtime: %v", err)
 	}
 }
