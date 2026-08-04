@@ -3,6 +3,7 @@ module block.local/block-agent
 go 1.25.0
 
 require (
+	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.55.0
 	modernc.org/sqlite v1.34.5
 )

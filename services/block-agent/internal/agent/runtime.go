@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
+	"block.local/block-agent/internal/auth"
 	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
@@ -30,6 +32,7 @@ type Runtime struct {
 	store   *pointstore.Store
 	server  *http.Server
 	factory plcworker.Factory
+	auth    *auth.Service
 
 	mu      sync.Mutex
 	owner   *wsClient
@@ -46,23 +49,36 @@ type runtimeSession struct {
 // NewLocalRuntime creates the empty local runtime. It performs no PLC, MQTT
 // or SQLite work until a WebSocket owner supplies a complete point table.
 func NewLocalRuntime(address string, now func() time.Time) (*Runtime, error) {
-	return NewLocalRuntimeWithWorkerFactory(address, now, nil)
+	return NewLocalRuntimeWithServices(address, now, nil, nil, nil)
 }
 
 // NewLocalRuntimeWithWorkerFactory is used by the selected PLC connection
 // path. Keeping the factory at the runtime edge lets a session create exactly
 // one worker/connection, while an idle kiosk still creates none.
 func NewLocalRuntimeWithWorkerFactory(address string, now func() time.Time, factory plcworker.Factory) (*Runtime, error) {
+	return NewLocalRuntimeWithServices(address, now, factory, nil, nil)
+}
+
+// NewLocalRuntimeWithServices attaches the local account service and the HMI
+// build owned by the frontend. A nil HMI filesystem keeps the runtime idle
+// until a bundle is supplied by deployment.
+func NewLocalRuntimeWithServices(address string, now func() time.Time, factory plcworker.Factory, hmi fs.FS, authService *auth.Service) (*Runtime, error) {
 	if err := validateLoopbackAddress(address); err != nil {
 		return nil, err
 	}
 	if now == nil {
 		now = time.Now
 	}
-	runtime := &Runtime{address: address, now: now, store: pointstore.New(), factory: factory}
+	runtime := &Runtime{address: address, now: now, store: pointstore.New(), factory: factory, auth: authService}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", runtime.health)
-	mux.Handle("/ws", websocket.Server{Handler: websocket.Handler(runtime.serveWS), Handshake: checkLocalOrigin})
+	mux.HandleFunc("/api/auth/bootstrap", runtime.bootstrap)
+	mux.HandleFunc("/api/auth/login", runtime.login)
+	mux.HandleFunc("/api/auth/activity", runtime.activity)
+	mux.HandleFunc("/api/auth/logout", runtime.logout)
+	mux.HandleFunc("/api/auth/password", runtime.changePassword)
+	mux.Handle("/ws", websocket.Server{Handler: websocket.Handler(runtime.serveWS), Handshake: runtime.checkHandshake})
+	mux.Handle("/", staticHMI(hmi))
 	runtime.server = &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 3 * time.Second,

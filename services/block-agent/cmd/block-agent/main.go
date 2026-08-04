@@ -9,12 +9,30 @@ import (
 	"time"
 
 	agentapp "block.local/block-agent/internal/agent"
+	"block.local/block-agent/internal/auth"
+	"block.local/block-agent/internal/storage"
 )
 
 func main() {
 	localHTTPAddress := flag.String("local-http-address", "127.0.0.1:8080", "loopback HTTP and WebSocket address")
+	stateDatabase := flag.String("state-db", "data/block.db", "local SQLite database path")
 	flag.Parse()
-	runtime, err := agentapp.NewLocalRuntime(*localHTTPAddress, time.Now)
+	store, err := storage.Open(*stateDatabase, time.Now)
+	if err != nil {
+		log.Fatalf("open Block local database: %v", err)
+	}
+	defer store.Close()
+	var runtime *agentapp.Runtime
+	authService, err := auth.NewService(store, time.Now, func(auth.Session) {
+		if runtime != nil {
+			runtime.StopSession()
+		}
+	})
+	if err != nil {
+		log.Fatalf("initialize Block authentication: %v", err)
+	}
+	defer authService.Close()
+	runtime, err = agentapp.NewLocalRuntimeWithServices(*localHTTPAddress, time.Now, nil, nil, authService)
 	if err != nil {
 		log.Fatalf("initialize Block local runtime: %v", err)
 	}
