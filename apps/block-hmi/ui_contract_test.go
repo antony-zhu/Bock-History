@@ -2,12 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
 
-func TestEmbeddedHMIUsesV2RuntimeAssets(t *testing.T) {
-	index, err := embeddedFiles.ReadFile("index.html")
+func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
+	index, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,6 +17,10 @@ func TestEmbeddedHMIUsesV2RuntimeAssets(t *testing.T) {
 		"id=\"login-form\"",
 		"id=\"initial-admin-form\"",
 		"id=\"password-form\"",
+		"id=\"plc-scan-button\"",
+		"id=\"plc-disconnect-button\"",
+		"id=\"snapshot-button\"",
+		"id=\"plc-candidates\"",
 		"src=\"assets/hmi.mjs\"",
 	} {
 		if !strings.Contains(string(index), required) {
@@ -28,7 +33,7 @@ func TestEmbeddedHMIUsesV2RuntimeAssets(t *testing.T) {
 }
 
 func TestPointsJSONKeepsDisplayBindingsOutOfRuntimePoints(t *testing.T) {
-	contents, err := embeddedFiles.ReadFile("assets/points.json")
+	contents, err := os.ReadFile("assets/points.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,8 @@
 # Block 本地 HMI v2
 
 这个目录提供由 Block 运行时嵌入并向 Chromium Kiosk 提供的最小原生
-TypeScript 页面。它不直接访问 PLC、BDM 或数据库。
+TypeScript 页面。它不直接访问 PLC、BDM 或数据库，也不再启动独立 Go HMI
+服务。
 
 ## 页面配置
 
@@ -32,3 +33,6 @@ tsc assets/hmi.mts --target ES2022 --lib DOM,ES2022 --module NodeNext --moduleRe
 node assets/hmi.test.mjs
 go test ./...
 ~~~
+
+其中 Go 测试仅检查静态页面与 points.json；HTTP/WS 闭环由 block-agent 自身
+测试承担。
