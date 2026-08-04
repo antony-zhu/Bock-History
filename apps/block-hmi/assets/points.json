@@ -1,0 +1,108 @@
+{
+  "title": "Block 本地控制",
+  "scanIntervalMs": 50,
+  "points": [
+    {
+      "pointId": "machine.startCommand",
+      "address": "D504.1",
+      "type": "bool",
+      "access": "read_write",
+      "readPoint": "machine.startFeedback",
+      "writePoint": "machine.startCommand",
+      "writeMethod": "maskWrite",
+      "write": {
+        "mode": "pulse",
+        "activeValue": true,
+        "defaultValue": false,
+        "pulseMs": 100
+      }
+    },
+    {
+      "pointId": "machine.startFeedback",
+      "address": "D504.2",
+      "type": "bool",
+      "access": "read",
+      "readPoint": "machine.startFeedback",
+      "writePoint": null,
+      "writeMethod": null
+    },
+    {
+      "pointId": "machine.jogForward",
+      "address": "D504.3",
+      "type": "bool",
+      "access": "read_write",
+      "readPoint": "machine.jogForward",
+      "writePoint": "machine.jogForward",
+      "writeMethod": "maskWrite",
+      "write": {
+        "mode": "momentary",
+        "activeValue": true,
+        "defaultValue": false
+      }
+    },
+    {
+      "pointId": "machine.enabled",
+      "address": "D504.4",
+      "type": "bool",
+      "access": "read_write",
+      "readPoint": "machine.enabled",
+      "writePoint": "machine.enabled",
+      "writeMethod": "maskWrite",
+      "write": {
+        "mode": "toggle",
+        "activeValue": true,
+        "defaultValue": false
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "displayPath": "home.machine.start",
+      "description": "启动设备",
+      "component": "button",
+      "readPoint": "machine.startFeedback",
+      "writePoint": "machine.startCommand",
+      "action": "pulse"
+    },
+    {
+      "displayPath": "home.machine.jog.forward",
+      "description": "正向点动",
+      "component": "button",
+      "readPoint": "machine.jogForward",
+      "writePoint": "machine.jogForward",
+      "action": "momentary"
+    },
+    {
+      "displayPath": "home.machine.enabled",
+      "description": "设备使能",
+      "component": "button",
+      "readPoint": "machine.enabled",
+      "writePoint": "machine.enabled",
+      "action": "toggle"
+    },
+    {
+      "displayPath": "home.machine.start.feedback",
+      "description": "启动反馈",
+      "component": "value",
+      "readPoint": "machine.startFeedback"
+    }
+  ],
+  "layout": [
+    {
+      "displayPath": "home.machine.controls",
+      "description": "设备控制",
+      "bindings": [
+        "home.machine.start",
+        "home.machine.jog.forward",
+        "home.machine.enabled"
+      ]
+    },
+    {
+      "displayPath": "home.machine.status",
+      "description": "设备状态",
+      "bindings": [
+        "home.machine.start.feedback"
+      ]
+    }
+  ]
+}

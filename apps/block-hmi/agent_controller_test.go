@@ -279,7 +279,7 @@ func TestAgentControllerDisconnectAndUnavailableAreErrors(t *testing.T) {
 	}
 }
 
-func TestSimulationBadgeIsServerRenderedAndStaleCopyIsPresent(t *testing.T) {
+func TestV2HMIAssetsAreServerRendered(t *testing.T) {
 	controller, err := newMemoryController("", time.Now)
 	if err != nil {
 		t.Fatal(err)
@@ -291,10 +291,9 @@ func TestSimulationBadgeIsServerRenderedAndStaleCopyIsPresent(t *testing.T) {
 	response := performRequest(handler, http.MethodGet, "/", nil, nil)
 	body := readBody(t, response)
 	for _, required := range []string{
-		`data-simulation-mode="true"`,
-		`>模拟数据</span>`,
-		`数据已过期 ${ageSeconds} 秒 / 设备连接中断`,
-		`error.code === "data_stale"`,
+		"data-simulation-mode=\"true\"",
+		"src=\"assets/hmi.mjs\"",
+		"id=\"login-form\"",
 	} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("rendered HMI does not contain %q", required)

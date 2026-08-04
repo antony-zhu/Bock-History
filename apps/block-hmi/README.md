@@ -1,52 +1,34 @@
-# Block 本地 HMI
+# Block 本地 HMI v2
 
-该应用保留现有五页 Apple 风格触控界面和 `/api/v1/*` 路由，但生产 Controller 已改为只连接 Block Agent 的 Unix socket。HMI 不连接 Simulator、PLC、BDM 或网络控制面。
+这个目录提供由 Block 运行时嵌入并向 Chromium Kiosk 提供的最小原生
+TypeScript 页面。它不直接访问 PLC、BDM 或数据库。
 
-## 运行边界
+## 页面配置
 
-- 浏览器入口固定为受信 HTTPS `127.0.0.1:8443`。
-- 不监听、不跳转 `80`、`8080` 或 `8081`，也不提供明文 HTTP 模式。
-- HMI 到 Agent 只使用配置的绝对 Unix socket 路径。
-- Agent adapter 是数据来源的唯一权威。HMI 启动时校验 SourceInfo 响应体与 `X-Block-Source-Kind`、`X-Block-Simulation` 响应头完整且一致；不一致时拒绝启动。
-- Agent 报告模拟来源时，页面永久显示醒目的“模拟数据”标识；该标识由首次可信握手结果渲染，不能被后续状态覆盖。
-- 首次可信读取前页面只显示空值和“暂无可信数据”，不显示演示生产值或报警。已有可信读数后 Agent 断开或数据过期时，才保留最后读数并显示断连/过期时间，同时禁用所有业务写操作。
-- 页面上的 `OPERATOR-01` 仍只是兼容显示文本，不代表已经实现身份认证或授权。
+assets/points.json 是页面、点位和显示绑定的唯一来源：
 
-当前 HMI 公共状态字段和既有路由保持不变。`Idempotency-Key` 仅作为私有命令元数据透传给 Agent，没有加入请求体或公共响应。
+- points 是登录后以 runtime.configure 发送给后端的完整运行时点表。
+- bindings 与 layout 只在浏览器中使用，不会发送给后端。
+- 每个 displayPath 使用小写英文点路径；每个 description 为中文。
+- 页面只显示后端通过 points.snapshot 和 points.changed 给出的 PLC 绝对值。
 
-## 构建与测试
+控制按钮只发送通用 point.command：
 
-```bash
+- pulse：后端按点表中的默认 100 ms 执行；
+- momentary：前端在 pointer down/up 时发送 press/release；
+- toggle：后端使用新鲜 PLC 反馈决定目标值。
+
+浏览器不提前修改点位值、不重试或缓存命令。实际 pointer、touch 或 keyboard
+输入才会请求 /api/v2/auth/activity；渲染、WebSocket 消息和重连定时器不会
+续期。
+
+## 本机验证
+
+TypeScript 源码是 assets/hmi.mts，提交的 assets/hmi.mjs 是供浏览器加载的
+产物。使用已有 TypeScript 编译器时可执行：
+
+~~~
+tsc assets/hmi.mts --target ES2022 --lib DOM,ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --noEmitOnError --outDir assets
+node assets/hmi.test.mjs
 go test ./...
-go vet ./...
-go test -race ./...
-
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-  go build -trimpath -o /tmp/block-hmi .
-```
-
-测试包含受信证书成功、错误 CA、错误主机名、过期证书、旧 TLS 版本、明文请求拒绝、Unix socket 断开以及完整三进程闭环。
-
-## 启动配置
-
-```bash
-export BLOCK_HMI_ADDR=127.0.0.1:8443
-export BLOCK_HMI_BASE_PATH=/block-apple-style
-export BLOCK_HMI_AGENT_SOCKET=/run/block-agent/api/block-agent.sock
-export BLOCK_HMI_AGENT_TIMEOUT=8s
-export BLOCK_HMI_TLS_CERT=/etc/block/certs/block-hmi.crt
-export BLOCK_HMI_TLS_KEY=/etc/block/certs/block-hmi.key
-./block-hmi
-```
-
-`BLOCK_HMI_ADDR` 必须严格等于 `127.0.0.1:8443`，证书和私钥路径必须为绝对路径。服务最低接受 TLS 1.2；健康检查必须使用可信 CA，禁止跳过证书验证。
-
-实验闭环中只需把 Agent 明确配置为 `adapter.type: "simulator"`；HMI 从 Agent 的可信 SourceInfo 握手生成模拟标识。HMI 不提供独立的模拟开关，也不会自动回退到内存 Controller 或 Simulator。
-
-## 文档
-
-- [后端接线与兼容边界](docs/backend-integration.md)
-- [部署、健康检查与回滚](docs/deployment-and-operations.md)
-- 统一部署模板位于 `deploy/block/`；`apps/block-hmi/deploy/block-hmi.service` 是同内容的组件副本。
-
-静态资源仍嵌入单一 Go 可执行文件；主题、软键盘和 Chromium/WebView 兼容逻辑未改变。第三方许可见 `THIRD_PARTY_NOTICES.md`。
+~~~
