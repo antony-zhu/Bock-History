@@ -2,15 +2,17 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
+	"block.local/block-agent/internal/runtimeconfig"
 	"golang.org/x/net/websocket"
 )
 
@@ -109,6 +111,37 @@ func TestPointCommandIsValidatedButDoesNotWriteWithoutPLC(t *testing.T) {
 	}
 }
 
+func TestPointCommandUsesWorkerReadbackAndFC22Sequence(t *testing.T) {
+	adapter := &runtimeFakeAdapter{registers: map[uint16]uint16{504: 0}}
+	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
+		return plcworker.New(config, adapter, publish, time.Now)
+	})
+	_, address, cancel, done := startRuntimeWithFactory(t, factory)
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+
+	configure(t, connection)
+	if configured := receive(t, connection); configured["type"] != "runtime.configured" {
+		t.Fatalf("configured event = %#v", configured)
+	}
+	if snapshot := receive(t, connection); snapshot["type"] != "points.snapshot" {
+		t.Fatalf("snapshot event = %#v", snapshot)
+	}
+
+	send(t, connection, map[string]any{
+		"type": "point.command", "requestId": "pulse-one", "pointId": "machine.startCommand", "action": "pulse",
+	})
+	result := receiveType(t, connection, "point.result")
+	if result["success"] != true || result["pointId"] != "machine.startCommand" || result["actualValue"] != false {
+		t.Fatalf("worker point result = %#v", result)
+	}
+	writes := adapter.writeCalls()
+	if len(writes) != 2 || !writes[0].value || writes[1].value || writes[0].address != 504 || writes[0].bit != 1 {
+		t.Fatalf("worker did not use FC22 bit sequence: %#v", writes)
+	}
+}
+
 func TestDisconnectStopsAndClearsSession(t *testing.T) {
 	runtime, address, cancel, done := startRuntime(t)
 	defer stopRuntime(t, cancel, done)
@@ -149,7 +182,12 @@ func TestOnlyLoopbackBindingIsAccepted(t *testing.T) {
 
 func startRuntime(t *testing.T) (*Runtime, string, context.CancelFunc, <-chan error) {
 	t.Helper()
-	runtime, err := NewLocalRuntime("127.0.0.1:0", time.Now)
+	return startRuntimeWithFactory(t, nil)
+}
+
+func startRuntimeWithFactory(t *testing.T, factory plcworker.Factory) (*Runtime, string, context.CancelFunc, <-chan error) {
+	t.Helper()
+	runtime, err := NewLocalRuntimeWithWorkerFactory("127.0.0.1:0", time.Now, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +270,19 @@ func receive(t *testing.T, connection *websocket.Conn) map[string]any {
 	return value
 }
 
+func receiveType(t *testing.T, connection *websocket.Conn, messageType string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		message := receive(t, connection)
+		if message["type"] == messageType {
+			return message
+		}
+	}
+	t.Fatalf("did not receive %q", messageType)
+	return nil
+}
+
 func errorCode(t *testing.T, message map[string]any) string {
 	t.Helper()
 	errorValue, ok := message["error"].(map[string]any)
@@ -252,4 +303,47 @@ func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition was not met before timeout")
+}
+
+type runtimeWriteCall struct {
+	address uint16
+	bit     uint8
+	value   bool
+}
+
+type runtimeFakeAdapter struct {
+	mu        sync.Mutex
+	registers map[uint16]uint16
+	writes    []runtimeWriteCall
+}
+
+func (f *runtimeFakeAdapter) ReadHoldingRegisters(_ context.Context, address, quantity uint16) ([]uint16, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	values := make([]uint16, quantity)
+	for index := range values {
+		values[index] = f.registers[address+uint16(index)]
+	}
+	return values, nil
+}
+
+func (f *runtimeFakeAdapter) MaskWriteBit(_ context.Context, address uint16, bit uint8, value bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes = append(f.writes, runtimeWriteCall{address: address, bit: bit, value: value})
+	mask := uint16(1) << bit
+	if value {
+		f.registers[address] |= mask
+	} else {
+		f.registers[address] &^= mask
+	}
+	return nil
+}
+
+func (f *runtimeFakeAdapter) Close() {}
+
+func (f *runtimeFakeAdapter) writeCalls() []runtimeWriteCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]runtimeWriteCall(nil), f.writes...)
 }

@@ -86,11 +86,19 @@ func (s *Store) Update(values map[string]PointValue) (map[string]PointValue, err
 		if !exists {
 			return nil, fmt.Errorf("point %q is not configured", pointID)
 		}
-		if err := runtimeconfig.ValidateValue(definition.Type, value.Value); err != nil {
-			return nil, fmt.Errorf("point %q value: %w", pointID, err)
-		}
 		if value.Quality != "good" && value.Quality != "stale" && value.Quality != "error" {
 			return nil, fmt.Errorf("point %q quality is unsupported", pointID)
+		}
+		// Before the first successful PLC read an unavailable point has no
+		// factual value. Keep it null instead of fabricating false/zero; once a
+		// good value exists, stale/error updates retain that value.
+		if value.Value == nil && value.Quality == "good" {
+			return nil, fmt.Errorf("point %q value is required for good quality", pointID)
+		}
+		if value.Value != nil {
+			if err := runtimeconfig.ValidateValue(definition.Type, value.Value); err != nil {
+				return nil, fmt.Errorf("point %q value: %w", pointID, err)
+			}
 		}
 		if value.UpdatedAt.IsZero() {
 			return nil, fmt.Errorf("point %q updatedAt is required", pointID)

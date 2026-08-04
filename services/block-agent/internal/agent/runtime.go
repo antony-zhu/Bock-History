@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
 	"golang.org/x/net/websocket"
@@ -28,21 +29,37 @@ type Runtime struct {
 	now     func() time.Time
 	store   *pointstore.Store
 	server  *http.Server
+	factory plcworker.Factory
 
-	mu    sync.Mutex
-	owner *wsClient
+	mu      sync.Mutex
+	owner   *wsClient
+	session *runtimeSession
+}
+
+type runtimeSession struct {
+	worker     *plcworker.Worker
+	cancel     context.CancelFunc
+	done       chan struct{}
+	broadcasts bool
 }
 
 // NewLocalRuntime creates the empty local runtime. It performs no PLC, MQTT
 // or SQLite work until a WebSocket owner supplies a complete point table.
 func NewLocalRuntime(address string, now func() time.Time) (*Runtime, error) {
+	return NewLocalRuntimeWithWorkerFactory(address, now, nil)
+}
+
+// NewLocalRuntimeWithWorkerFactory is used by the selected PLC connection
+// path. Keeping the factory at the runtime edge lets a session create exactly
+// one worker/connection, while an idle kiosk still creates none.
+func NewLocalRuntimeWithWorkerFactory(address string, now func() time.Time, factory plcworker.Factory) (*Runtime, error) {
 	if err := validateLoopbackAddress(address); err != nil {
 		return nil, err
 	}
 	if now == nil {
 		now = time.Now
 	}
-	runtime := &Runtime{address: address, now: now, store: pointstore.New()}
+	runtime := &Runtime{address: address, now: now, store: pointstore.New(), factory: factory}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", runtime.health)
 	mux.Handle("/ws", websocket.Server{Handler: websocket.Handler(runtime.serveWS), Handshake: checkLocalOrigin})
@@ -104,9 +121,17 @@ func (r *Runtime) Active() bool {
 func (r *Runtime) StopSession() {
 	r.mu.Lock()
 	owner := r.owner
+	session := r.session
 	r.owner = nil
-	r.store.Clear()
+	r.session = nil
+	if session != nil && session.cancel != nil {
+		session.cancel()
+	}
 	r.mu.Unlock()
+	if session != nil {
+		<-session.done
+	}
+	r.store.Clear()
 	if owner != nil {
 		owner.close()
 	}
@@ -128,7 +153,25 @@ func (r *Runtime) UpdateConfirmed(values map[string]pointstore.PointValue) error
 	if len(changed) == 0 {
 		return nil
 	}
-	owner.enqueue(eventEnvelope(r.now(), "points.changed", changed), false)
+	owner.enqueue(eventEnvelope(r.now, "points.changed", changed), false)
+	return nil
+}
+
+func (r *Runtime) updateFromWorker(session *runtimeSession, values map[string]pointstore.PointValue) error {
+	r.mu.Lock()
+	if r.session != session || r.owner == nil {
+		r.mu.Unlock()
+		return nil
+	}
+	owner := r.owner
+	broadcasts := session.broadcasts
+	r.mu.Unlock()
+
+	changed, err := r.store.Update(values)
+	if err != nil || len(changed) == 0 || !broadcasts {
+		return err
+	}
+	owner.enqueue(eventEnvelope(r.now, "points.changed", changed), false)
 	return nil
 }
 
@@ -162,18 +205,18 @@ func (r *Runtime) serveWS(connection *websocket.Conn) {
 		}
 		messageType, err := readMessageType(raw)
 		if err != nil {
-			client.enqueue(errorEnvelope(r.now(), "", "INVALID_REQUEST", err.Error()), true)
+			client.enqueue(errorEnvelope(r.now, "", "INVALID_REQUEST", err.Error()), true)
 			<-client.done
 			return
 		}
 		if !configured {
 			if messageType != "runtime.configure" {
-				client.enqueue(errorEnvelope(r.now(), "", "INVALID_REQUEST", "first WebSocket message must be runtime.configure"), true)
+				client.enqueue(errorEnvelope(r.now, "", "INVALID_REQUEST", "first WebSocket message must be runtime.configure"), true)
 				<-client.done
 				return
 			}
 			if err := r.configure(client, raw); err != nil {
-				client.enqueue(errorEnvelope(r.now(), "", "INVALID_REQUEST", err.Error()), false)
+				client.enqueue(errorEnvelope(r.now, "", "INVALID_REQUEST", err.Error()), false)
 				continue
 			}
 			configured = true
@@ -182,17 +225,17 @@ func (r *Runtime) serveWS(connection *websocket.Conn) {
 
 		switch messageType {
 		case "runtime.configure":
-			client.enqueue(errorEnvelope(r.now(), "", "INVALID_REQUEST", "runtime.configure is only allowed as the first WebSocket message"), false)
+			client.enqueue(errorEnvelope(r.now, "", "INVALID_REQUEST", "runtime.configure is only allowed as the first WebSocket message"), false)
 		case "points.snapshot.get":
 			if err := validateSnapshotRequest(raw); err != nil {
-				client.enqueue(errorEnvelope(r.now(), "", "INVALID_REQUEST", err.Error()), false)
+				client.enqueue(errorEnvelope(r.now, "", "INVALID_REQUEST", err.Error()), false)
 				continue
 			}
-			client.enqueue(snapshotEnvelope(r.now(), r.store.Snapshot()), false)
+			client.enqueue(snapshotEnvelope(r.now, r.store.Snapshot()), false)
 		case "point.command":
 			r.handlePointCommand(client, raw)
 		default:
-			client.enqueue(errorEnvelope(r.now(), "", "UNKNOWN_MESSAGE", "message type is not supported"), false)
+			client.enqueue(errorEnvelope(r.now, "", "UNKNOWN_MESSAGE", "message type is not supported"), false)
 		}
 	}
 }
@@ -217,18 +260,52 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	if err != nil {
 		return err
 	}
+	session := &runtimeSession{done: make(chan struct{})}
+	var worker *plcworker.Worker
+	if r.factory != nil {
+		worker, err = r.factory(config, func(values map[string]pointstore.PointValue) error {
+			return r.updateFromWorker(session, values)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	workerContext, workerCancel := context.WithCancel(context.Background())
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.owner != nil && r.owner != client {
+		r.mu.Unlock()
+		workerCancel()
+		if worker != nil {
+			worker.Run(workerContext)
+		}
 		return errors.New("another local HMI session is already active")
 	}
 	if err := r.store.Replace(config); err != nil {
+		r.mu.Unlock()
+		workerCancel()
+		if worker != nil {
+			worker.Run(workerContext)
+		}
 		return err
 	}
 	r.owner = client
-	client.enqueue(configuredEnvelope(r.now(), len(config.Points)), false)
-	client.enqueue(snapshotEnvelope(r.now(), r.store.Snapshot()), false)
+	r.session = session
+	session.worker = worker
+	session.cancel = workerCancel
+	client.enqueue(configuredEnvelope(r.now, len(config.Points)), false)
+	client.enqueue(snapshotEnvelope(r.now, r.store.Snapshot()), false)
+	session.broadcasts = true
+	r.mu.Unlock()
+
+	if worker == nil {
+		close(session.done)
+		return nil
+	}
+	go func() {
+		worker.Run(workerContext)
+		close(session.done)
+	}()
 	return nil
 }
 
@@ -242,53 +319,84 @@ func (r *Runtime) handlePointCommand(client *wsClient, raw []byte) {
 		Value           *json.RawMessage `json:"value"`
 	}
 	if err := decodeAllowed(raw, &request, "protocolVersion", "type", "timestamp", "requestId", "pointId", "action", "value"); err != nil {
-		client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "INVALID_REQUEST", err.Error()), false)
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", err.Error()), false)
 		return
 	}
 	if request.ProtocolVersion != "" && request.ProtocolVersion != protocolVersion {
-		client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "INVALID_REQUEST", "protocolVersion is unsupported"), false)
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "protocolVersion is unsupported"), false)
 		return
 	}
 	if request.Type != "point.command" || request.PointID == "" || request.Action == "" {
-		client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "INVALID_REQUEST", "pointId and action are required"), false)
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "pointId and action are required"), false)
 		return
 	}
 	definition, exists := r.store.Definition(request.PointID)
 	if !exists {
-		client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "POINT_NOT_FOUND", "point is not configured"), false)
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "POINT_NOT_FOUND", "point is not configured"), false)
 		return
 	}
 	if !allowsAction(definition, request.Action) {
-		client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "POINT_NOT_WRITABLE", "point does not allow this action"), false)
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "POINT_NOT_WRITABLE", "point does not allow this action"), false)
 		return
 	}
 	if request.Action == "set" {
 		if request.Value == nil {
-			client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "INVALID_REQUEST", "set requires value"), false)
+			client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "set requires value"), false)
 			return
 		}
 		var value any
 		if err := json.Unmarshal(*request.Value, &value); err != nil || runtimeconfig.ValidateValue(definition.Type, value) != nil {
-			client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "INVALID_REQUEST", "value does not match the configured point type"), false)
+			client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "value does not match the configured point type"), false)
 			return
 		}
 	} else if request.Value != nil {
-		client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "INVALID_REQUEST", "only set may carry value"), false)
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "only set may carry value"), false)
 		return
 	}
 
-	// The real FIFO PLCWorker is intentionally outside this milestone. No
-	// command updates PointStore until a PLC write and fresh readback exist.
-	client.enqueue(pointErrorEnvelope(r.now(), request.RequestID, request.PointID, "PLC_NOT_CONNECTED", "PLC worker is disabled"), false)
+	r.mu.Lock()
+	session := r.session
+	active := r.owner == client
+	r.mu.Unlock()
+	if !active || session == nil || session.worker == nil {
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "PLC_NOT_CONNECTED", "PLC worker is disabled"), false)
+		return
+	}
+	reply, rejected, accepted := session.worker.TrySubmit(plcworker.Command{
+		PointID: request.PointID, Action: request.Action, Value: valueFromRaw(request.Value),
+	})
+	if !accepted {
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, rejected.Code, rejected.Message), false)
+		return
+	}
+	go func() {
+		result := <-reply
+		if result.Success {
+			client.enqueue(pointSuccessEnvelope(r.now, request.RequestID, result.PointID, result.ActualValue), false)
+			return
+		}
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, result.PointID, result.Code, result.Message), false)
+	}()
 }
 
 func (r *Runtime) disconnect(client *wsClient) {
 	r.mu.Lock()
-	if r.owner == client {
-		r.owner = nil
-		r.store.Clear()
-	}
+	owned := r.owner == client
 	r.mu.Unlock()
+	if owned {
+		r.StopSession()
+	}
+}
+
+func valueFromRaw(raw *json.RawMessage) any {
+	if raw == nil {
+		return nil
+	}
+	var value any
+	if json.Unmarshal(*raw, &value) != nil {
+		return nil
+	}
+	return value
 }
 
 func allowsAction(definition runtimeconfig.PointDefinition, action string) bool {
@@ -507,5 +615,16 @@ func pointErrorEnvelope(now func() time.Time, requestID, pointID, code, message 
 	envelope["success"] = false
 	envelope["pointId"] = pointID
 	envelope["error"] = protocolError{Code: code, Message: message}
+	return envelope
+}
+
+func pointSuccessEnvelope(now func() time.Time, requestID, pointID string, actualValue any) map[string]any {
+	envelope := baseEnvelope(now, "point.result")
+	if requestID != "" {
+		envelope["requestId"] = requestID
+	}
+	envelope["success"] = true
+	envelope["pointId"] = pointID
+	envelope["actualValue"] = actualValue
 	return envelope
 }

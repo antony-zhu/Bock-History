@@ -60,3 +60,21 @@ func TestStoreRejectsUnknownPoints(t *testing.T) {
 		t.Fatal("unknown point update unexpectedly succeeded")
 	}
 }
+
+func TestStoreAllowsUnknownValueBeforeFirstSuccessfulPLCRead(t *testing.T) {
+	store := New()
+	config := runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{{
+		PointID: "alarm.stop", Address: "M0.1", Type: "bool", Access: "read", ReadPoint: "alarm.stop",
+	}}}
+	if err := store.Replace(config); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(map[string]PointValue{
+		"alarm.stop": {Quality: "stale", UpdatedAt: time.Now()},
+	}); err != nil {
+		t.Fatalf("stale unknown value was rejected: %v", err)
+	}
+	if value := store.Snapshot()["alarm.stop"]; value.Value != nil || value.AlarmActive != nil {
+		t.Fatalf("unread PLC point was fabricated: %#v", value)
+	}
+}
