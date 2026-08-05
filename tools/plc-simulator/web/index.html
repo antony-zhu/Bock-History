@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PLC 模拟器</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">本机 PLC 管理</p>
+          <h1>PLC 模拟器</h1>
+        </div>
+        <button id="add-point" type="button" class="primary">添加点位</button>
+      </header>
+
+      <section class="status" aria-label="运行状态">
+        <div>
+          <span>Modbus TCP</span>
+          <strong id="modbus-address">加载中…</strong>
+        </div>
+        <div>
+          <span>实时连接</span>
+          <strong id="active-connections">—</strong>
+        </div>
+      </section>
+
+      <p id="message" class="message" role="status"></p>
+
+      <section class="editor" id="editor" hidden>
+        <div class="section-heading">
+          <h2 id="editor-title">添加点位</h2>
+          <button id="cancel-edit" type="button" class="quiet">取消</button>
+        </div>
+        <form id="point-form">
+          <label>
+            名称
+            <input id="point-name" name="name" required autocomplete="off" maxlength="80">
+          </label>
+          <label>
+            类型
+            <select id="point-type" name="type">
+              <option value="bool">bool</option>
+              <option value="int16">int16</option>
+              <option value="uint16">uint16</option>
+            </select>
+          </label>
+          <label>
+            点位位置
+            <input id="point-address" name="address" required autocomplete="off" placeholder="bool：D504.1；整字：D504">
+          </label>
+          <label>
+            描述
+            <input id="point-description" name="description" autocomplete="off" maxlength="240">
+          </label>
+          <label class="checkbox">
+            <input id="point-writable" name="writable" type="checkbox">
+            允许人工写入
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary">保存</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="table-wrap" aria-label="点位列表">
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>地址</th>
+              <th>类型</th>
+              <th>当前值</th>
+              <th>人工可写</th>
+              <th>描述</th>
+              <th>更新时间 / 来源</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="points-body"></tbody>
+        </table>
+        <p id="empty-points" class="empty" hidden>还没有点位。添加一个点位即可开始观察或人工写入。</p>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

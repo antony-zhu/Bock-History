@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -55,11 +56,27 @@ func (s *registerStore) maskWrite(address, andMask, orMask uint16) uint16 {
 	return next
 }
 
+func (s *registerStore) write(address, value uint16) uint16 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.values[address] = value
+	return value
+}
+
+func (s *registerStore) readOne(address uint16) uint16 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.values[address]
+}
+
 type Server struct {
-	unitID    byte
-	registers registerStore
-	trace     io.Writer
-	traceMu   sync.Mutex
+	unitID            byte
+	registers         registerStore
+	trace             io.Writer
+	traceMu           sync.Mutex
+	registerChangeMu  sync.Mutex
+	registerChange    func(address, value uint16, source string)
+	activeConnections atomic.Int64
 }
 
 func NewServer(unitID byte, initial map[uint16]uint16, trace io.Writer) *Server {
@@ -70,6 +87,48 @@ func NewServer(unitID byte, initial map[uint16]uint16, trace io.Writer) *Server 
 		unitID:    unitID,
 		registers: newRegisterStore(initial),
 		trace:     trace,
+	}
+}
+
+// SetRegisterChangeHandler registers the local observer used by the optional
+// management UI. It is called after every Modbus or UI register update.
+func (s *Server) SetRegisterChangeHandler(handler func(address, value uint16, source string)) {
+	s.registerChangeMu.Lock()
+	defer s.registerChangeMu.Unlock()
+	s.registerChange = handler
+}
+
+func (s *Server) ReadRegister(address uint16) uint16 {
+	return s.registers.readOne(address)
+}
+
+func (s *Server) WriteRegisterFromUI(address, value uint16) {
+	s.writeRegister(address, value, "ui")
+}
+
+func (s *Server) MaskWriteRegisterFromUI(address, andMask, orMask uint16) {
+	s.maskWriteRegister(address, andMask, orMask, "ui")
+}
+
+func (s *Server) ActiveConnections() int64 {
+	return s.activeConnections.Load()
+}
+
+func (s *Server) writeRegister(address, value uint16, source string) {
+	s.registerChangeMu.Lock()
+	defer s.registerChangeMu.Unlock()
+	next := s.registers.write(address, value)
+	if s.registerChange != nil {
+		s.registerChange(address, next, source)
+	}
+}
+
+func (s *Server) maskWriteRegister(address, andMask, orMask uint16, source string) {
+	s.registerChangeMu.Lock()
+	defer s.registerChangeMu.Unlock()
+	next := s.registers.maskWrite(address, andMask, orMask)
+	if s.registerChange != nil {
+		s.registerChange(address, next, source)
 	}
 }
 
@@ -139,6 +198,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 			return nil
 		}
 		activeConnections[connection] = struct{}{}
+		s.activeConnections.Add(1)
 		connectionMu.Unlock()
 		connections.Add(1)
 		go func() {
@@ -147,6 +207,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 			defer func() {
 				connectionMu.Lock()
 				delete(activeConnections, connection)
+				s.activeConnections.Add(-1)
 				connectionMu.Unlock()
 			}()
 			s.serveConnection(connection)
@@ -266,7 +327,7 @@ func (s *Server) handleMaskWriteRegister(pdu []byte) ([]byte, *uint16, *traceMas
 	address := binary.BigEndian.Uint16(pdu[1:3])
 	andMask := binary.BigEndian.Uint16(pdu[3:5])
 	orMask := binary.BigEndian.Uint16(pdu[5:7])
-	s.registers.maskWrite(address, andMask, orMask)
+	s.maskWriteRegister(address, andMask, orMask, "modbus")
 	response := append([]byte(nil), pdu...)
 	return response, &address, &traceMasks{And: andMask, Or: orMask}, "ok"
 }

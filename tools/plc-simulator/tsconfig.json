@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["DOM", "ES2020"],
+    "strict": true,
+    "noEmitOnError": true,
+    "module": "none",
+    "rootDir": "web",
+    "outDir": "web",
+    "skipLibCheck": true
+  },
+  "files": ["web/app.ts"]
+}
