@@ -17,6 +17,11 @@ fail() {
 "$DEPLOY_DIR/verify-install.sh" --help >/dev/null
 "$DEPLOY_DIR/health-check.sh" --help >/dev/null
 
+for ENABLED in false true; do
+  ARG="-mqtts-v2-enabled=$ENABLED"
+  [ "$ARG" = "-mqtts-v2-enabled=$ENABLED" ] || fail "MQTTS bool flag did not remain one argument"
+done
+
 if "$DEPLOY_DIR/install.sh" --artifact-dir /tmp/block-artifact --config /tmp/block.env --version test >/dev/null 2>&1; then
   fail "install must require --execute"
 fi

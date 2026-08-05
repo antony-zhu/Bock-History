@@ -24,7 +24,7 @@ ExecStart=/opt/block/current/bin/block-agent \
   -maintenance-authorized-keys $BLOCK_MAINTENANCE_AUTHORIZED_KEYS \
   -maintenance-device-id $BLOCK_MAINTENANCE_DEVICE_ID \
   -maintenance-advertised-host $BLOCK_MAINTENANCE_ADVERTISED_HOST \
-  -mqtts-v2-enabled $BLOCK_MQTTS_V2_ENABLED \
+  -mqtts-v2-enabled=${BLOCK_MQTTS_V2_ENABLED} \
   -mqtts-v2-endpoint $BLOCK_MQTTS_V2_ENDPOINT \
   -mqtts-v2-ca $BLOCK_MQTTS_V2_CA \
   -mqtts-v2-client-cert $BLOCK_MQTTS_V2_CLIENT_CERT \

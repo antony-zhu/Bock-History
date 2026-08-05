@@ -73,7 +73,7 @@ grep -Fx '  -local-http-address $BLOCK_LOCAL_HTTP_ADDRESS \' "$SCRIPT_DIR/system
 grep -Fx '  -state-db $BLOCK_STATE_DB \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -hmi-static-dir $BLOCK_HMI_STATIC_DIR \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -maintenance-https-address $BLOCK_MAINTENANCE_HTTPS_ADDRESS \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
-grep -Fx '  -mqtts-v2-enabled $BLOCK_MQTTS_V2_ENABLED \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -mqtts-v2-enabled=${BLOCK_MQTTS_V2_ENABLED} \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -mqtts-v2-device-id $BLOCK_MQTTS_V2_DEVICE_ID' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx 'ReadWritePaths=/var/lib/block' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx 'After=display-manager.service graphical.target block.service' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
