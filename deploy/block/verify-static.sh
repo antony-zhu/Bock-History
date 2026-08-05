@@ -76,8 +76,18 @@ grep -Fx '  -maintenance-https-address $BLOCK_MAINTENANCE_HTTPS_ADDRESS \' "$SCR
 grep -Fx '  -mqtts-v2-enabled $BLOCK_MQTTS_V2_ENABLED \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -mqtts-v2-device-id $BLOCK_MQTTS_V2_DEVICE_ID' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx 'ReadWritePaths=/var/lib/block' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx 'After=display-manager.service graphical.target block.service' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'User=block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'Group=block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'PermissionsStartOnly=true' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'Environment=DISPLAY=:0' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+if grep -Fx 'Environment=XAUTHORITY=/home/block-ui/.Xauthority' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null; then
+  fail "kiosk must not require the missing block-ui Xauthority file"
+fi
+grep -Fx 'ExecStartPre=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost +SI:localuser:block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'ExecStartPre=/opt/block/current/deploy/health-check.sh --url http://127.0.0.1:8080/healthz --retries 30 --delay 1' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble http://127.0.0.1:8080/' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'ExecStopPost=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost -SI:localuser:block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 if grep -R -n -E 'network-online|block-hmi|block-plc-simulator' "$SCRIPT_DIR/systemd"; then
   fail "v2 units must not depend on network-online or legacy services"
 fi

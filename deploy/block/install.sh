@@ -88,6 +88,9 @@ esac
 if grep -Eq '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*_)?POINTS?(_[A-Za-z0-9_]+)?=' "$CONFIG_FILE"; then
   fail "Block configuration must not persist points"
 fi
+if grep -Fx 'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' "$CONFIG_FILE" >/dev/null; then
+  sed -i 's/^BLOCK_MAINTENANCE_HTTPS_ADDRESS=127\.0\.0\.1:8443$/BLOCK_MAINTENANCE_HTTPS_ADDRESS=0.0.0.0:8443/' "$CONFIG_FILE"
+fi
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
 
 "$SCRIPT_DIR/install-users.sh"

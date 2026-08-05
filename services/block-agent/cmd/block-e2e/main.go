@@ -55,10 +55,13 @@ type device struct {
 }
 
 type resultLine struct {
-	Stage     string         `json:"stage"`
-	Status    string         `json:"status"`
-	Details   map[string]any `json:"details,omitempty"`
-	ErrorCode string         `json:"errorCode,omitempty"`
+	Stage       string         `json:"stage"`
+	Status      string         `json:"status"`
+	Details     map[string]any `json:"details,omitempty"`
+	ErrorCode   string         `json:"errorCode,omitempty"`
+	Message     string         `json:"message,omitempty"`
+	RequestID   string         `json:"requestId,omitempty"`
+	MessageType string         `json:"type,omitempty"`
 }
 
 type workflow struct {
@@ -69,7 +72,10 @@ type workflow struct {
 }
 
 type protocolFailure struct {
-	code string
+	code        string
+	message     string
+	requestID   string
+	messageType string
 }
 
 func (e protocolFailure) Error() string {
@@ -77,6 +83,19 @@ func (e protocolFailure) Error() string {
 		return "Block returned an unsuccessful response"
 	}
 	return "Block returned " + e.code
+}
+
+type workflowFailure struct {
+	stage string
+	cause error
+}
+
+func (e workflowFailure) Error() string {
+	return e.stage + ": " + e.cause.Error()
+}
+
+func (e workflowFailure) Unwrap() error {
+	return e.cause
 }
 
 func main() {
@@ -97,7 +116,7 @@ func main() {
 		username: username, password: password, output: os.Stdout,
 	})
 	if err != nil {
-		_ = json.NewEncoder(os.Stdout).Encode(resultLine{Stage: "workflow", Status: "failed", ErrorCode: errorCode(err)})
+		_ = json.NewEncoder(os.Stdout).Encode(failureResult(err))
 		fmt.Fprintln(os.Stderr, "block-e2e: workflow failed")
 		os.Exit(1)
 	}
@@ -112,15 +131,15 @@ func run(ctx context.Context, options options) error {
 	}
 	base, err := parseBaseURL(options.baseURL)
 	if err != nil {
-		return err
+		return atStage("startup", err)
 	}
 	points, definitions, err := loadPoints(options.pointsPath)
 	if err != nil {
-		return err
+		return atStage("points.load", err)
 	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return err
+		return atStage("startup", err)
 	}
 	workflow := &workflow{
 		base:   base,
@@ -131,30 +150,30 @@ func run(ctx context.Context, options options) error {
 		return err
 	}
 	if err := workflow.openWebSocket(); err != nil {
-		return err
+		return atStage("ws.connect", err)
 	}
 	defer workflow.ws.Close()
 
 	if err := workflow.configure(points, len(definitions)); err != nil {
-		return err
+		return atStage("runtime.configure", err)
 	}
 	deviceID, err := workflow.scan(options.scanCIDR)
 	if err != nil {
-		return err
+		return atStage("plc.scan", err)
 	}
 	if err := workflow.connect(deviceID); err != nil {
-		return err
+		return atStage("plc.connect", err)
 	}
 	if err := workflow.runActions(definitions); err != nil {
-		return err
+		return atStage("point.command", err)
 	}
 	if err := workflow.snapshot("points.snapshot.get"); err != nil {
-		return err
+		return atStage("points.snapshot.get", err)
 	}
 	if err := workflow.disconnect(); err != nil {
-		return err
+		return atStage("plc.disconnect", err)
 	}
-	return workflow.logout(ctx)
+	return atStage("auth.logout", workflow.logout(ctx))
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {
@@ -186,7 +205,7 @@ func (w *workflow) authenticate(ctx context.Context, username, password string) 
 		"username": username, "password": password, "confirmPassword": password,
 	})
 	if err != nil {
-		return err
+		return atStage("auth.initial-admin", err)
 	}
 	status := response.StatusCode
 	_ = response.Body.Close()
@@ -198,19 +217,19 @@ func (w *workflow) authenticate(ctx context.Context, username, password string) 
 			return err
 		}
 	default:
-		return httpStatusError{status: status}
+		return atStage("auth.initial-admin", httpStatusError{status: status})
 	}
 
 	response, err = w.postJSON(ctx, "/api/v2/auth/login", map[string]string{"username": username, "password": password})
 	if err != nil {
-		return err
+		return atStage("auth.login", err)
 	}
 	status = response.StatusCode
 	_ = response.Body.Close()
 	if status != http.StatusOK {
-		return httpStatusError{status: status}
+		return atStage("auth.login", httpStatusError{status: status})
 	}
-	return w.report("auth.login", "authenticated", nil)
+	return atStage("auth.login", w.report("auth.login", "authenticated", nil))
 }
 
 func (w *workflow) openWebSocket() error {
@@ -498,12 +517,15 @@ func successful(message map[string]json.RawMessage) error {
 
 func failureFrom(message map[string]json.RawMessage) error {
 	var payload struct {
-		Error struct {
-			Code string `json:"code"`
+		Type      string `json:"type"`
+		RequestID string `json:"requestId"`
+		Error     struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
 	_ = decodeMessage(message, &payload)
-	return protocolFailure{code: payload.Error.Code}
+	return protocolFailure{code: payload.Error.Code, message: payload.Error.Message, requestID: payload.RequestID, messageType: payload.Type}
 }
 
 func decodeMessage(message map[string]json.RawMessage, target any) error {
@@ -547,4 +569,31 @@ func errorCode(err error) string {
 		return fmt.Sprintf("HTTP_%d", status.status)
 	}
 	return "FAILED"
+}
+
+func atStage(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var existing workflowFailure
+	if errors.As(err, &existing) {
+		return err
+	}
+	return workflowFailure{stage: stage, cause: err}
+}
+
+func failureResult(err error) resultLine {
+	result := resultLine{Stage: "workflow", Status: "failed", ErrorCode: errorCode(err)}
+	var staged workflowFailure
+	if errors.As(err, &staged) {
+		result.Stage = staged.stage
+	}
+	var protocol protocolFailure
+	if errors.As(err, &protocol) {
+		result.ErrorCode = protocol.code
+		result.Message = protocol.message
+		result.RequestID = protocol.requestID
+		result.MessageType = protocol.messageType
+	}
+	return result
 }

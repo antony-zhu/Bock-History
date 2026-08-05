@@ -40,19 +40,24 @@ BASH_BIN=$(command -v bash)
 CAT_BIN=$(command -v cat)
 GREP_BIN=$(command -v grep)
 DIRNAME_BIN=$(command -v dirname)
+SED_BIN=$(command -v sed)
 id() { printf '%s\n' 0; }
 cat() { "$CAT_BIN" "$@"; }
 grep() { "$GREP_BIN" "$@"; }
 dirname() { "$DIRNAME_BIN" "$@"; }
-export BASH_BIN CAT_BIN GREP_BIN DIRNAME_BIN
-export -f id cat grep dirname
+sed() { "$SED_BIN" "$@"; }
+export BASH_BIN CAT_BIN GREP_BIN DIRNAME_BIN SED_BIN
+export -f id cat grep dirname sed
 
 preflight_config() {
   PATH=/nonexistent "$BASH_BIN" "$DEPLOY_DIR/install.sh" --execute --artifact-dir "$ARTIFACT_DIR" --config "$1" --version test 2>&1
 }
 
 ALLOWED_CONFIG=$TEST_ROOT/allowed.env
-printf '%s\n' 'BLOCK_MQTTS_V2_ENDPOINT=mqtts://bdm.example.invalid:8883' > "$ALLOWED_CONFIG"
+printf '%s\n' \
+  'BLOCK_MQTTS_V2_ENDPOINT=mqtts://bdm.example.invalid:8883' \
+  'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' \
+  'BLOCK_MAINTENANCE_DEVICE_ID=block-0001' > "$ALLOWED_CONFIG"
 if OUTPUT=$(preflight_config "$ALLOWED_CONFIG"); then
   fail "install preflight unexpectedly reached system changes"
 fi
@@ -61,6 +66,11 @@ case "$OUTPUT" in
   *'systemctl is required'*) ;;
   *) fail "install preflight did not reach the systemctl guard" ;;
 esac
+grep -Fx 'BLOCK_MAINTENANCE_HTTPS_ADDRESS=0.0.0.0:8443' "$ALLOWED_CONFIG" >/dev/null || fail "install did not migrate the legacy maintenance address"
+grep -Fx 'BLOCK_MAINTENANCE_DEVICE_ID=block-0001' "$ALLOWED_CONFIG" >/dev/null || fail "install changed an unrelated configuration key"
+if grep -Fx 'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' "$ALLOWED_CONFIG" >/dev/null; then
+  fail "install kept the legacy maintenance address"
+fi
 
 REJECTED_CONFIG=$TEST_ROOT/rejected.env
 printf '%s\n' 'POINTS_FILE=/etc/block/points.json' > "$REJECTED_CONFIG"

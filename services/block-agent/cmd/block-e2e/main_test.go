@@ -196,6 +196,26 @@ func TestAuthenticateCreatesInitialAdmin(t *testing.T) {
 	assertJSONL(t, output.Bytes())
 }
 
+func TestFailureResultPreservesServerContextWithoutPassword(t *testing.T) {
+	secret := "do-not-print-this-password"
+	failure := failureFrom(map[string]json.RawMessage{
+		"type":      json.RawMessage(`"error"`),
+		"requestId": json.RawMessage(`"runtime-configure-one"`),
+		"error":     json.RawMessage(`{"code":"INVALID_REQUEST","message":"points[1].writePoint is required","details":{}}`),
+	})
+	line := failureResult(atStage("runtime.configure", failure))
+	if line.Stage != "runtime.configure" || line.ErrorCode != "INVALID_REQUEST" || line.Message != "points[1].writePoint is required" || line.RequestID != "runtime-configure-one" || line.MessageType != "error" {
+		t.Fatalf("failure result = %#v", line)
+	}
+	contents, err := json.Marshal(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(contents), secret) {
+		t.Fatal("failure JSONL exposed the password")
+	}
+}
+
 func sendSnapshot(t *testing.T, connection *websocket.Conn) {
 	t.Helper()
 	sendMessage(t, connection, map[string]any{"protocolVersion": "1.0", "type": "points.snapshot", "timestamp": time.Now().UTC().Format(time.RFC3339Nano), "values": map[string]any{"pulse.point": map[string]any{"value": false, "quality": "good", "updatedAt": time.Now().UTC().Format(time.RFC3339Nano), "alarmActive": nil}}})
