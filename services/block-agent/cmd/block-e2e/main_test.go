@@ -101,7 +101,8 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 	var output bytes.Buffer
 	err := run(context.Background(), options{
 		baseURL: server.URL, pointsPath: pointsPath, scanCIDR: "127.0.0.1/32",
-		username: "admin", password: "do-not-print-this-password", output: &output,
+		observeScanDuration: 5 * time.Millisecond,
+		username:            "admin", password: "do-not-print-this-password", output: &output,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +124,8 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 	if strings.Contains(output.String(), "do-not-print-this-password") {
 		t.Fatal("JSONL output exposed the password")
 	}
-	assertJSONL(t, output.Bytes())
+	results := assertJSONL(t, output.Bytes())
+	assertStageOrder(t, results, "points.snapshot.initial", "plc.observe", "point.command")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -263,12 +265,13 @@ func assertEnvelope(t *testing.T, message map[string]json.RawMessage) {
 	}
 }
 
-func assertJSONL(t *testing.T, contents []byte) {
+func assertJSONL(t *testing.T, contents []byte) []resultLine {
 	t.Helper()
 	lines := strings.Split(strings.TrimSpace(string(contents)), "\n")
 	if len(lines) == 0 || lines[0] == "" {
 		t.Fatal("expected JSONL output")
 	}
+	results := make([]resultLine, 0, len(lines))
 	for _, line := range lines {
 		var value resultLine
 		if err := json.Unmarshal([]byte(line), &value); err != nil {
@@ -277,5 +280,20 @@ func assertJSONL(t *testing.T, contents []byte) {
 		if value.Stage == "" || value.Status == "" {
 			t.Fatalf("incomplete JSONL result: %#v", value)
 		}
+		results = append(results, value)
+	}
+	return results
+}
+
+func assertStageOrder(t *testing.T, results []resultLine, stages ...string) {
+	t.Helper()
+	index := 0
+	for _, result := range results {
+		if index < len(stages) && result.Stage == stages[index] {
+			index++
+		}
+	}
+	if index != len(stages) {
+		t.Fatalf("stage order %v was not found in %#v", stages, results)
 	}
 }

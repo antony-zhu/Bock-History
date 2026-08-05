@@ -30,12 +30,13 @@ const (
 )
 
 type options struct {
-	baseURL    string
-	pointsPath string
-	scanCIDR   string
-	username   string
-	password   string
-	output     io.Writer
+	baseURL             string
+	pointsPath          string
+	scanCIDR            string
+	observeScanDuration time.Duration
+	username            string
+	password            string
+	output              io.Writer
 }
 
 type pointFile struct {
@@ -102,6 +103,7 @@ func main() {
 	baseURL := flag.String("base-url", defaultBaseURL, "Block local base URL")
 	pointsPath := flag.String("points", defaultPointsPath, "path to HMI points.json")
 	scanCIDR := flag.String("scan-cidr", defaultScanCIDR, "IPv4 CIDR to scan for the PLC")
+	observeScanDuration := flag.Duration("observe-scan-duration", 0, "keep the WebSocket open after the initial PLC snapshot without sending commands")
 	flag.Parse()
 
 	username := os.Getenv("BLOCK_E2E_USERNAME")
@@ -112,7 +114,7 @@ func main() {
 	}
 
 	err := run(context.Background(), options{
-		baseURL: *baseURL, pointsPath: *pointsPath, scanCIDR: *scanCIDR,
+		baseURL: *baseURL, pointsPath: *pointsPath, scanCIDR: *scanCIDR, observeScanDuration: *observeScanDuration,
 		username: username, password: password, output: os.Stdout,
 	})
 	if err != nil {
@@ -164,6 +166,9 @@ func run(ctx context.Context, options options) error {
 	if err := workflow.connect(deviceID); err != nil {
 		return atStage("plc.connect", err)
 	}
+	if err := workflow.observe(ctx, options.observeScanDuration); err != nil {
+		return atStage("plc.observe", err)
+	}
 	if err := workflow.runActions(definitions); err != nil {
 		return atStage("point.command", err)
 	}
@@ -174,6 +179,20 @@ func run(ctx context.Context, options options) error {
 		return atStage("plc.disconnect", err)
 	}
 	return atStage("auth.logout", workflow.logout(ctx))
+}
+
+func (w *workflow) observe(ctx context.Context, duration time.Duration) error {
+	if duration <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	return w.report("plc.observe", "completed", map[string]any{"duration": duration.String()})
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {
