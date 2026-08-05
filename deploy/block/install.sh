@@ -85,7 +85,7 @@ esac
 [ -f "$ARTIFACT_DIR/VERSION" ] || fail "missing artifact VERSION"
 [ -f "$CONFIG_FILE" ] || fail "missing config file"
 [ "$(cat "$ARTIFACT_DIR/VERSION")" = "$VERSION" ] || fail "artifact VERSION does not match --version"
-if grep -Eq '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*POINTS?[A-Za-z0-9_]*=' "$CONFIG_FILE"; then
+if grep -Eq '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*_)?POINTS?(_[A-Za-z0-9_]+)?=' "$CONFIG_FILE"; then
   fail "Block configuration must not persist points"
 fi
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
