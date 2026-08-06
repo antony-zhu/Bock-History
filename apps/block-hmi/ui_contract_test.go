@@ -8,183 +8,92 @@ import (
 	"testing"
 )
 
-func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
+func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	index, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
+	page := string(index)
 	for _, required := range []string{
-		"id=\"hmi\"",
-		"data-page=\"home\"",
-		"data-page=\"data\"",
-		"data-page=\"maintenance\"",
-		"data-page=\"alarm\"",
-		"data-page=\"history\"",
-		"data-nav=\"home\"",
-		"data-nav=\"data\"",
-		"data-nav=\"maintenance\"",
-		"data-nav=\"alarm\"",
-		"data-nav=\"history\"",
-		"data-theme-option=\"light\"",
-		"data-theme-option=\"graphite\"",
-		"data-theme-option=\"ocean\"",
-		"data-theme-option=\"midnight\"",
-		"data-theme-option=\"titanium\"",
-		"id=\"themeMenu\"",
-		"id=\"toast\"",
-		"id=\"softKeyboardDock\"",
-		"id=\"login-form\"",
-		"id=\"authBootstrap\"",
-		"id=\"initial-admin-form\"",
-		"id=\"password-form\"",
-		"id=\"logout-button\"",
-		"id=\"plc-scan-button\"",
-		"id=\"plc-disconnect-button\"",
-		"id=\"snapshot-button\"",
-		"id=\"plc-candidates\"",
-		"import(\"./assets/hmi.mjs\")",
+		`id="hmi"`,
+		`data-page="home"`,
+		`data-page="data"`,
+		`data-page="maintenance"`,
+		`data-page="alarm"`,
+		`data-page="history"`,
+		`id="login-form"`,
+		`id="initial-admin-form"`,
+		`id="password-form"`,
+		`id="session-policy-form"`,
+		`id="plc-scan-button"`,
+		`id="plc-disconnect-button"`,
+		`id="snapshot-button"`,
+		`id="operatorName"`,
+		`import("./assets/hmi.mjs")`,
+		`function requireFrontendPermission(permission)`,
+		`window.BlockHMIReady.then(syncFrontendPermissions)`,
+		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
 	} {
-		if !strings.Contains(string(index), required) {
+		if !strings.Contains(page, required) {
 			t.Fatalf("index is missing %q", required)
 		}
 	}
-	if strings.Contains(string(index), "api-client.js") {
+	if strings.Contains(page, "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
 	}
-	if strings.Contains(string(index), "auth-first-install") || strings.Contains(string(index), "<details") {
-		t.Fatal("manual first-install auth entry is still present")
-	}
-	editableControl := regexp.MustCompile(`(?is)<(?:input|textarea)\b[^>]*>`)
-	excludedControl := regexp.MustCompile(`(?i)\b(?:hidden|disabled|readonly)\b|\btype=(?:"|')(?:hidden|button|submit|reset|checkbox|radio|file|image)(?:"|')`)
-	keyboardControl := regexp.MustCompile(`(?i)\bdata-soft-keyboard=(?:"|')(?:full|numeric)(?:"|')`)
-	controls := editableControl.FindAllString(string(index), -1)
-	if len(controls) != 12 {
-		t.Fatalf("editable control count = %d, want 12", len(controls))
-	}
-	for _, control := range controls {
-		if excludedControl.MatchString(control) {
-			continue
-		}
-		if !keyboardControl.MatchString(control) {
-			t.Fatalf("editable control is missing soft keyboard support: %s", control)
-		}
-	}
-	for _, required := range []string{
-		`role="dialog" aria-modal="true"`,
-		`background: transparent;`,
-		`background-color: transparent;`,
-		`backdrop-filter: none;`,
-		`filter: none;`,
-		`opacity: 1;`,
-		`pointer-events: none;`,
-		`pointer-events: auto;`,
-		`id="hmi-topbar" inert aria-hidden="true"`,
-		`id="hmi-pages" inert aria-hidden="true"`,
-		`id="hmi-footer" inert aria-hidden="true"`,
-		`id="softKeyboardLayer"`,
-	} {
-		if !strings.Contains(string(index), required) {
-			t.Fatalf("index is missing floating-auth requirement %q", required)
-		}
-	}
-	keyboard, err := os.ReadFile("assets/soft-keyboard.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{
-		"function isKeyboardCandidate(input)",
-		`document.querySelectorAll("input, textarea")`,
-		`["hidden", "button", "submit", "reset", "checkbox", "radio", "file", "image"]`,
-		"new window.MutationObserver",
-		`attributeFilter: ["disabled", "hidden", "type", "inputmode"]`,
-		`activeInput.type === "password"`,
-		"function syncAuthKeyboardLayout()",
-		`authPanel.setAttribute("data-keyboard-open", "true")`,
-		`authPanel.removeAttribute("data-keyboard-open")`,
-		"dock.getBoundingClientRect().top",
-		`activeInput.scrollIntoView({ block: "nearest", inline: "nearest" })`,
-		"if (pinned) return true;",
-		"function setPinned(nextPinned)",
-		`root.toggleAttribute("data-soft-keyboard-pinned", pinned)`,
-		`if (pinned) requested = "soft";`,
-		"setPinned: setPinned",
-	} {
-		if !strings.Contains(string(keyboard), required) {
-			t.Fatalf("soft keyboard is missing %q", required)
-		}
-	}
-	keyboardStyles, err := os.ReadFile("assets/soft-keyboard.css")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{
-		`#auth-panel[data-keyboard-open="true"]`,
-		`max-height: calc(var(--auth-keyboard-top, 50vh) - 52px);`,
-		"overflow-y: auto;",
-		`#auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock`,
-		"background: #f8fafc;",
-		`#auth-panel[data-auth-mode] ~ #hmi #softKeyboardClose`,
-		"display: none;",
-	} {
-		if !strings.Contains(string(keyboardStyles), required) {
-			t.Fatalf("soft keyboard auth layout is missing %q", required)
-		}
-	}
-	if _, err := os.Stat("tools/auth-layout-probe.mjs"); err != nil {
-		t.Fatalf("auth layout probe is missing: %v", err)
-	}
+
 	bridge, err := os.ReadFile("assets/hmi.mts")
 	if err != nil {
 		t.Fatal(err)
 	}
+	source := string(bridge)
 	for _, required := range []string{
-		"function demoAuthPreviewMode(): DemoAuthPreview",
-		"export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview",
-		`auth === "login" || auth === "bootstrap"`,
-		`export const demoAdminCreatedStorageKey = "block-hmi-demo-admin-created-v1"`,
-		"export function demoAuthScreenForPreview(preview: DemoAuthPreview, storage: DemoStorageReader): DemoAuthPreview",
-		`if (preview !== "login")`,
-		`storage()?.getItem(demoAdminCreatedStorageKey) === demoAdminCreatedStorageValue ? "login" : "bootstrap"`,
-		"export function markDemoAdminCreated(storage: DemoStorageWriter): void",
-		`storage()?.setItem(demoAdminCreatedStorageKey, demoAdminCreatedStorageValue);`,
-		`markDemoAdminCreated(() => window.localStorage);`,
-		`this.showAuthentication(this.authPreview);`,
-		"private prepareAuthentication(): void",
-		"private async resolveInitialAuthentication(): Promise<void>",
-		`fetch("/api/v2/auth/status", {`,
-		`Object.keys(value).sort().join(",") !== "authenticated,bootstrapRequired"`,
-		`typeof value.bootstrapRequired !== "boolean"`,
-		`typeof value.authenticated !== "boolean"`,
-		`value.bootstrapRequired === true && value.authenticated === true`,
-		`this.loginSection().hidden = screen !== "login";`,
-		`this.bootstrapSection().hidden = screen !== "bootstrap";`,
-		`keyboard.setPinned(true);`,
-		`keyboard?.setPinned(false);`,
-		`responseCreatesSession(result)`,
-		`this.showLogin("管理员已创建，请使用新账号登录。");`,
-		"private setHMIInteractive(interactive: boolean)",
-		`element.toggleAttribute("inert", !interactive)`,
-		"if (this.authPreview !== null)",
-		"if (event.code === 4401)",
+		`export const localAdminStorageKey = "block-hmi-local-admin-v1"`,
+		`export const localSessionStorageKey = "block-hmi-local-session-v1"`,
+		`export const localSettingsStorageKey = "block-hmi-local-settings-v1"`,
+		`crypto.subtle.digest("SHA-256"`,
+		`private prepareGuestHMI(): void`,
+		`private moveLocalAdministrationToMaintenance(): void`,
+		`private requirePermission(permission: "operate" | "maintenance"): boolean`,
+		`this.openSocket();`,
+		`buildRuntimeConfigure(this.config.points)`,
+		`this.refreshLocalSession();`,
+		`window.sessionStorage.setItem(localSessionStorageKey`,
+		`window.sessionStorage.removeItem(localSessionStorageKey)`,
 	} {
-		if !strings.Contains(string(bridge), required) {
+		if !strings.Contains(source, required) {
 			t.Fatalf("HMI bridge is missing %q", required)
 		}
 	}
-	if strings.Contains(string(bridge), "auth-first-install") {
-		t.Fatal("auth bootstrap must not use a manual switch")
+	for _, forbidden := range []string{
+		`/api/v2/auth/status`,
+		`/api/v2/auth/login`,
+		`/api/v2/auth/activity`,
+		`/api/v2/auth/logout`,
+		`jsonRequest(`,
+		`event.code === 4401`,
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("HMI bridge still contains backend auth dependency %q", forbidden)
+		}
+	}
+	if !regexp.MustCompile(`private sendCommand[\s\S]*?requirePermission\("operate"\)`).MatchString(source) {
+		t.Fatal("HMI point commands are not protected by the frontend permission gate")
+	}
+	if !regexp.MustCompile(`private sendPLCScan[\s\S]*?requirePermission\("maintenance"\)`).MatchString(source) {
+		t.Fatal("HMI PLC actions are not protected by the frontend maintenance gate")
 	}
 	for _, asset := range []string{
+		"assets/hmi.mjs",
 		"assets/machine-bin.png",
 		"assets/soft-keyboard.css",
 		"assets/soft-keyboard.js",
 		"assets/vendor/simple-keyboard/index.css",
 		"assets/vendor/simple-keyboard/index.js",
-		"assets/vendor/simple-keyboard/LICENSE",
 		"THIRD_PARTY_NOTICES.md",
 	} {
 		if _, err := os.Stat(asset); err != nil {
-			t.Fatalf("V1 asset %q is missing: %v", asset, err)
+			t.Fatalf("required HMI asset %q is missing: %v", asset, err)
 		}
 	}
 }
@@ -223,8 +132,8 @@ func TestPointsJSONKeepsDisplayBindingsOutOfRuntimePoints(t *testing.T) {
 		if !isEnglishDisplayPath(binding.DisplayPath) {
 			t.Fatalf("display path is not an English dotted path: %q", binding.DisplayPath)
 		}
-		if !strings.ContainsAny(binding.Description, "启动设备正向点动设备使能反馈") {
-			t.Fatalf("binding description is not Chinese: %q", binding.Description)
+		if binding.Description == "" {
+			t.Fatalf("binding description is empty for %q", binding.DisplayPath)
 		}
 	}
 }

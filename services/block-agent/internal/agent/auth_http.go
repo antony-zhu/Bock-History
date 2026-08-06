@@ -31,34 +31,6 @@ type sessionPolicyRequest struct {
 	IdleTimeoutSeconds int `json:"idleTimeoutSeconds"`
 }
 
-type authStatusResponse struct {
-	BootstrapRequired bool `json:"bootstrapRequired"`
-	Authenticated     bool `json:"authenticated"`
-}
-
-func (r *Runtime) authStatus(writer http.ResponseWriter, request *http.Request) {
-	if !requireAuthMethod(writer, request, http.MethodGet) {
-		return
-	}
-	if r.auth == nil {
-		http.NotFound(writer, request)
-		return
-	}
-	hasAdmin, err := r.auth.HasAdmin(request.Context())
-	if err != nil {
-		writeAuthError(writer, err)
-		return
-	}
-	response := authStatusResponse{BootstrapRequired: !hasAdmin}
-	if hasAdmin {
-		if token, ok := sessionToken(request); ok {
-			_, err := r.auth.Session(token)
-			response.Authenticated = err == nil
-		}
-	}
-	writeJSON(writer, http.StatusOK, response)
-}
-
 func (r *Runtime) bootstrap(writer http.ResponseWriter, request *http.Request) {
 	if !requireAuthMethod(writer, request, http.MethodPost) {
 		return
@@ -201,18 +173,7 @@ func (r *Runtime) setSessionCookie(writer http.ResponseWriter, result auth.Login
 }
 
 func (r *Runtime) checkHandshake(config *websocket.Config, request *http.Request) error {
-	if err := checkLocalOrigin(config, request); err != nil {
-		return err
-	}
-	if r.auth == nil {
-		return nil
-	}
-	token, ok := sessionToken(request)
-	if !ok {
-		return errors.New("local login session is required")
-	}
-	_, err := r.auth.Session(token)
-	return err
+	return checkLocalOrigin(config, request)
 }
 
 func staticHMI(files fs.FS) http.Handler {

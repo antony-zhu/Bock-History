@@ -11,7 +11,7 @@ type PLCDevice = {
   deviceId: string;
   name: string;
   address: string;
-  state: "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
+  state: "unconfigured" | "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
   selected: boolean;
   metadata: Record<string, unknown>;
 };
@@ -126,10 +126,17 @@ type HMISoftKeyboard = {
   setPinned(pinned: boolean): void;
 };
 
+type HMIFrontendAuth = {
+  hasPermission(permission: "operate" | "maintenance"): boolean;
+  requirePermission(permission: "operate" | "maintenance"): boolean;
+  permissions(): FrontendPermissions;
+};
+
 declare global {
   interface Window {
     HMIBackend?: LegacyBackend;
     HMISoftKeyboard?: HMISoftKeyboard;
+    HMIFrontendAuth?: HMIFrontendAuth;
   }
 }
 
@@ -352,32 +359,6 @@ async function loadConfiguration(demo: boolean): Promise<PageConfiguration> {
   return configurationFrom(await response.json());
 }
 
-async function jsonRequest(method: "POST" | "PUT", path: string, body: object): Promise<Response> {
-  const response = await fetch(path, {
-    method,
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    throw new HMIAPIError(await responseMessage(response), response.status, "request_failed");
-  }
-  return response;
-}
-
-async function responseMessage(response: Response): Promise<string> {
-  try {
-    const body = await response.json() as { error?: { message?: string } | string };
-    if (typeof body.error === "string") {
-      return body.error;
-    }
-    return body.error?.message ?? "请求失败（HTTP " + String(response.status) + "）";
-  } catch {
-    return "请求失败（HTTP " + String(response.status) + "）";
-  }
-}
-
 function websocketURL(): string {
   const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
   return scheme + "//" + window.location.host + "/ws";
@@ -389,44 +370,90 @@ function isDemoMode(): boolean {
 
 type DemoAuthPreview = "login" | "bootstrap" | null;
 type AuthScreen = Exclude<DemoAuthPreview, null>;
-type DemoStorageReader = () => Pick<Storage, "getItem"> | null | undefined;
-type DemoStorageWriter = () => Pick<Storage, "setItem"> | null | undefined;
-
-export const demoAdminCreatedStorageKey = "block-hmi-demo-admin-created-v1";
-export const demoAdminCreatedStorageValue = "true";
-
-type AuthStatus = {
-  authenticated: boolean;
-  bootstrapRequired: boolean;
+type StorageReader = () => Pick<Storage, "getItem" | "setItem" | "removeItem"> | null | undefined;
+type FrontendPermissions = { operate: boolean; maintenance: boolean };
+type LocalAdministrator = {
+  username: string;
+  passwordHash: string;
+  permissions: FrontendPermissions;
 };
+type LocalSession = {
+  username: string;
+  permissions: FrontendPermissions;
+  lastActivity: number;
+  expiresAt: number;
+};
+type LocalSettings = { idleTimeoutSeconds: number };
+
+export const localAdminStorageKey = "block-hmi-local-admin-v1";
+export const localSessionStorageKey = "block-hmi-local-session-v1";
+export const localSettingsStorageKey = "block-hmi-local-settings-v1";
+export const defaultIdleTimeoutSeconds = 300;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function parseAuthStatus(value: unknown): AuthStatus | null {
+function validPermissions(value: unknown): value is FrontendPermissions {
+  return isRecord(value) && typeof value.operate === "boolean" && typeof value.maintenance === "boolean";
+}
+
+export function localAdministratorFrom(value: unknown): LocalAdministrator | null {
   if (!isRecord(value) ||
-    Object.keys(value).sort().join(",") !== "authenticated,bootstrapRequired" ||
-    typeof value.bootstrapRequired !== "boolean" ||
-    typeof value.authenticated !== "boolean" ||
-    (value.bootstrapRequired === true && value.authenticated === true)) {
+    typeof value.username !== "string" || value.username.trim() === "" ||
+    !/^[a-f0-9]{64}$/.test(String(value.passwordHash)) ||
+    !validPermissions(value.permissions)) {
     return null;
   }
   return {
-    authenticated: value.authenticated,
-    bootstrapRequired: value.bootstrapRequired
+    username: value.username,
+    passwordHash: String(value.passwordHash),
+    permissions: { ...value.permissions }
   };
 }
 
-export function authScreenForStatus(status: AuthStatus | null): AuthScreen {
-  return status?.bootstrapRequired === true ? "bootstrap" : "login";
+export function localSessionFrom(value: unknown): LocalSession | null {
+  if (!isRecord(value) || typeof value.username !== "string" || !validPermissions(value.permissions) ||
+    !Number.isFinite(value.lastActivity) || !Number.isFinite(value.expiresAt)) {
+    return null;
+  }
+  return {
+    username: value.username,
+    permissions: { ...value.permissions },
+    lastActivity: Number(value.lastActivity),
+    expiresAt: Number(value.expiresAt)
+  };
 }
 
-export function responseCreatesSession(value: unknown): boolean {
-  return isRecord(value) &&
-    typeof value.username === "string" &&
-    typeof value.role === "string" &&
-    typeof value.expiresAt === "string";
+export function readLocalAdministrator(storage: StorageReader): LocalAdministrator | null {
+  try {
+    const raw = storage()?.getItem(localAdminStorageKey);
+    return raw === null || raw === undefined ? null : localAdministratorFrom(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function readLocalSettings(storage: StorageReader): LocalSettings {
+  try {
+    const raw = storage()?.getItem(localSettingsStorageKey);
+    const value = raw === null || raw === undefined ? null : JSON.parse(raw);
+    if (isRecord(value) && Number.isInteger(value.idleTimeoutSeconds) && Number(value.idleTimeoutSeconds) >= 60) {
+      return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds) };
+    }
+  } catch {
+    // Browser storage can be unavailable in hardened kiosk profiles.
+  }
+  return { idleTimeoutSeconds: defaultIdleTimeoutSeconds };
+}
+
+export function localSessionIsActive(session: LocalSession | null, now = Date.now()): boolean {
+  return session !== null && session.expiresAt > now;
+}
+
+export async function passwordDigest(password: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password));
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
@@ -438,23 +465,11 @@ export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
   return auth === "login" || auth === "bootstrap" ? auth : null;
 }
 
-export function demoAuthScreenForPreview(preview: DemoAuthPreview, storage: DemoStorageReader): DemoAuthPreview {
+export function demoAuthScreenForPreview(preview: DemoAuthPreview, storage: StorageReader): DemoAuthPreview {
   if (preview !== "login") {
     return preview;
   }
-  try {
-    return storage()?.getItem(demoAdminCreatedStorageKey) === demoAdminCreatedStorageValue ? "login" : "bootstrap";
-  } catch {
-    return "bootstrap";
-  }
-}
-
-export function markDemoAdminCreated(storage: DemoStorageWriter): void {
-  try {
-    storage()?.setItem(demoAdminCreatedStorageKey, demoAdminCreatedStorageValue);
-  } catch {
-    // If browser storage is unavailable, the next demo login returns to the first-install screen.
-  }
+  return readLocalAdministrator(storage) === null ? "bootstrap" : "login";
 }
 
 function demoAuthPreviewMode(): DemoAuthPreview {
@@ -584,9 +599,11 @@ export class StartCommandReceipt {
 class AppleBridge {
   private socket: WebSocket | null = null;
   private signedIn = false;
+  private session: LocalSession | null = null;
   private configured = false;
   private reconnectDelay = 1000;
   private reconnectTimer: number | null = null;
+  private sessionExpiryTimer: number | null = null;
   private lastActivityAt = Number.NEGATIVE_INFINITY;
   private revision = 0;
   private plcState: PLCDevice["state"] = "disconnected";
@@ -603,29 +620,34 @@ class AppleBridge {
   ) {}
 
   start(): void {
+    window.HMIFrontendAuth = {
+      hasPermission: (permission) => this.hasPermission(permission),
+      requirePermission: (permission) => this.requirePermission(permission),
+      permissions: () => ({
+        operate: this.hasPermission("operate"),
+        maintenance: this.hasPermission("maintenance")
+      })
+    };
+    this.moveLocalAdministrationToMaintenance();
     this.bindAuthForms();
     this.bindAccountControls();
     this.bindPLCControls();
     this.bindActivityReporting();
+    this.prepareGuestHMI();
+    this.restoreLocalSession();
     if (this.demo) {
-      if (this.authPreview !== null) {
-        this.showAuthentication(this.authPreview);
-        this.setPLCStatus("演示模式（未连接 PLC）");
-        this.renderPLCCandidates();
-        return;
-      }
-      this.signedIn = true;
       this.configured = true;
-      this.authPanel().hidden = true;
-      this.setHMIInteractive(true);
       this.setPLCStatus("演示模式（未连接 PLC）");
       this.renderPLCCandidates();
-      return;
+      this.emitState();
+    } else {
+      this.setPLCStatus("正在连接本机服务");
+      this.renderPLCCandidates();
+      this.openSocket();
     }
-    this.prepareAuthentication();
-    this.setPLCStatus("正在检查本机认证状态");
-    this.renderPLCCandidates();
-    void this.resolveInitialAuthentication();
+    if (this.authPreview !== null) {
+      this.showAuthentication(this.authPreview);
+    }
   }
 
   backend(): LegacyBackend {
@@ -655,10 +677,6 @@ class AppleBridge {
     return document.querySelector<HTMLElement>("#authBootstrap")!;
   }
 
-  private accountSection(): HTMLElement {
-    return document.querySelector<HTMLElement>("#authAccount")!;
-  }
-
   private setHMIInteractive(interactive: boolean): void {
     document.querySelectorAll<HTMLElement>("#hmi-topbar, #hmi-pages, #hmi-footer").forEach((element) => {
       element.toggleAttribute("inert", !interactive);
@@ -672,19 +690,24 @@ class AppleBridge {
 
   private setAuthNotice(message: string): void {
     this.authNotice().textContent = message;
+    const maintenanceNotice = document.querySelector<HTMLElement>("#local-admin-notice");
+    if (maintenanceNotice !== null) {
+      maintenanceNotice.textContent = message;
+    }
   }
 
-  private prepareAuthentication(): void {
+  private prepareGuestHMI(): void {
     this.endAuthenticationKeyboard();
     const panel = this.authPanel();
     panel.hidden = true;
-    panel.setAttribute("aria-busy", "true");
+    panel.setAttribute("aria-busy", "false");
     panel.removeAttribute("data-auth-mode");
     this.loginSection().hidden = true;
     this.bootstrapSection().hidden = true;
-    this.accountSection().hidden = true;
-    this.setHMIInteractive(false);
+    this.setHMIInteractive(true);
     this.setAuthNotice("");
+    this.updateAccountControl();
+    this.emitPermissionChange();
   }
 
   private showAuthentication(screen: AuthScreen, message = ""): void {
@@ -695,8 +718,6 @@ class AppleBridge {
     panel.setAttribute("data-auth-mode", screen);
     this.loginSection().hidden = screen !== "login";
     this.bootstrapSection().hidden = screen !== "bootstrap";
-    this.accountSection().hidden = true;
-    this.setHMIInteractive(false);
     this.setAuthNotice(message);
     this.openAuthenticationKeyboard(screen);
   }
@@ -739,60 +760,6 @@ class AppleBridge {
     this.authKeyboardOriginalMode = null;
   }
 
-  private async resolveInitialAuthentication(): Promise<void> {
-    try {
-      const response = await fetch("/api/v2/auth/status", {
-        credentials: "same-origin",
-        cache: "no-store"
-      });
-      if (!response.ok) {
-        throw new HMIAPIError(await responseMessage(response), response.status, "auth_status_failed");
-      }
-      const status = parseAuthStatus(await response.json());
-      if (status === null) {
-        this.showLogin("本机认证状态未知，请检查本机服务后重试。");
-        return;
-      }
-      if (authScreenForStatus(status) === "bootstrap") {
-        this.showBootstrap();
-        return;
-      }
-      if (status.authenticated) {
-        this.beginSession();
-        return;
-      }
-      this.showLogin();
-    } catch {
-      this.showLogin("本机认证服务不可用，请检查服务后重试。");
-    }
-  }
-
-  private showAccount(): void {
-    if (!this.signedIn) {
-      this.showLogin();
-      return;
-    }
-    this.endAuthenticationKeyboard();
-    const panel = this.authPanel();
-    panel.hidden = false;
-    panel.setAttribute("aria-busy", "false");
-    panel.removeAttribute("data-auth-mode");
-    this.loginSection().hidden = true;
-    this.bootstrapSection().hidden = true;
-    this.accountSection().hidden = false;
-    this.setHMIInteractive(false);
-    this.setAuthNotice("");
-    this.renderPLCCandidates();
-  }
-
-  private hideAccount(): void {
-    if (this.signedIn) {
-      this.endAuthenticationKeyboard();
-      this.authPanel().hidden = true;
-      this.setHMIInteractive(true);
-    }
-  }
-
   private bindAuthForms(): void {
     const login = document.querySelector<HTMLFormElement>("#login-form")!;
     login.addEventListener("submit", (event) => {
@@ -831,18 +798,32 @@ class AppleBridge {
     const operator = document.querySelector<HTMLElement>("#operatorName")!;
     operator.tabIndex = 0;
     operator.setAttribute("role", "button");
-    operator.setAttribute("aria-label", "打开本机账户和 PLC 连接");
-    operator.addEventListener("click", () => this.showAccount());
+    operator.addEventListener("click", () => this.toggleAccountSession());
     operator.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        this.showAccount();
+        this.toggleAccountSession();
       }
     });
-    document.querySelector<HTMLButtonElement>("#auth-close")!.addEventListener("click", () => this.hideAccount());
-    document.querySelector<HTMLButtonElement>("#logout-button")!.addEventListener("click", () => {
-      void this.logout();
-    });
+  }
+
+  private moveLocalAdministrationToMaintenance(): void {
+    const account = document.querySelector<HTMLElement>("#authAccount")!;
+    const maintenance = document.querySelector<HTMLElement>("[data-page=\"maintenance\"] .settings-layout")!;
+    document.querySelector<HTMLElement>("#auth-close")?.remove();
+    document.querySelector<HTMLElement>("#logout-button")?.remove();
+    const notice = document.createElement("p");
+    notice.className = "settings-validation";
+    notice.id = "local-admin-notice";
+    notice.setAttribute("role", "status");
+    notice.setAttribute("aria-live", "polite");
+    account.prepend(notice);
+    const idleTimeout = account.querySelector<HTMLInputElement>("[name=\"idleTimeoutSeconds\"]");
+    if (idleTimeout !== null) {
+      idleTimeout.value = String(readLocalSettings(() => window.localStorage).idleTimeoutSeconds);
+    }
+    account.hidden = false;
+    maintenance.append(account);
   }
 
   private bindPLCControls(): void {
@@ -859,7 +840,7 @@ class AppleBridge {
 
   private bindActivityReporting(): void {
     const report = () => {
-      if (this.demo || !this.signedIn) {
+      if (!this.signedIn || this.session === null) {
         return;
       }
       const now = performance.now();
@@ -867,15 +848,7 @@ class AppleBridge {
         return;
       }
       this.lastActivityAt = now;
-      void fetch("/api/v2/auth/activity", {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store"
-      }).then((response) => {
-        if (response.status === 401) {
-          this.endSession("会话已过期，请重新登录");
-        }
-      }).catch(() => undefined);
+      this.refreshLocalSession();
     };
     document.addEventListener("pointerdown", report, { passive: true });
     document.addEventListener("touchstart", report, { passive: true });
@@ -883,16 +856,12 @@ class AppleBridge {
   }
 
   private async login(username: string, password: string): Promise<void> {
-    if (this.demo) {
-      this.beginSession();
+    const account = readLocalAdministrator(() => window.localStorage);
+    if (account === null || account.username !== username.trim() || account.passwordHash !== await passwordDigest(password)) {
+      this.setAuthNotice("用户名或密码不正确");
       return;
     }
-    try {
-      await jsonRequest("POST", "/api/v2/auth/login", { username, password });
-      this.beginSession();
-    } catch (error) {
-      this.setAuthNotice(error instanceof Error ? error.message : "登录失败");
-    }
+    this.beginSession(account);
   }
 
   private async createInitialAdmin(username: string, password: string, confirmPassword: string): Promise<void> {
@@ -900,109 +869,117 @@ class AppleBridge {
       this.setAuthNotice("两次输入的密码不一致");
       return;
     }
-    if (this.demo) {
-      markDemoAdminCreated(() => window.localStorage);
-      this.beginSession();
+    const normalizedUsername = username.trim();
+    if (normalizedUsername === "" || password === "") {
+      this.setAuthNotice("请填写管理员用户名和密码");
       return;
     }
     try {
-      const response = await jsonRequest("POST", "/api/v2/auth/initial-admin", { username, password, confirmPassword });
-      let result: unknown = null;
-      try {
-        result = await response.json();
-      } catch {
-        result = null;
-      }
-      if (responseCreatesSession(result)) {
-        this.beginSession();
+      const existing = readLocalAdministrator(() => window.localStorage);
+      if (existing !== null && this.authPreview !== "bootstrap") {
+        this.showLogin("本机管理员已存在，请登录。");
         return;
       }
-      this.showLogin("管理员已创建，请使用新账号登录。");
-    } catch (error) {
-      this.setAuthNotice(error instanceof Error ? error.message : "创建管理员失败");
+      const account: LocalAdministrator = {
+        username: normalizedUsername,
+        passwordHash: await passwordDigest(password),
+        permissions: { operate: true, maintenance: true }
+      };
+      window.localStorage.setItem(localAdminStorageKey, JSON.stringify(account));
+      this.beginSession(account);
+    } catch {
+      this.setAuthNotice("无法保存本机管理员");
     }
   }
 
   private async changePassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<void> {
+    if (!this.requirePermission("maintenance")) {
+      return;
+    }
     if (newPassword !== confirmPassword) {
       this.setAuthNotice("两次输入的新密码不一致");
       return;
     }
-    if (this.demo) {
-      this.setAuthNotice("演示模式未修改密码");
+    if (newPassword === "") {
+      this.setAuthNotice("新密码不能为空");
+      return;
+    }
+    const account = readLocalAdministrator(() => window.localStorage);
+    if (account === null || !this.signedIn || account.passwordHash !== await passwordDigest(currentPassword)) {
+      this.setAuthNotice("当前密码不正确");
       return;
     }
     try {
-      await jsonRequest("POST", "/api/v2/auth/password", { currentPassword, newPassword, confirmPassword });
+      account.passwordHash = await passwordDigest(newPassword);
+      window.localStorage.setItem(localAdminStorageKey, JSON.stringify(account));
       this.setAuthNotice("密码已修改");
-    } catch (error) {
-      this.setAuthNotice(error instanceof Error ? error.message : "修改密码失败");
+    } catch {
+      this.setAuthNotice("无法保存本地密码");
     }
   }
 
   private async saveSessionPolicy(idleTimeoutSeconds: number): Promise<void> {
+    if (!this.requirePermission("maintenance")) {
+      return;
+    }
     if (!Number.isInteger(idleTimeoutSeconds) || idleTimeoutSeconds < 60) {
       this.setAuthNotice("不活动退出时长至少为 60 秒");
       return;
     }
-    if (this.demo) {
-      this.setAuthNotice("演示模式已保留会话时长设置");
-      return;
-    }
     try {
-      await jsonRequest("PUT", "/api/v2/config/session", { idleTimeoutSeconds });
+      window.localStorage.setItem(localSettingsStorageKey, JSON.stringify({ idleTimeoutSeconds }));
+      this.refreshLocalSession();
       this.setAuthNotice("会话时长已保存");
-    } catch (error) {
-      this.setAuthNotice(error instanceof Error ? error.message : "保存会话时长失败");
+    } catch {
+      this.setAuthNotice("无法保存会话时长");
     }
   }
 
-  private beginSession(): void {
+  private beginSession(account: LocalAdministrator): void {
     this.endAuthenticationKeyboard();
     this.signedIn = true;
+    const now = Date.now();
+    const timeoutMilliseconds = readLocalSettings(() => window.localStorage).idleTimeoutSeconds * 1000;
+    this.session = { username: account.username, permissions: { ...account.permissions }, lastActivity: now, expiresAt: now + timeoutMilliseconds };
+    this.writeSession();
+    this.scheduleSessionExpiry();
     this.authPanel().hidden = true;
-    this.setHMIInteractive(true);
     this.setAuthNotice("");
-    if (this.demo) {
-      this.configured = true;
-      this.emitState();
-      return;
-    }
-    this.openSocket();
+    this.updateAccountControl();
+    this.emitPermissionChange();
+    this.renderPLCCandidates();
+    this.emitState();
   }
 
-  private async logout(): Promise<void> {
+  private logout(): void {
     this.endAuthenticationKeyboard();
-    if (!this.demo) {
-      this.pendingStartCommand.cancel("已退出登录，启动结果未知", 401, "unauthenticated");
-      try {
-        await fetch("/api/v2/auth/logout", {
-          method: "POST",
-          credentials: "same-origin",
-          cache: "no-store"
-        });
-      } finally {
-        this.endSession("已退出登录");
-      }
-      return;
-    }
-    this.hideAccount();
+    this.pendingStartCommand.cancel("已退出登录，启动结果未知", 401, "unauthenticated");
+    this.becomeGuest();
   }
 
-  private endSession(message: string): void {
+  private becomeGuest(): void {
     this.endAuthenticationKeyboard();
     this.signedIn = false;
-    this.configured = false;
-    this.closeSocket();
-    clearTransientRuntime(this.values, this.plcDevices);
-    this.plcState = "disconnected";
+    this.session = null;
+    if (this.sessionExpiryTimer !== null) {
+      window.clearTimeout(this.sessionExpiryTimer);
+      this.sessionExpiryTimer = null;
+    }
+    try {
+      window.sessionStorage.removeItem(localSessionStorageKey);
+    } catch {
+      // Session storage is optional for the frontend gate.
+    }
+    this.authPanel().hidden = true;
+    this.updateAccountControl();
+    this.emitPermissionChange();
     this.renderPLCCandidates();
-    this.showLogin(message);
+    this.emitState();
     this.deferProductionPolicy();
   }
 
   private openSocket(): void {
-    if (!this.signedIn || this.socket !== null) {
+    if (this.socket !== null) {
       return;
     }
     const socket = new WebSocket(websocketURL());
@@ -1022,7 +999,7 @@ class AppleBridge {
     socket.addEventListener("message", (event) => {
       this.handleSocketMessage(event.data);
     });
-    socket.addEventListener("close", (event) => {
+    socket.addEventListener("close", () => {
       if (this.socket !== socket) {
         return;
       }
@@ -1032,10 +1009,6 @@ class AppleBridge {
       clearTransientRuntime(this.values, this.plcDevices);
       this.plcState = "disconnected";
       this.renderPLCCandidates();
-      if (event.code === 4401) {
-        this.endSession("会话已过期，请重新登录");
-        return;
-      }
       this.setPLCStatus("本机服务连接中断");
       this.deferProductionPolicy();
       this.scheduleReconnect();
@@ -1054,7 +1027,7 @@ class AppleBridge {
   }
 
   private scheduleReconnect(): void {
-    if (!this.signedIn || this.reconnectTimer !== null) {
+    if (this.reconnectTimer !== null) {
       return;
     }
     const delay = this.reconnectDelay;
@@ -1063,6 +1036,107 @@ class AppleBridge {
       this.reconnectTimer = null;
       this.openSocket();
     }, delay);
+  }
+
+  private restoreLocalSession(): void {
+    let session: LocalSession | null = null;
+    try {
+      const raw = window.sessionStorage.getItem(localSessionStorageKey);
+      session = raw === null ? null : localSessionFrom(JSON.parse(raw));
+    } catch {
+      session = null;
+    }
+    const account = readLocalAdministrator(() => window.localStorage);
+    if (account === null || session === null || !localSessionIsActive(session) || session.username !== account.username ||
+      session.permissions.operate !== account.permissions.operate || session.permissions.maintenance !== account.permissions.maintenance) {
+      this.becomeGuest();
+      return;
+    }
+    this.signedIn = true;
+    this.session = session;
+    this.scheduleSessionExpiry();
+    this.updateAccountControl();
+    this.emitPermissionChange();
+  }
+
+  private writeSession(): void {
+    if (this.session === null) {
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(localSessionStorageKey, JSON.stringify(this.session));
+    } catch {
+      // A kiosk without session storage still has the current in-memory session.
+    }
+  }
+
+  private refreshLocalSession(): void {
+    if (this.session === null) {
+      return;
+    }
+    const now = Date.now();
+    this.session.lastActivity = now;
+    this.session.expiresAt = now + readLocalSettings(() => window.localStorage).idleTimeoutSeconds * 1000;
+    this.writeSession();
+    this.scheduleSessionExpiry();
+  }
+
+  private scheduleSessionExpiry(): void {
+    if (this.sessionExpiryTimer !== null) {
+      window.clearTimeout(this.sessionExpiryTimer);
+      this.sessionExpiryTimer = null;
+    }
+    if (this.session === null) {
+      return;
+    }
+    const delay = Math.max(0, this.session.expiresAt - Date.now());
+    this.sessionExpiryTimer = window.setTimeout(() => {
+      if (!localSessionIsActive(this.session)) {
+        this.becomeGuest();
+        return;
+      }
+      this.scheduleSessionExpiry();
+    }, delay + 20);
+  }
+
+  private toggleAccountSession(): void {
+    if (this.signedIn) {
+      this.logout();
+      return;
+    }
+    this.showAuthentication(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+  }
+
+  private hasPermission(permission: "operate" | "maintenance"): boolean {
+    return this.signedIn && this.session !== null && this.session.permissions[permission];
+  }
+
+  private requirePermission(permission: "operate" | "maintenance"): boolean {
+    if (this.hasPermission(permission)) {
+      return true;
+    }
+    this.showAuthentication(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+    return false;
+  }
+
+  private updateAccountControl(): void {
+    const operator = document.querySelector<HTMLElement>("#operatorName")!;
+    const label = operator.parentElement?.querySelector<HTMLElement>(".meta-cn") ?? null;
+    operator.textContent = this.signedIn && this.session !== null ? this.session.username : "登录";
+    operator.setAttribute("aria-label", this.signedIn ? "点击退出本机管理员" : "点击登录本机管理员");
+    if (label !== null) {
+      label.textContent = this.signedIn ? "管理员" : "登录";
+    }
+  }
+
+  private emitPermissionChange(): void {
+    window.dispatchEvent(new CustomEvent("block-hmi-auth-changed", {
+      detail: {
+        signedIn: this.signedIn,
+        operate: this.hasPermission("operate"),
+        maintenance: this.hasPermission("maintenance")
+      }
+    }));
   }
 
   private handleSocketMessage(raw: unknown): void {
@@ -1138,9 +1212,6 @@ class AppleBridge {
   }
 
   private getState(): Promise<{ state: LegacyState }> {
-    if (!this.demo && !this.signedIn) {
-      return Promise.reject(new HMIAPIError("请登录后连接设备", 401, "unauthenticated"));
-    }
     if (!this.demo && !this.canSendRuntime()) {
       return Promise.reject(new HMIAPIError("本机服务正在连接", 503, "runtime_unavailable"));
     }
@@ -1195,6 +1266,9 @@ class AppleBridge {
   }
 
   private updateSettings(settings: Record<string, unknown>): Promise<{ state: LegacyState }> {
+    if (!this.requirePermission("maintenance")) {
+      return Promise.reject(new HMIAPIError("请登录管理员后修改维护参数", 403, "permission_denied"));
+    }
     if (!this.demo) {
       return Promise.reject(new HMIAPIError("当前 v2 未提供维护参数写入", 501, "not_supported"));
     }
@@ -1209,6 +1283,9 @@ class AppleBridge {
   }
 
   private sendCommand(command: string, payload: Record<string, unknown> = {}): Promise<{ state: LegacyState }> {
+    if (!this.requirePermission("operate")) {
+      return Promise.reject(new HMIAPIError("请登录管理员后执行现场操作", 403, "permission_denied"));
+    }
     if (this.demo) {
       return Promise.resolve({ state: this.applyDemoCommand(command, payload) });
     }
@@ -1233,6 +1310,9 @@ class AppleBridge {
   }
 
   private acknowledgeAlarm(alarmID: number): Promise<{ state: LegacyState }> {
+    if (!this.requirePermission("operate")) {
+      return Promise.reject(new HMIAPIError("请登录管理员后确认报警", 403, "permission_denied"));
+    }
     if (!this.demo) {
       return Promise.reject(new HMIAPIError("当前 v2 不支持报警确认", 501, "not_supported"));
     }
@@ -1275,6 +1355,9 @@ class AppleBridge {
   }
 
   private sendPLCScan(): void {
+    if (!this.requirePermission("maintenance")) {
+      return;
+    }
     if (this.demo) {
       this.setPLCStatus("演示模式不扫描 PLC");
       return;
@@ -1283,6 +1366,9 @@ class AppleBridge {
   }
 
   private sendPLCConnect(deviceID: string): void {
+    if (!this.requirePermission("maintenance")) {
+      return;
+    }
     if (this.demo) {
       return;
     }
@@ -1290,6 +1376,9 @@ class AppleBridge {
   }
 
   private sendPLCDisconnect(): void {
+    if (!this.requirePermission("maintenance")) {
+      return;
+    }
     if (this.demo) {
       return;
     }
@@ -1297,6 +1386,9 @@ class AppleBridge {
   }
 
   private sendPointsSnapshotGet(): void {
+    if (!this.requirePermission("maintenance")) {
+      return;
+    }
     if (this.demo) {
       this.emitState();
       return;
@@ -1325,9 +1417,9 @@ class AppleBridge {
     const disconnect = document.querySelector<HTMLButtonElement>("#plc-disconnect-button")!;
     const snapshot = document.querySelector<HTMLButtonElement>("#snapshot-button")!;
     const active = this.canSendRuntime();
-    scan.disabled = !active;
-    snapshot.disabled = !active;
-    disconnect.disabled = !active || this.plcState === "disconnected";
+    scan.disabled = this.signedIn && !active;
+    snapshot.disabled = this.signedIn && !active;
+    disconnect.disabled = this.signedIn && (!active || this.plcState === "disconnected" || this.plcState === "unconfigured");
     list.replaceChildren();
     if (this.demo) {
       const item = document.createElement("li");
@@ -1348,7 +1440,7 @@ class AppleBridge {
       const connect = document.createElement("button");
       connect.type = "button";
       connect.textContent = "连接";
-      connect.disabled = !active || device.state === "connected" || device.state === "connecting";
+      connect.disabled = this.signedIn && (!active || device.state === "connected" || device.state === "connecting");
       connect.addEventListener("click", () => this.sendPLCConnect(device.deviceId));
       item.append(detail, document.createTextNode(" "), connect);
       list.append(item);
@@ -1367,18 +1459,18 @@ class AppleBridge {
       const start = document.querySelector<HTMLButtonElement>('[data-action="start"]');
       const startEnabled = this.canSendRuntime();
       document.querySelectorAll<HTMLButtonElement>(".control-button").forEach((button) => {
-        button.disabled = button !== start || !startEnabled;
+        button.dataset.backendUnavailable = button !== start || !startEnabled ? "true" : "false";
       });
       const mode = document.querySelector<HTMLButtonElement>("#modeToggle");
       if (mode !== null) {
-        mode.disabled = true;
+        mode.dataset.backendUnavailable = "true";
       }
       const save = document.querySelector<HTMLButtonElement>(".save-button");
       if (save !== null) {
-        save.disabled = true;
+        save.dataset.backendUnavailable = "true";
       }
       document.querySelectorAll<HTMLButtonElement>(".ack-button").forEach((button) => {
-        button.disabled = true;
+        button.dataset.backendUnavailable = "true";
       });
       const gap = document.querySelector<HTMLElement>("#v2-data-gap");
       if (gap !== null) {
@@ -1399,6 +1491,7 @@ function positiveInteger(value: unknown, fallback: number): number {
 
 function plcStateText(state: PLCDevice["state"], deviceID?: string): string {
   const text: Record<PLCDevice["state"], string> = {
+    unconfigured: "PLC 尚未配置",
     disconnected: "PLC 未连接",
     connecting: "正在连接 PLC",
     connected: "PLC 已连接",

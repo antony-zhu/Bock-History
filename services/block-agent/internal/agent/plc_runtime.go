@@ -13,10 +13,6 @@ import (
 )
 
 func (r *Runtime) handlePLCScan(client *wsClient, raw []byte) {
-	if !client.canOperate() {
-		client.enqueue(errorEnvelope(r.now, "", "FORBIDDEN", "operator permission is required"), false)
-		return
-	}
 	var request struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Type            string `json:"type"`
@@ -36,11 +32,6 @@ func (r *Runtime) handlePLCScan(client *wsClient, raw []byte) {
 		client.enqueue(errorEnvelope(r.now, request.RequestID, "INVALID_REQUEST", err.Error()), false)
 		return
 	}
-	if err := r.recordActivity(client); err != nil {
-		client.enqueue(errorEnvelope(r.now, request.RequestID, "UNAUTHENTICATED", err.Error()), true)
-		return
-	}
-
 	ctx, cancel, selected, started := r.beginScan()
 	if !started {
 		client.enqueue(errorEnvelope(r.now, request.RequestID, "BUSY", "a PLC scan is already in progress"), false)
@@ -61,10 +52,6 @@ func (r *Runtime) handlePLCScan(client *wsClient, raw []byte) {
 }
 
 func (r *Runtime) handlePLCConnect(client *wsClient, raw []byte) {
-	if !client.canOperate() {
-		client.enqueue(errorEnvelope(r.now, "", "FORBIDDEN", "operator permission is required"), false)
-		return
-	}
 	var request struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Type            string `json:"type"`
@@ -89,16 +76,16 @@ func (r *Runtime) handlePLCConnect(client *wsClient, raw []byte) {
 		client.enqueue(errorEnvelope(r.now, request.RequestID, "PLC_NOT_FOUND", err.Error()), false)
 		return
 	}
-	if err := r.recordActivity(client); err != nil {
-		client.enqueue(errorEnvelope(r.now, request.RequestID, "UNAUTHENTICATED", err.Error()), true)
-		return
-	}
+	r.connectPLC(client, request.RequestID, endpoint, true)
+}
 
+func (r *Runtime) connectPLC(client *wsClient, requestID string, endpoint plcEndpoint, persistOnSuccess bool) {
+	deviceID := endpoint.DeviceID()
 	r.mu.Lock()
 	session := r.session
 	if r.owner != client || session == nil {
 		r.mu.Unlock()
-		client.enqueue(errorEnvelope(r.now, request.RequestID, "PLC_NOT_CONNECTED", "runtime is not configured"), false)
+		client.enqueue(errorEnvelope(r.now, requestID, "PLC_NOT_CONNECTED", "runtime is not configured"), false)
 		return
 	}
 	oldWorker, oldCancel := detachWorkerLocked(session)
@@ -110,9 +97,9 @@ func (r *Runtime) handlePLCConnect(client *wsClient, raw []byte) {
 	publish := func(values map[string]pointstore.PointValue) error {
 		return r.updateFromWorker(session, worker, values)
 	}
-	worker, err = r.newPLCWorker(session.config, endpoint, publish)
+	worker, err := r.newPLCWorker(session.config, endpoint, publish)
 	if err != nil {
-		client.enqueue(plcConnectResultEnvelope(r.now, request.RequestID, request.DeviceID, false, "", "INTERNAL_ERROR", err.Error()), false)
+		client.enqueue(plcConnectResultEnvelope(r.now, requestID, deviceID, false, "", "INTERNAL_ERROR", err.Error()), false)
 		return
 	}
 	worker.SetDisconnectHandler(func() { r.notifyPLCDisconnected(session, worker) })
@@ -126,20 +113,16 @@ func (r *Runtime) handlePLCConnect(client *wsClient, raw []byte) {
 	}
 	session.worker = worker
 	session.cancel = workerCancel
-	session.deviceID = request.DeviceID
+	session.deviceID = deviceID
 	session.disconnecting = false
 	session.broadcasts = false
-	client.enqueue(plcConnectionEnvelope(r.now, request.DeviceID, "connecting"), false)
+	client.enqueue(plcConnectionEnvelope(r.now, deviceID, "connecting"), false)
 	r.mu.Unlock()
 	go worker.Run(workerContext)
-	go r.finishPLCConnect(client, session, worker, request.RequestID, request.DeviceID)
+	go r.finishPLCConnect(client, session, worker, requestID, deviceID, endpoint, persistOnSuccess)
 }
 
 func (r *Runtime) handlePLCDisconnect(client *wsClient, raw []byte) {
-	if !client.canOperate() {
-		client.enqueue(errorEnvelope(r.now, "", "FORBIDDEN", "operator permission is required"), false)
-		return
-	}
 	var request struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Type            string `json:"type"`
@@ -158,14 +141,14 @@ func (r *Runtime) handlePLCDisconnect(client *wsClient, raw []byte) {
 		client.enqueue(errorEnvelope(r.now, request.RequestID, "INVALID_REQUEST", err.Error()), false)
 		return
 	}
-	if err := r.recordActivity(client); err != nil {
-		client.enqueue(errorEnvelope(r.now, request.RequestID, "UNAUTHENTICATED", err.Error()), true)
-		return
-	}
 	r.mu.Lock()
 	session := r.session
 	if r.owner != client || session == nil {
 		r.mu.Unlock()
+		if err := clearPLCEndpoint(r.plcEndpointPath); err != nil {
+			client.enqueue(errorEnvelope(r.now, request.RequestID, "PLC_ENDPOINT_CLEAR_FAILED", err.Error()), false)
+			return
+		}
 		client.enqueue(plcDisconnectResultEnvelope(r.now, request.RequestID, true), false)
 		return
 	}
@@ -181,10 +164,14 @@ func (r *Runtime) handlePLCDisconnect(client *wsClient, raw []byte) {
 		detachWorkerLocked(session)
 	}
 	r.mu.Unlock()
+	if err := clearPLCEndpoint(r.plcEndpointPath); err != nil {
+		client.enqueue(errorEnvelope(r.now, request.RequestID, "PLC_ENDPOINT_CLEAR_FAILED", err.Error()), false)
+		return
+	}
 	client.enqueue(plcDisconnectResultEnvelope(r.now, request.RequestID, true), false)
 }
 
-func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, worker *plcworker.Worker, requestID, deviceID string) {
+func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, worker *plcworker.Worker, requestID, deviceID string, endpoint plcEndpoint, persistOnSuccess bool) {
 	readyErr, ok := <-worker.Ready()
 	if !ok {
 		readyErr = context.Canceled
@@ -193,6 +180,10 @@ func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, wo
 	if r.owner != client || r.session != session || session.worker != worker || session.disconnecting {
 		r.mu.Unlock()
 		return
+	}
+	persistErr := error(nil)
+	if readyErr == nil && persistOnSuccess {
+		persistErr = savePLCEndpoint(r.plcEndpointPath, endpoint)
 	}
 	state := "connected"
 	if readyErr != nil {
@@ -206,6 +197,8 @@ func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, wo
 	}
 	if readyErr != nil {
 		client.enqueue(plcConnectResultEnvelope(r.now, requestID, deviceID, false, state, "PLC_READ_FAILED", "initial PLC read failed"), false)
+	} else if persistErr != nil {
+		client.enqueue(plcConnectResultEnvelope(r.now, requestID, deviceID, false, state, "PLC_ENDPOINT_SAVE_FAILED", persistErr.Error()), false)
 	} else {
 		client.enqueue(plcConnectResultEnvelope(r.now, requestID, deviceID, true, state, "", ""), false)
 	}
@@ -299,14 +292,6 @@ func stopWorker(worker *plcworker.Worker, cancel context.CancelFunc) {
 	if worker != nil {
 		<-worker.Done()
 	}
-}
-
-func (r *Runtime) recordActivity(client *wsClient) error {
-	if r.auth == nil || client.token == "" {
-		return nil
-	}
-	_, err := r.auth.Activity(client.token)
-	return err
 }
 
 func validateRequestEnvelope(protocol, timestamp string) error {

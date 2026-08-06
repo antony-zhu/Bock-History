@@ -3816,35 +3816,7 @@
         </form>
       </section>
 
-      <section id="authAccount" hidden>
-        <div class="auth-account-head">
-          <strong>本机账户</strong>
-          <button class="auth-close" id="auth-close" type="button">返回控制台</button>
-        </div>
-        <form class="auth-form" id="password-form">
-          <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="当前密码"></label>
-          <label>新密码<input name="newPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="新密码"></label>
-          <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认新密码"></label>
-          <button type="submit">修改密码</button>
-        </form>
-        <form class="auth-form auth-policy" id="session-policy-form">
-          <label>不活动退出（秒）<input name="idleTimeoutSeconds" type="number" value="300" min="60" step="60" inputmode="numeric" required data-soft-keyboard="numeric" data-soft-label="不活动退出秒数"></label>
-          <button type="submit">保存会话时长</button>
-        </form>
-        <section class="plc-control-sheet" id="plc-control-sheet" aria-labelledby="plc-title">
-          <div class="auth-account-head">
-            <strong id="plc-title">PLC 连接</strong>
-            <span id="plc-status" role="status">PLC 未连接</span>
-          </div>
-          <div class="plc-actions">
-            <button id="plc-scan-button" type="button" disabled>扫描 PLC</button>
-            <button id="plc-disconnect-button" type="button" disabled>断开 PLC</button>
-            <button id="snapshot-button" type="button" disabled>刷新当前状态</button>
-          </div>
-          <ul id="plc-candidates" aria-live="polite"><li>尚未扫描 PLC</li></ul>
-        </section>
-        <button class="auth-logout" id="logout-button" type="button">退出登录</button>
-      </section>
+
     </div>
   </section>
 
@@ -4110,6 +4082,33 @@
                 <button class="save-button" type="submit">保存参数</button>
               </div>
             </form>
+          <section id="authAccount">
+            <div class="auth-account-head">
+              <strong>本机账户</strong>
+            </div>
+            <form class="auth-form" id="password-form">
+              <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="当前密码"></label>
+              <label>新密码<input name="newPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="新密码"></label>
+              <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认新密码"></label>
+              <button type="submit">修改密码</button>
+            </form>
+            <form class="auth-form auth-policy" id="session-policy-form">
+              <label>不活动退出（秒）<input name="idleTimeoutSeconds" type="number" value="300" min="60" step="60" inputmode="numeric" required data-soft-keyboard="numeric" data-soft-label="不活动退出秒数"></label>
+              <button type="submit">保存会话时长</button>
+            </form>
+            <section class="plc-control-sheet" id="plc-control-sheet" aria-labelledby="plc-title">
+              <div class="auth-account-head">
+                <strong id="plc-title">PLC 连接</strong>
+                <span id="plc-status" role="status">PLC 未连接</span>
+              </div>
+              <div class="plc-actions">
+                <button id="plc-scan-button" type="button" disabled>扫描 PLC</button>
+                <button id="plc-disconnect-button" type="button" disabled>断开 PLC</button>
+                <button id="snapshot-button" type="button" disabled>刷新当前状态</button>
+              </div>
+              <ul id="plc-candidates" aria-live="polite"><li>尚未扫描 PLC</li></ul>
+            </section>
+          </section>
           </div>
         </section>
 
@@ -4334,7 +4333,7 @@
       const themeChoices = $$("[data-theme-option]", themeMenu);
       const themeColor = $("#themeColor");
       const backend = window.HMIBackend || null;
-      const operatorName = $("#operatorName").textContent.trim() || "OPERATOR-01";
+      let frontendPermissions = { operate: false, maintenance: false };
       const performanceMode = document.documentElement.dataset.performance === "low";
       const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
       let toastTimer = 0;
@@ -4444,18 +4443,41 @@
       ];
 
       function backendContext() {
-        return { operator: operatorName };
+        return { operator: $("#operatorName").textContent.trim() || "local" };
+      }
+
+      function syncFrontendPermissions() {
+        const auth = window.HMIFrontendAuth;
+        frontendPermissions = auth ? auth.permissions() : { operate: false, maintenance: false };
+        updateControlAvailability();
+      }
+
+      function requireFrontendPermission(permission) {
+        const auth = window.HMIFrontendAuth;
+        if (auth && auth.requirePermission(permission)) return true;
+        showToast("请登录本地管理员后继续操作", "warning");
+        return false;
       }
 
       function updateControlAvailability() {
         const unavailable = !backendConnected || backendWriteInFlight;
         $$(".control-button").forEach(button => {
-          button.disabled = unavailable;
+          const blocked = unavailable || button.dataset.backendUnavailable === "true";
+          button.disabled = frontendPermissions.operate && blocked;
+          button.setAttribute("aria-disabled", String(!frontendPermissions.operate || blocked));
         });
-        $("#modeToggle").disabled = unavailable;
-        $(".save-button", $("#settingsForm")).disabled = unavailable;
+        const mode = $("#modeToggle");
+        const modeBlocked = unavailable || mode.dataset.backendUnavailable === "true";
+        mode.disabled = frontendPermissions.operate && modeBlocked;
+        mode.setAttribute("aria-disabled", String(!frontendPermissions.operate || modeBlocked));
+        const save = $(".save-button", $("#settingsForm"));
+        const saveBlocked = unavailable || save.dataset.backendUnavailable === "true";
+        save.disabled = frontendPermissions.maintenance && saveBlocked;
+        save.setAttribute("aria-disabled", String(!frontendPermissions.maintenance || saveBlocked));
         $$(".ack-button").forEach(button => {
-          button.disabled = unavailable || button.dataset.acknowledged === "true";
+          const blocked = unavailable || button.dataset.backendUnavailable === "true" || button.dataset.acknowledged === "true";
+          button.disabled = frontendPermissions.operate && blocked;
+          button.setAttribute("aria-disabled", String(!frontendPermissions.operate || blocked));
         });
         root.dataset.backendBusy = backendWriteInFlight ? "true" : "false";
       }
@@ -4552,6 +4574,7 @@
       }
 
       async function runBackendMutation(factory, options = {}) {
+        if (options.permission && !requireFrontendPermission(options.permission)) return false;
         if (!backendConnected || !backend) {
           showToast("后台未连接，操作没有发送", "danger");
           return false;
@@ -4732,7 +4755,7 @@
             <span class="log-copy">${escapeHTML(item.code)}-${item.level === "danger" ? "报警" : item.level === "warning" ? "警示" : "提示"}—${escapeHTML(item.text)}</span>
             <span>
               <time class="log-time">${escapeHTML(item.time || displayAPITime(item.occurredAt, false))}</time>
-              <button class="ack-button" type="button" data-acknowledged="${String(Boolean(item.acknowledged))}" ${item.acknowledged || !backendConnected || backendWriteInFlight ? "disabled" : ""}>
+              <button class="ack-button" type="button" data-acknowledged="${String(Boolean(item.acknowledged))}" ${item.acknowledged || (frontendPermissions.operate && (!backendConnected || backendWriteInFlight)) ? "disabled" : ""}>
                 ${item.acknowledged ? "已确认" : "确认"}
               </button>
             </span>
@@ -4760,6 +4783,7 @@
       }
 
       function switchPage(name) {
+        if (name === "maintenance" && !requireFrontendPermission("maintenance")) return false;
         const activeNav = $(".nav-button.active");
         if (
           activeNav &&
@@ -4782,6 +4806,7 @@
           }
         });
         $("#screenLabel").textContent = pageNames[name];
+        return true;
       }
 
       function pulseButton(button) {
@@ -4798,6 +4823,7 @@
       }
 
       async function requestModeChange() {
+        if (!requireFrontendPermission("operate")) return false;
         const nextMode = state.mode === "auto" ? "manual" : "auto";
         return runBackendMutation(
           () => backend.sendCommand("set_mode", {
@@ -4809,6 +4835,7 @@
       }
 
       async function handleAction(button) {
+        if (!requireFrontendPermission("operate")) return false;
         const action = button.dataset.action;
         pulseButton(button);
 
@@ -4933,6 +4960,7 @@
 
       $("#settingsForm").addEventListener("submit", async event => {
         event.preventDefault();
+        if (!requireFrontendPermission("maintenance")) return;
         if (
           window.HMISoftKeyboard &&
           !window.HMISoftKeyboard.validateForm(event.currentTarget)
@@ -4972,12 +5000,13 @@
       $("#alarmEvents").addEventListener("click", async event => {
         const button = closestElement(event.target, ".ack-button");
         if (!button || button.disabled) return;
+        if (!requireFrontendPermission("operate")) return;
         const row = closestElement(button, "[data-alarm-id]");
         const item = state.alarms.find(alarm => alarm.id === Number(row.dataset.alarmId));
         if (!item) return;
         await runBackendMutation(
           () => backend.acknowledgeAlarm(item.id, {
-            operator: operatorName,
+            operator: $("#operatorName").textContent.trim() || "local",
             expectedRevision: state.revision
           }),
           { pendingMessage: `正在确认报警 ${item.code}…` }
@@ -5073,6 +5102,8 @@
       fitStage();
       updateDate();
       window.setInterval(updateDate, 1000);
+      window.addEventListener("block-hmi-auth-changed", syncFrontendPermissions);
+      window.BlockHMIReady.then(syncFrontendPermissions);
       renderAll();
       refreshBackendState({ initial: true, forceSettings: true }).then(() => {
         scheduleBackendRefresh(backendConnected ? 2000 : 5000);

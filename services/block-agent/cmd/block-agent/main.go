@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -57,18 +58,14 @@ func main() {
 		log.Fatalf("open Block local database: %v", err)
 	}
 	defer store.Close()
-	var runtime *agentapp.Runtime
-	authService, err := auth.NewService(store, time.Now, func(auth.Session) {
-		if runtime != nil {
-			runtime.StopSession()
-		}
-	})
+	authService, err := auth.NewService(store, time.Now, nil)
 	if err != nil {
 		log.Fatalf("initialize Block authentication: %v", err)
 	}
 	defer authService.Close()
-	runtime, err = agentapp.NewLocalRuntimeWithOptions(*localHTTPAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
-		AlarmStore: store,
+	runtime, err := agentapp.NewLocalRuntimeWithOptions(*localHTTPAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
+		AlarmStore:      store,
+		PLCEndpointPath: filepath.Join(filepath.Dir(*stateDatabase), "plc-endpoint.json"),
 		MQTT: agentapp.MQTTOptions{
 			Enabled: *mqttsV2Enabled,
 			Connection: mqttv2.ConnectionConfig{

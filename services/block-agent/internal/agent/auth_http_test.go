@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -26,17 +25,12 @@ func TestLocalAuthBootstrapLoginActivityLogoutAndStaticHMI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	var runtime *Runtime
-	authService, err := auth.NewService(store, time.Now, func(auth.Session) {
-		if runtime != nil {
-			runtime.StopSession()
-		}
-	})
+	authService, err := auth.NewService(store, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer authService.Close()
-	runtime, err = NewLocalRuntimeWithServices("127.0.0.1:0", time.Now, nil, fstest.MapFS{
+	runtime, err := NewLocalRuntimeWithServices("127.0.0.1:0", time.Now, nil, fstest.MapFS{
 		"index.html":    {Data: []byte("<main>Block HMI</main>")},
 		"assets/app.js": {Data: []byte("console.log('block')")},
 	}, authService)
@@ -149,149 +143,72 @@ func TestLocalAuthBootstrapLoginActivityLogoutAndStaticHMI(t *testing.T) {
 	response.Body.Close()
 }
 
-func TestAuthStatusMatchesContractAndDoesNotRefreshSession(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	clock := func() time.Time { return now }
-	store, err := storage.Open(filepath.Join(t.TempDir(), "block.db"), clock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	authService, err := auth.NewService(store, clock, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer authService.Close()
-	runtime, err := NewLocalRuntimeWithServices("127.0.0.1:0", clock, nil, nil, authService)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	status := func(method string, cookie *http.Cookie) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(method, "http://127.0.0.1/api/v2/auth/status", nil)
-		if cookie != nil {
-			request.AddCookie(cookie)
-		}
-		response := httptest.NewRecorder()
-		runtime.server.Handler.ServeHTTP(response, request)
-		return response
-	}
-
-	assertAuthStatus(t, status(http.MethodGet, nil), true, false)
-
-	bootstrapRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/v2/auth/initial-admin", bytes.NewBufferString(`{"username":"admin","password":"one","confirmPassword":"one"}`))
-	bootstrapRequest.Header.Set("Content-Type", "application/json")
-	bootstrapResponse := httptest.NewRecorder()
-	runtime.server.Handler.ServeHTTP(bootstrapResponse, bootstrapRequest)
-	if bootstrapResponse.Code != http.StatusCreated {
-		t.Fatalf("bootstrap status = %d, body=%s", bootstrapResponse.Code, bootstrapResponse.Body.String())
-	}
-	cookies := bootstrapResponse.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != sessionCookieName || cookies[0].Value == "" {
-		t.Fatalf("bootstrap cookies = %#v", cookies)
-	}
-	sessionCookie := cookies[0]
-
-	assertAuthStatus(t, status(http.MethodGet, nil), false, false)
-	assertAuthStatus(t, status(http.MethodGet, sessionCookie), false, true)
-	original, err := authService.Session(sessionCookie.Value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(auth.DefaultIdleTimeout - time.Second)
-	assertAuthStatus(t, status(http.MethodGet, sessionCookie), false, true)
-	current, err := authService.Session(sessionCookie.Value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !current.ExpiresAt.Equal(original.ExpiresAt) {
-		t.Fatalf("status extended expiry to %s, want %s", current.ExpiresAt, original.ExpiresAt)
-	}
-
-	invalidCookie := *sessionCookie
-	invalidCookie.Value = "invalid"
-	assertAuthStatus(t, status(http.MethodGet, &invalidCookie), false, false)
-	now = original.ExpiresAt
-	assertAuthStatus(t, status(http.MethodGet, sessionCookie), false, false)
-
-	methodNotAllowed := status(http.MethodPost, nil)
-	if methodNotAllowed.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST status = %d", methodNotAllowed.Code)
-	}
-	if allow := methodNotAllowed.Header().Get("Allow"); allow != http.MethodGet {
-		t.Fatalf("POST Allow = %q, want %q", allow, http.MethodGet)
-	}
-}
-
-func TestAuthStatusReturnsInternalServerErrorWhenStoreIsClosed(t *testing.T) {
+func TestWebSocketAllowsGuestRuntimeAndRejectsForeignOrigin(t *testing.T) {
 	store, err := storage.Open(filepath.Join(t.TempDir(), "block.db"), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer store.Close()
 	authService, err := auth.NewService(store, time.Now, nil)
 	if err != nil {
-		_ = store.Close()
 		t.Fatal(err)
 	}
 	defer authService.Close()
 	runtime, err := NewLocalRuntimeWithServices("127.0.0.1:0", time.Now, nil, nil, authService)
 	if err != nil {
-		_ = store.Close()
 		t.Fatal(err)
 	}
-	if err := store.Close(); err != nil {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.ServeListener(ctx, listener) }()
+	defer stopRuntime(t, cancel, done)
 
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v2/auth/status", nil)
-	response := httptest.NewRecorder()
-	runtime.server.Handler.ServeHTTP(response, request)
-	if response.Code != http.StatusInternalServerError {
-		t.Fatalf("status with closed store = %d, body=%s", response.Code, response.Body.String())
+	host := listener.Addr().String()
+	guestConfig, err := websocket.NewConfig("ws://"+host+"/ws", "http://"+host)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-store" {
-		t.Fatalf("status error Cache-Control = %q", cacheControl)
+	guest, err := websocket.DialConfig(guestConfig)
+	if err != nil {
+		t.Fatalf("anonymous local HMI websocket: %v", err)
 	}
-}
+	defer guest.Close()
+	configure(t, guest)
+	if configured := receive(t, guest); configured["type"] != "runtime.configured" {
+		t.Fatalf("guest runtime configure = %#v", configured)
+	}
+	send(t, guest, map[string]any{"type": "points.snapshot.get"})
+	if snapshot := receive(t, guest); snapshot["type"] != "points.snapshot" {
+		t.Fatalf("guest snapshot = %#v", snapshot)
+	}
+	send(t, guest, map[string]any{"type": "point.command", "requestId": "guest-point", "pointId": "machine.startCommand", "action": "pulse"})
+	if pointResult := receive(t, guest); errorCode(t, pointResult) != "PLC_NOT_CONNECTED" {
+		t.Fatalf("guest point command must reach point validation, got %#v", pointResult)
+	}
+	send(t, guest, map[string]any{"type": "plc.disconnect", "requestId": "guest-disconnect"})
+	if disconnectResult := receive(t, guest); disconnectResult["type"] != "plc.disconnect.result" || disconnectResult["success"] != true {
+		t.Fatalf("guest PLC maintenance message = %#v", disconnectResult)
+	}
 
-func assertAuthStatus(t *testing.T, response *httptest.ResponseRecorder, wantBootstrapRequired, wantAuthenticated bool) {
-	t.Helper()
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	response, err := http.Get("http://" + host + "/api/v2/auth/status")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-store" {
-		t.Fatalf("Cache-Control = %q, want no-store", cacheControl)
+	response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("retired auth status route = %d, want 404", response.StatusCode)
 	}
-	if cookies := response.Header().Values("Set-Cookie"); len(cookies) != 0 {
-		t.Fatalf("status unexpectedly set cookies: %#v", cookies)
+
+	foreignConfig, err := websocket.NewConfig("ws://"+host+"/ws", "http://example.invalid")
+	if err != nil {
+		t.Fatal(err)
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil {
-		t.Fatalf("decode status response: %v", err)
-	}
-	if len(fields) != 2 {
-		t.Fatalf("status fields = %#v, want exactly bootstrapRequired and authenticated", fields)
-	}
-	bootstrap, ok := fields["bootstrapRequired"]
-	if !ok {
-		t.Fatalf("status fields = %#v, bootstrapRequired is missing", fields)
-	}
-	authenticated, ok := fields["authenticated"]
-	if !ok {
-		t.Fatalf("status fields = %#v, authenticated is missing", fields)
-	}
-	var gotBootstrapRequired, gotAuthenticated bool
-	if err := json.Unmarshal(bootstrap, &gotBootstrapRequired); err != nil {
-		t.Fatalf("bootstrapRequired is not a boolean: %s", bootstrap)
-	}
-	if err := json.Unmarshal(authenticated, &gotAuthenticated); err != nil {
-		t.Fatalf("authenticated is not a boolean: %s", authenticated)
-	}
-	if gotBootstrapRequired && gotAuthenticated {
-		t.Fatal("status returned bootstrapRequired=true and authenticated=true")
-	}
-	if gotBootstrapRequired != wantBootstrapRequired || gotAuthenticated != wantAuthenticated {
-		t.Fatalf("status = bootstrapRequired=%t authenticated=%t, want bootstrapRequired=%t authenticated=%t", gotBootstrapRequired, gotAuthenticated, wantBootstrapRequired, wantAuthenticated)
+	if _, err := websocket.DialConfig(foreignConfig); err == nil {
+		t.Fatal("foreign WebSocket Origin was accepted")
 	}
 }
 

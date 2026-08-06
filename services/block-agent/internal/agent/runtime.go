@@ -30,15 +30,16 @@ const (
 )
 
 type Runtime struct {
-	address string
-	now     func() time.Time
-	store   *pointstore.Store
-	server  *http.Server
-	factory plcworker.Factory
-	auth    *auth.Service
-	mqtt    MQTTOptions
-	alarms  *alarmhistory.Service
-	alarmID atomic.Uint64
+	address         string
+	now             func() time.Time
+	store           *pointstore.Store
+	server          *http.Server
+	factory         plcworker.Factory
+	auth            *auth.Service
+	mqtt            MQTTOptions
+	alarms          *alarmhistory.Service
+	plcEndpointPath string
+	alarmID         atomic.Uint64
 
 	mu         sync.Mutex
 	owner      *wsClient
@@ -67,8 +68,9 @@ type MQTTOptions struct {
 }
 
 type RuntimeOptions struct {
-	AlarmStore alarmhistory.Store
-	MQTT       MQTTOptions
+	AlarmStore      alarmhistory.Store
+	MQTT            MQTTOptions
+	PLCEndpointPath string
 }
 
 // NewLocalRuntime creates the empty local runtime. It performs no PLC, MQTT
@@ -101,13 +103,15 @@ func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory pl
 	if now == nil {
 		now = time.Now
 	}
-	runtime := &Runtime{address: address, now: now, store: pointstore.New(), factory: factory, auth: authService, mqtt: options.MQTT}
+	runtime := &Runtime{
+		address: address, now: now, store: pointstore.New(), factory: factory, auth: authService,
+		mqtt: options.MQTT, plcEndpointPath: options.PLCEndpointPath,
+	}
 	if options.AlarmStore != nil {
 		runtime.alarms = alarmhistory.New(options.AlarmStore, runtimeAlarmNotifier{runtime: runtime})
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", runtime.health)
-	mux.HandleFunc("/api/v2/auth/status", runtime.authStatus)
 	mux.HandleFunc("/api/v2/auth/initial-admin", runtime.bootstrap)
 	mux.HandleFunc("/api/v2/auth/login", runtime.login)
 	mux.HandleFunc("/api/v2/auth/activity", runtime.activity)
@@ -339,6 +343,10 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	if err != nil {
 		return err
 	}
+	savedEndpoint, hasSavedEndpoint, err := loadPLCEndpoint(r.plcEndpointPath)
+	if err != nil {
+		return fmt.Errorf("load saved PLC endpoint: %w", err)
+	}
 	mqttSession, mqttContext, mqttCancel, err := r.newMQTTSession()
 	if err != nil {
 		return err
@@ -361,14 +369,14 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	if mqttSession != nil {
 		go mqttSession.Run(mqttContext)
 	}
+	if !hasSavedEndpoint {
+		return nil
+	}
+	r.connectPLC(client, "", savedEndpoint, false)
 	return nil
 }
 
 func (r *Runtime) handlePointCommand(client *wsClient, raw []byte) {
-	if !client.canOperate() {
-		client.enqueue(pointErrorEnvelope(r.now, "", "", "FORBIDDEN", "operator permission is required"), false)
-		return
-	}
 	var request struct {
 		ProtocolVersion string           `json:"protocolVersion"`
 		Type            string           `json:"type"`
@@ -388,10 +396,6 @@ func (r *Runtime) handlePointCommand(client *wsClient, raw []byte) {
 	}
 	if request.Type != "point.command" || request.PointID == "" || request.Action == "" {
 		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "INVALID_REQUEST", "pointId and action are required"), false)
-		return
-	}
-	if err := r.recordActivity(client); err != nil {
-		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "UNAUTHENTICATED", err.Error()), true)
 		return
 	}
 	definition, exists := r.store.Definition(request.PointID)
@@ -575,8 +579,6 @@ type wsClient struct {
 	send       chan outboundMessage
 	done       chan struct{}
 	closeOnce  sync.Once
-	token      string
-	role       auth.Role
 }
 
 type outboundMessage struct {
@@ -589,26 +591,7 @@ func newWSClient(connection *websocket.Conn) *wsClient {
 }
 
 func (r *Runtime) newWSClient(connection *websocket.Conn) (*wsClient, error) {
-	client := newWSClient(connection)
-	if r.auth == nil {
-		client.role = auth.RoleAdmin
-		return client, nil
-	}
-	token, ok := sessionToken(connection.Request())
-	if !ok {
-		return nil, auth.ErrUnauthenticated
-	}
-	session, err := r.auth.Session(token)
-	if err != nil {
-		return nil, err
-	}
-	client.token = token
-	client.role = session.Role
-	return client, nil
-}
-
-func (c *wsClient) canOperate() bool {
-	return c.role == auth.RoleOperator || c.role == auth.RoleAdmin
+	return newWSClient(connection), nil
 }
 
 func (c *wsClient) enqueue(value any, closeAfter bool) bool {
