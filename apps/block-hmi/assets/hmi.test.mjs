@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { rectangleIntersectionArea } from "../tools/auth-layout-probe.mjs";
 import {
   ActivationFilter,
   applyAbsoluteValues,
@@ -171,6 +172,7 @@ assert.equal(candidates.length, 0);
 const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const source = readFileSync(new URL("./hmi.mts", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
+const keyboardStyles = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
 
 const editableControls = [...index.matchAll(/<(input|textarea)\b[^>]*>/gi)]
   .map((match) => match[0])
@@ -194,8 +196,18 @@ assert.deepEqual(keyboardLayouts("password-form"), ["full", "full", "full"]);
 assert.deepEqual(keyboardLayouts("session-policy-form"), ["numeric"]);
 assert.deepEqual(keyboardLayouts("settingsForm"), ["numeric", "numeric", "numeric"]);
 assert.match(index, /<section class="auth-overlay"[^>]*role="dialog"[^>]*aria-modal="true"/);
-assert.match(index, /\.auth-overlay\s*\{[\s\S]*?background: transparent;[\s\S]*?pointer-events: none;/);
+const authOverlayRule = index.match(/\.auth-overlay\s*\{([\s\S]*?)\n    \}/)?.[1] ?? "";
+assert.match(authOverlayRule, /background: transparent;/);
+assert.match(authOverlayRule, /background-color: transparent;/);
+assert.match(authOverlayRule, /backdrop-filter: none;/);
+assert.match(authOverlayRule, /-webkit-backdrop-filter: none;/);
+assert.match(authOverlayRule, /box-shadow: none;/);
+assert.match(authOverlayRule, /filter: none;/);
+assert.match(authOverlayRule, /opacity: 1;/);
+assert.match(authOverlayRule, /pointer-events: none;/);
+assert.doesNotMatch(authOverlayRule, /rgba\(|blur\(/);
 assert.match(index, /\.auth-sheet\s*\{[\s\S]*?pointer-events: auto;/);
+assert.match(index, /\.auth-sheet\s*\{[\s\S]*?background: #f8fafb;/);
 for (const region of ["hmi-topbar", "hmi-pages", "hmi-footer"]) {
   assert.match(index, new RegExp('id="' + region + '" inert aria-hidden="true"'));
 }
@@ -206,6 +218,22 @@ assert.match(keyboardSource, /\["hidden", "button", "submit", "reset", "checkbox
 assert.match(keyboardSource, /new window\.MutationObserver/);
 assert.match(keyboardSource, /attributeFilter: \["disabled", "hidden", "type", "inputmode"\]/);
 assert.match(keyboardSource, /activeInput\.type === "password"/);
+assert.match(keyboardSource, /function syncAuthKeyboardLayout\(\) \{/);
+assert.match(keyboardSource, /dock\.getBoundingClientRect\(\)\.top/);
+assert.match(keyboardSource, /authPanel\.setAttribute\("data-keyboard-open", "true"\)/);
+assert.match(keyboardSource, /authPanel\.removeAttribute\("data-keyboard-open"\)/);
+assert.match(keyboardSource, /activeInput\.scrollIntoView\(\{ block: "nearest", inline: "nearest" \}\)/);
+assert.match(keyboardStyles, /#auth-panel\[data-keyboard-open="true"\] \{[\s\S]*?align-items: flex-start;/);
+assert.match(keyboardStyles, /#auth-panel\[data-keyboard-open="true"\] \.auth-sheet \{[\s\S]*?max-height: calc\(var\(--auth-keyboard-top, 50vh\) - 52px\);[\s\S]*?overflow-y: auto;/);
+assert.match(keyboardStyles, /#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-dock \{[\s\S]*?background: #f8fafc;[\s\S]*?backdrop-filter: none;/);
+assert.equal(rectangleIntersectionArea(
+  { left: 0, top: 0, right: 520, bottom: 299 },
+  { left: 0, top: 351, right: 1319, bottom: 700 }
+), 0);
+assert.equal(rectangleIntersectionArea(
+  { left: 0, top: 0, right: 520, bottom: 488 },
+  { left: 0, top: 540, right: 1536, bottom: 864 }
+), 0);
 assert.match(keyboardSource, /function closeKeyboard\(action\) \{[\s\S]*?isOpen = false;\s*activeInput = null;/);
 assert.match(keyboardSource, /function openForInput\(input\) \{[\s\S]*?activeInput = input;[\s\S]*?isOpen = true;/);
 assert.match(keyboardSource, /if \(isOpen && previousInput && previousInput !== input\) \{[\s\S]*?activeInput = input;/);

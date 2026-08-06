@@ -211,6 +211,68 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   transform: translateY(0) scale(1);
 }
 
+#auth-panel[data-keyboard-open="true"] {
+  align-items: flex-start;
+  padding-top: max(16px, env(safe-area-inset-top));
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-sheet {
+  max-height: calc(var(--auth-keyboard-top, 50vh) - 52px);
+  min-height: 0;
+  padding: 18px 28px;
+  border-radius: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-kicker {
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-sheet h1 {
+  font-size: 26px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-copy {
+  margin: 6px 0 10px;
+  font-size: 14px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-notice {
+  min-height: 1.2em;
+  margin: 0 0 6px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-form {
+  gap: 9px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-form label {
+  gap: 4px;
+  font-size: 13px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-form input,
+#auth-panel[data-keyboard-open="true"] .auth-form button {
+  min-height: 42px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-first-install {
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+#auth-panel[data-keyboard-open="true"] .auth-first-install summary {
+  margin-bottom: 8px;
+}
+
+#auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
+  background: #f8fafc;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .soft-keyboard-head {
   display: flex;
   align-items: center;

@@ -397,6 +397,7 @@
     dock.hidden = false;
     window.requestAnimationFrame(function () {
       dock.classList.add("is-open");
+      syncAuthKeyboardLayout();
     });
   }
 
@@ -407,6 +408,30 @@
       if (!isOpen) dock.hidden = true;
       hideTimer = 0;
     }, 190);
+  }
+
+  function clearAuthKeyboardLayout() {
+    var authPanel = document.getElementById("auth-panel");
+    if (!authPanel) return;
+    authPanel.removeAttribute("data-keyboard-open");
+    authPanel.style.removeProperty("--auth-keyboard-top");
+  }
+
+  function syncAuthKeyboardLayout() {
+    var authPanel = document.getElementById("auth-panel");
+    if (!authPanel || !isOpen || !activeInput || authPanel.hidden || !authPanel.contains(activeInput) || !dock || dock.hidden) {
+      clearAuthKeyboardLayout();
+      return;
+    }
+    var keyboardTop = dock.getBoundingClientRect().top;
+    if (!Number.isFinite(keyboardTop) || keyboardTop <= 0) return;
+    authPanel.style.setProperty("--auth-keyboard-top", Math.floor(keyboardTop) + "px");
+    authPanel.setAttribute("data-keyboard-open", "true");
+    window.requestAnimationFrame(function () {
+      if (isOpen && activeInput && authPanel.contains(activeInput) && typeof activeInput.scrollIntoView === "function") {
+        activeInput.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    });
   }
 
   function openForInput(input) {
@@ -463,7 +488,10 @@
   }
 
   function closeKeyboard(action) {
-    if (!isOpen) return true;
+    if (!isOpen) {
+      clearAuthKeyboardLayout();
+      return true;
+    }
     var input = activeInput;
     if (action === "cancel" && input) {
       input.value = originalValue;
@@ -485,6 +513,7 @@
     activeFootText = defaultFootText;
     root.removeAttribute("data-soft-keyboard-open");
     root.removeAttribute("data-soft-keyboard-layout");
+    clearAuthKeyboardLayout();
     hideDock();
     return true;
   }
@@ -790,6 +819,9 @@
     }
     dock.addEventListener("mousedown", function (event) {
       event.preventDefault();
+    });
+    window.addEventListener("resize", function () {
+      if (isOpen) syncAuthKeyboardLayout();
     });
     document.addEventListener("keydown", handlePhysicalKeyboard, true);
     return available;

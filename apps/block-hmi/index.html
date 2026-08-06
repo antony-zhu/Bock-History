@@ -3600,9 +3600,15 @@
     .auth-overlay {
       align-items: center;
       background: transparent;
+      background-color: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      box-shadow: none;
       display: flex;
+      filter: none;
       inset: 0;
       justify-content: center;
+      opacity: 1;
       padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
       pointer-events: none;
       position: fixed;
@@ -3614,7 +3620,7 @@
     }
 
     .auth-sheet {
-      background: rgba(248, 250, 251, 0.96);
+      background: #f8fafb;
       border: 1px solid rgba(255, 255, 255, 0.76);
       border-radius: 28px;
       box-shadow: 0 28px 70px rgba(0, 0, 0, 0.28);

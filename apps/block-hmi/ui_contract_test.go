@@ -68,6 +68,10 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 	for _, required := range []string{
 		`role="dialog" aria-modal="true"`,
 		`background: transparent;`,
+		`background-color: transparent;`,
+		`backdrop-filter: none;`,
+		`filter: none;`,
+		`opacity: 1;`,
 		`pointer-events: none;`,
 		`pointer-events: auto;`,
 		`id="hmi-topbar" inert aria-hidden="true"`,
@@ -90,10 +94,33 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 		"new window.MutationObserver",
 		`attributeFilter: ["disabled", "hidden", "type", "inputmode"]`,
 		`activeInput.type === "password"`,
+		"function syncAuthKeyboardLayout()",
+		`authPanel.setAttribute("data-keyboard-open", "true")`,
+		`authPanel.removeAttribute("data-keyboard-open")`,
+		"dock.getBoundingClientRect().top",
+		`activeInput.scrollIntoView({ block: "nearest", inline: "nearest" })`,
 	} {
 		if !strings.Contains(string(keyboard), required) {
 			t.Fatalf("soft keyboard is missing %q", required)
 		}
+	}
+	keyboardStyles, err := os.ReadFile("assets/soft-keyboard.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`#auth-panel[data-keyboard-open="true"]`,
+		`max-height: calc(var(--auth-keyboard-top, 50vh) - 52px);`,
+		"overflow-y: auto;",
+		`#auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock`,
+		"background: #f8fafc;",
+	} {
+		if !strings.Contains(string(keyboardStyles), required) {
+			t.Fatalf("soft keyboard auth layout is missing %q", required)
+		}
+	}
+	if _, err := os.Stat("tools/auth-layout-probe.mjs"); err != nil {
+		t.Fatalf("auth layout probe is missing: %v", err)
 	}
 	bridge, err := os.ReadFile("assets/hmi.mts")
 	if err != nil {
