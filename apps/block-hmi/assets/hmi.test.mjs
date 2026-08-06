@@ -170,6 +170,42 @@ assert.equal(candidates.length, 0);
 
 const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const source = readFileSync(new URL("./hmi.mts", import.meta.url), "utf8");
+const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
+
+const editableControls = [...index.matchAll(/<(input|textarea)\b[^>]*>/gi)]
+  .map((match) => match[0])
+  .filter((tag) => !/\b(?:hidden|disabled|readonly)\b/i.test(tag))
+  .filter((tag) => !/\btype=(?:"|')(?:hidden|button|submit|reset|checkbox|radio|file|image)(?:"|')/i.test(tag));
+assert.equal(editableControls.length, 12);
+for (const control of editableControls) {
+  assert.match(control, /\bdata-soft-keyboard=(?:"|')(?:full|numeric)(?:"|')/i);
+}
+
+function keyboardLayouts(formID) {
+  const form = index.match(new RegExp('<form\\b[^>]*\\bid="' + formID + '"[^>]*>([\\s\\S]*?)<\\/form>', "i"));
+  assert.ok(form, "missing form " + formID);
+  return [...form[1].matchAll(/<(?:input|textarea)\b[^>]*\bdata-soft-keyboard="([^"]+)"[^>]*>/gi)]
+    .map((match) => match[1]);
+}
+
+assert.deepEqual(keyboardLayouts("login-form"), ["full", "full"]);
+assert.deepEqual(keyboardLayouts("initial-admin-form"), ["full", "full", "full"]);
+assert.deepEqual(keyboardLayouts("password-form"), ["full", "full", "full"]);
+assert.deepEqual(keyboardLayouts("session-policy-form"), ["numeric"]);
+assert.deepEqual(keyboardLayouts("settingsForm"), ["numeric", "numeric", "numeric"]);
+assert.match(index, /<section class="auth-overlay"[^>]*role="dialog"[^>]*aria-modal="true"/);
+assert.match(index, /\.auth-overlay\s*\{[\s\S]*?background: transparent;[\s\S]*?pointer-events: none;/);
+assert.match(index, /\.auth-sheet\s*\{[\s\S]*?pointer-events: auto;/);
+for (const region of ["hmi-topbar", "hmi-pages", "hmi-footer"]) {
+  assert.match(index, new RegExp('id="' + region + '" inert aria-hidden="true"'));
+}
+assert.match(index, /id="softKeyboardLayer"/);
+assert.match(keyboardSource, /function isKeyboardCandidate\(input\)/);
+assert.match(keyboardSource, /document\.querySelectorAll\("input, textarea"\)/);
+assert.match(keyboardSource, /\["hidden", "button", "submit", "reset", "checkbox", "radio", "file", "image"\]/);
+assert.match(keyboardSource, /new window\.MutationObserver/);
+assert.match(keyboardSource, /attributeFilter: \["disabled", "hidden", "type", "inputmode"\]/);
+assert.match(keyboardSource, /activeInput\.type === "password"/);
 
 for (const page of ["home", "data", "maintenance", "alarm", "history"]) {
   assert.match(index, new RegExp('data-page="' + page + '"'));
@@ -208,6 +244,11 @@ assert.match(source, /"\/api\/v2\/config\/session"/);
 assert.match(source, /new WebSocket\(websocketURL\(\)\)/);
 assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(source, /displayPath === "home\.machine\.start"/);
+assert.match(source, /function demoAuthPreviewMode\(\): DemoAuthPreview/);
+assert.match(source, /auth === "login" \|\| auth === "bootstrap"/);
+assert.match(source, /if \(this\.authPreview !== null\) \{\s*this\.showLogin\(\);/);
+assert.match(source, /private setHMIInteractive\(interactive: boolean\)/);
+assert.match(source, /element\.toggleAttribute\("inert", !interactive\)/);
 assert.match(source, /pendingStartCommand\.waitFor\(requestId\)/);
 assert.match(source, /buildPointCommand\(binding\.writePoint, binding\.action, requestId\)/);
 assert.match(source, /pendingStartCommand\.receive\(message\)/);
@@ -224,6 +265,9 @@ assert.ok(loadConfigurationStart >= 0 && demoReturn > loadConfigurationStart && 
 const startDemoBranch = source.indexOf("if (this.demo) {", source.indexOf("start(): void"));
 const startSocket = source.indexOf("this.openSocket()", startDemoBranch);
 assert.ok(startDemoBranch >= 0 && startSocket > startDemoBranch);
+const authPreviewBranch = source.indexOf("if (this.authPreview !== null)", startDemoBranch);
+const authPreviewReturn = source.indexOf("return;", authPreviewBranch);
+assert.ok(authPreviewBranch > startDemoBranch && authPreviewReturn > authPreviewBranch && authPreviewReturn < startSocket);
 
 for (const asset of [
   "./machine-bin.png",

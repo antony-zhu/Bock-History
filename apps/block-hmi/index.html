@@ -3599,13 +3599,12 @@
 
     .auth-overlay {
       align-items: center;
-      background:
-        radial-gradient(circle at 28% 14%, rgba(255, 255, 255, 0.33), transparent 32%),
-        linear-gradient(135deg, rgba(36, 75, 103, 0.96), rgba(22, 42, 58, 0.98));
+      background: transparent;
       display: flex;
       inset: 0;
       justify-content: center;
       padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+      pointer-events: none;
       position: fixed;
       z-index: 20;
     }
@@ -3623,7 +3622,27 @@
       max-height: min(800px, calc(100vh - 48px));
       overflow: auto;
       padding: 38px 42px;
+      pointer-events: auto;
       width: min(520px, 100%);
+    }
+
+    #hmi-topbar[inert],
+    #hmi-pages[inert],
+    #hmi-footer[inert] {
+      pointer-events: none;
+    }
+
+    .soft-keyboard-layer {
+      position: absolute;
+      top: 78px;
+      right: 0;
+      left: 0;
+      height: 680px;
+      pointer-events: none;
+    }
+
+    .soft-keyboard-layer .soft-keyboard-dock {
+      pointer-events: auto;
     }
 
     .auth-kicker {
@@ -3768,12 +3787,19 @@
         padding: 28px 24px;
       }
     }
+
+    @media (orientation: landscape) and (max-height: 500px) {
+      .soft-keyboard-layer {
+        top: 44px;
+        height: calc(100% - 44px);
+      }
+    }
   </style>
   <link rel="stylesheet" href="assets/vendor/simple-keyboard/index.css">
   <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260721.2">
 </head>
 <body>
-  <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle">
+  <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" aria-modal="true">
     <div class="auth-sheet">
       <p class="auth-kicker">BLOCK LOCAL HMI</p>
       <h1 id="authTitle">料仓控制台</h1>
@@ -3782,16 +3808,16 @@
 
       <section id="authLogin">
         <form class="auth-form" id="login-form">
-          <label>用户名<input name="username" autocomplete="username" required></label>
-          <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+          <label>用户名<input name="username" autocomplete="username" required data-soft-keyboard="full" data-soft-label="登录用户名"></label>
+          <label>密码<input name="password" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="登录密码"></label>
           <button type="submit">登录</button>
         </form>
-        <details class="auth-first-install">
+        <details class="auth-first-install" id="auth-first-install">
           <summary>首次安装：创建管理员</summary>
           <form class="auth-form" id="initial-admin-form">
-            <label>管理员用户名<input name="username" value="admin" autocomplete="username" required></label>
-            <label>密码<input name="password" type="password" autocomplete="new-password" required></label>
-            <label>确认密码<input name="confirmPassword" type="password" autocomplete="new-password" required></label>
+            <label>管理员用户名<input name="username" value="admin" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名"></label>
+            <label>密码<input name="password" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="管理员密码"></label>
+            <label>确认密码<input name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认管理员密码"></label>
             <button type="submit">创建管理员</button>
           </form>
         </details>
@@ -3803,13 +3829,13 @@
           <button class="auth-close" id="auth-close" type="button">返回控制台</button>
         </div>
         <form class="auth-form" id="password-form">
-          <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required></label>
-          <label>新密码<input name="newPassword" type="password" autocomplete="new-password" required></label>
-          <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" required></label>
+          <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="当前密码"></label>
+          <label>新密码<input name="newPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="新密码"></label>
+          <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认新密码"></label>
           <button type="submit">修改密码</button>
         </form>
         <form class="auth-form auth-policy" id="session-policy-form">
-          <label>不活动退出（秒）<input name="idleTimeoutSeconds" type="number" value="300" min="60" step="60" inputmode="numeric" required></label>
+          <label>不活动退出（秒）<input name="idleTimeoutSeconds" type="number" value="300" min="60" step="60" inputmode="numeric" required data-soft-keyboard="numeric" data-soft-label="不活动退出秒数"></label>
           <button type="submit">保存会话时长</button>
         </form>
         <section class="plc-control-sheet" id="plc-control-sheet" aria-labelledby="plc-title">
@@ -3832,7 +3858,7 @@
   <main class="stage" id="hmi" aria-label="料仓自动化工控机界面">
     <span id="runtime-panel" hidden></span>
     <section class="main-panel">
-      <header class="topbar">
+      <header class="topbar" id="hmi-topbar" inert aria-hidden="true">
         <div class="line-name">产线名称一</div>
         <div class="top-meta">
           <time id="currentDate">日期--</time>
@@ -3922,7 +3948,7 @@
         </div>
       </header>
 
-      <div class="pages">
+      <div class="pages" id="hmi-pages" inert aria-hidden="true">
         <section class="page page-home" data-page="home">
           <div class="home-grid">
             <div class="home-left">
@@ -4110,6 +4136,9 @@
           </div>
         </section>
 
+      </div>
+
+      <div class="soft-keyboard-layer" id="softKeyboardLayer">
         <section class="soft-keyboard-dock" id="softKeyboardDock" data-layout="numeric" aria-label="屏幕键盘" hidden>
           <header class="soft-keyboard-head">
             <span class="soft-keyboard-context">
@@ -4125,7 +4154,7 @@
       </div>
     </section>
 
-    <footer class="footer">
+    <footer class="footer" id="hmi-footer" inert aria-hidden="true">
       <div class="operator">
         <div class="meta-cn">操作员</div>
         <div class="meta-en">Operator</div>

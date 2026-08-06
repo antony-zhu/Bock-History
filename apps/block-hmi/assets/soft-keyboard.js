@@ -17,6 +17,7 @@
   var validationLine = null;
   var keyboard = null;
   var inputs = [];
+  var inputObserver = null;
   var mode = "native";
   var available = false;
   var isOpen = false;
@@ -496,6 +497,23 @@
     return input.getClientRects().length > 0;
   }
 
+  function isKeyboardCandidate(input) {
+    if (!input || input.nodeType !== 1 || input.disabled || input.readOnly || input.hidden) return false;
+    var tag = String(input.tagName || "").toLowerCase();
+    if (tag === "textarea") return true;
+    if (tag !== "input") return false;
+    var type = String(input.getAttribute("type") || "text").toLowerCase();
+    return ["hidden", "button", "submit", "reset", "checkbox", "radio", "file", "image"].indexOf(type) === -1;
+  }
+
+  function ensureKeyboardAttribute(input) {
+    if (input.hasAttribute("data-soft-keyboard")) return;
+    var type = String(input.getAttribute("type") || "text").toLowerCase();
+    var inputMode = String(input.getAttribute("inputmode") || "").toLowerCase();
+    var numeric = type === "number" || inputMode === "numeric" || inputMode === "decimal" || inputMode === "tel";
+    input.setAttribute("data-soft-keyboard", numeric ? "numeric" : "full");
+  }
+
   function findNextInput(input) {
     if (!input) return null;
     var scope = input.form || document;
@@ -619,10 +637,44 @@
   }
 
   function refresh() {
-    inputs = toArray(document.querySelectorAll("[data-soft-keyboard]"));
-    inputs.forEach(bindInput);
+    var nextInputs = [];
+    toArray(document.querySelectorAll("input, textarea")).forEach(function (input) {
+      var bound = input.getAttribute("data-soft-keyboard-bound") === "true";
+      if (!bound && !isKeyboardCandidate(input)) return;
+      if (!bound) {
+        ensureKeyboardAttribute(input);
+        bindInput(input);
+      }
+      nextInputs.push(input);
+    });
+    inputs = nextInputs;
     if (mode === "soft") applySoftReadonly();
     return inputs.length;
+  }
+
+  function hasKeyboardCandidate(node) {
+    if (!node || node.nodeType !== 1) return false;
+    if (String(node.tagName || "").toLowerCase() === "input" || String(node.tagName || "").toLowerCase() === "textarea") return true;
+    return typeof node.querySelector === "function" && node.querySelector("input, textarea") !== null;
+  }
+
+  function observeInputs() {
+    if (!window.MutationObserver || inputObserver || !document.body) return;
+    inputObserver = new window.MutationObserver(function (records) {
+      var needsRefresh = records.some(function (record) {
+        if (record.type === "childList") {
+          return toArray(record.addedNodes).some(hasKeyboardCandidate);
+        }
+        return hasKeyboardCandidate(record.target);
+      });
+      if (needsRefresh) refresh();
+    });
+    inputObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["disabled", "hidden", "type", "inputmode"]
+    });
   }
 
   function validateForm(form) {
@@ -724,6 +776,7 @@
     refresh();
     setMode(safeReadMode(), false);
     initializing = false;
+    observeInputs();
 
     if (toggle) {
       toggle.addEventListener("click", function () {

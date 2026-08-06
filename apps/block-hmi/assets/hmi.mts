@@ -376,6 +376,16 @@ function isDemoMode(): boolean {
   return new URLSearchParams(window.location.search).get("demo") === "1";
 }
 
+type DemoAuthPreview = "login" | "bootstrap" | null;
+
+function demoAuthPreviewMode(): DemoAuthPreview {
+  if (!isDemoMode()) {
+    return null;
+  }
+  const auth = new URLSearchParams(window.location.search).get("auth");
+  return auth === "login" || auth === "bootstrap" ? auth : null;
+}
+
 function cloneState(state: LegacyState): LegacyState {
   return JSON.parse(JSON.stringify(state)) as LegacyState;
 }
@@ -509,7 +519,8 @@ class AppleBridge {
 
   constructor(
     private readonly config: PageConfiguration,
-    private readonly demo: boolean
+    private readonly demo: boolean,
+    private readonly authPreview: DemoAuthPreview
   ) {}
 
   start(): void {
@@ -518,9 +529,16 @@ class AppleBridge {
     this.bindPLCControls();
     this.bindActivityReporting();
     if (this.demo) {
+      if (this.authPreview !== null) {
+        this.showLogin();
+        this.setPLCStatus("演示模式（未连接 PLC）");
+        this.renderPLCCandidates();
+        return;
+      }
       this.signedIn = true;
       this.configured = true;
       this.authPanel().hidden = true;
+      this.setHMIInteractive(true);
       this.setPLCStatus("演示模式（未连接 PLC）");
       this.renderPLCCandidates();
       return;
@@ -557,6 +575,17 @@ class AppleBridge {
     return document.querySelector<HTMLElement>("#authAccount")!;
   }
 
+  private setHMIInteractive(interactive: boolean): void {
+    document.querySelectorAll<HTMLElement>("#hmi-topbar, #hmi-pages, #hmi-footer").forEach((element) => {
+      element.toggleAttribute("inert", !interactive);
+      if (interactive) {
+        element.removeAttribute("aria-hidden");
+      } else {
+        element.setAttribute("aria-hidden", "true");
+      }
+    });
+  }
+
   private setAuthNotice(message: string): void {
     this.authNotice().textContent = message;
   }
@@ -565,6 +594,10 @@ class AppleBridge {
     this.authPanel().hidden = false;
     this.loginSection().hidden = false;
     this.accountSection().hidden = true;
+    if (this.authPreview === "bootstrap") {
+      document.querySelector<HTMLDetailsElement>("#auth-first-install")!.open = true;
+    }
+    this.setHMIInteractive(false);
     this.setAuthNotice(message);
   }
 
@@ -576,6 +609,7 @@ class AppleBridge {
     this.authPanel().hidden = false;
     this.loginSection().hidden = true;
     this.accountSection().hidden = false;
+    this.setHMIInteractive(false);
     this.setAuthNotice("");
     this.renderPLCCandidates();
   }
@@ -583,6 +617,7 @@ class AppleBridge {
   private hideAccount(): void {
     if (this.signedIn) {
       this.authPanel().hidden = true;
+      this.setHMIInteractive(true);
     }
   }
 
@@ -742,6 +777,7 @@ class AppleBridge {
   private beginSession(): void {
     this.signedIn = true;
     this.authPanel().hidden = true;
+    this.setHMIInteractive(true);
     this.setAuthNotice("");
     if (this.demo) {
       this.configured = true;
@@ -1203,7 +1239,7 @@ function errorText(code: string | undefined): string {
 
 export async function installHMIBackend(): Promise<LegacyBackend> {
   const demo = isDemoMode();
-  const bridge = new AppleBridge(await loadConfiguration(demo), demo);
+  const bridge = new AppleBridge(await loadConfiguration(demo), demo, demoAuthPreviewMode());
   bridge.start();
   const backend = bridge.backend();
   window.HMIBackend = backend;

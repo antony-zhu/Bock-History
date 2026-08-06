@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -48,6 +49,66 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 	}
 	if strings.Contains(string(index), "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
+	}
+	editableControl := regexp.MustCompile(`(?is)<(?:input|textarea)\b[^>]*>`)
+	excludedControl := regexp.MustCompile(`(?i)\b(?:hidden|disabled|readonly)\b|\btype=(?:"|')(?:hidden|button|submit|reset|checkbox|radio|file|image)(?:"|')`)
+	keyboardControl := regexp.MustCompile(`(?i)\bdata-soft-keyboard=(?:"|')(?:full|numeric)(?:"|')`)
+	controls := editableControl.FindAllString(string(index), -1)
+	if len(controls) != 12 {
+		t.Fatalf("editable control count = %d, want 12", len(controls))
+	}
+	for _, control := range controls {
+		if excludedControl.MatchString(control) {
+			continue
+		}
+		if !keyboardControl.MatchString(control) {
+			t.Fatalf("editable control is missing soft keyboard support: %s", control)
+		}
+	}
+	for _, required := range []string{
+		`role="dialog" aria-modal="true"`,
+		`background: transparent;`,
+		`pointer-events: none;`,
+		`pointer-events: auto;`,
+		`id="hmi-topbar" inert aria-hidden="true"`,
+		`id="hmi-pages" inert aria-hidden="true"`,
+		`id="hmi-footer" inert aria-hidden="true"`,
+		`id="softKeyboardLayer"`,
+	} {
+		if !strings.Contains(string(index), required) {
+			t.Fatalf("index is missing floating-auth requirement %q", required)
+		}
+	}
+	keyboard, err := os.ReadFile("assets/soft-keyboard.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"function isKeyboardCandidate(input)",
+		`document.querySelectorAll("input, textarea")`,
+		`["hidden", "button", "submit", "reset", "checkbox", "radio", "file", "image"]`,
+		"new window.MutationObserver",
+		`attributeFilter: ["disabled", "hidden", "type", "inputmode"]`,
+		`activeInput.type === "password"`,
+	} {
+		if !strings.Contains(string(keyboard), required) {
+			t.Fatalf("soft keyboard is missing %q", required)
+		}
+	}
+	bridge, err := os.ReadFile("assets/hmi.mts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"function demoAuthPreviewMode(): DemoAuthPreview",
+		`auth === "login" || auth === "bootstrap"`,
+		"private setHMIInteractive(interactive: boolean)",
+		`element.toggleAttribute("inert", !interactive)`,
+		"if (this.authPreview !== null)",
+	} {
+		if !strings.Contains(string(bridge), required) {
+			t.Fatalf("HMI bridge is missing %q", required)
+		}
 	}
 	for _, asset := range []string{
 		"assets/machine-bin.png",
