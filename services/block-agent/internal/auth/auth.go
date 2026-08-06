@@ -86,6 +86,11 @@ func NewService(store Store, now func() time.Time, onExpired func(Session)) (*Se
 
 func (s *Service) Close() { s.sessions.close() }
 
+// HasAdmin reports whether initial administrator setup is complete.
+func (s *Service) HasAdmin(ctx context.Context) (bool, error) {
+	return s.store.HasAdmin(ctx)
+}
+
 func (s *Service) FirstSetup(ctx context.Context, username, password, confirmPassword string) (LoginResult, error) {
 	if err := validateCredentials(username, password, confirmPassword); err != nil {
 		return LoginResult{}, err

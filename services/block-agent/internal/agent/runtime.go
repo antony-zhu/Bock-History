@@ -107,6 +107,7 @@ func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory pl
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", runtime.health)
+	mux.HandleFunc("/api/v2/auth/status", runtime.authStatus)
 	mux.HandleFunc("/api/v2/auth/initial-admin", runtime.bootstrap)
 	mux.HandleFunc("/api/v2/auth/login", runtime.login)
 	mux.HandleFunc("/api/v2/auth/activity", runtime.activity)
