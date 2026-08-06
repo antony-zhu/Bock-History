@@ -36,3 +36,26 @@ go test ./...
 
 其中 Go 测试仅检查静态页面与 points.json；HTTP/WS 闭环由 block-agent 自身
 测试承担。
+
+## Apple Style V1 页面与本地预览
+
+页面保留 Apple Style V1 的原始五页 DOM、内联样式、机器图、主题、时钟、
+底部导航、软键盘和前端交互。旧 api-client.js 没有保留；assets/hmi.mts
+是唯一业务实现来源，编译后生成 assets/hmi.mjs，并通过 v2 认证与 WebSocket
+接口连接本机 Block。
+
+无需 PLC 或 Block 真机的本地预览使用同一份页面：
+
+~~~
+python -m http.server 4173 --bind 127.0.0.1 --directory .
+~~~
+
+打开 http://127.0.0.1:4173/?demo=1。demo 使用固定数据，不请求
+/api/v2/**，也不连接 /ws；主题、导航、toast、二次确认、软键盘和设备图
+交互仍可用。
+
+生产模式不带 demo=1。它显示本机登录/首次管理员覆盖层，保留修改密码、退出
+和默认 300 秒不活动退出设置；认证后从 assets/points.json 配置 v2
+runtime.configure，并通过 /ws 接收 points.snapshot 与 points.changed。
+当前 v2 只映射 V1 的“启动”到已配置点位；生产统计、维护参数写入、报警确认和
+历史记录没有后端能力时明确显示为暂无数据或不可操作。

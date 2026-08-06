@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import {
   ActivationFilter,
   applyAbsoluteValues,
@@ -133,3 +134,65 @@ const candidates = [{
 clearTransientRuntime(values, candidates);
 assert.equal(values.size, 0);
 assert.equal(candidates.length, 0);
+
+const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const source = readFileSync(new URL("./hmi.mts", import.meta.url), "utf8");
+
+for (const page of ["home", "data", "maintenance", "alarm", "history"]) {
+  assert.match(index, new RegExp('data-page="' + page + '"'));
+  assert.match(index, new RegExp('data-nav="' + page + '"'));
+}
+
+for (const theme of ["light", "graphite", "ocean", "midnight", "titanium"]) {
+  assert.match(index, new RegExp('data-theme-option="' + theme + '"'));
+}
+
+for (const identifier of [
+  'id="themeMenu"',
+  'id="toast"',
+  'id="softKeyboardDock"',
+  'id="softKeyboardHost"',
+  'id="auth-panel"',
+  'id="login-form"',
+  'id="initial-admin-form"',
+  'id="password-form"',
+  'id="logout-button"',
+  'id="plc-scan-button"',
+  'id="snapshot-button"'
+]) {
+  assert.ok(index.includes(identifier), "index is missing " + identifier);
+}
+
+assert.doesNotMatch(index, /api-client\.js/);
+assert.match(index, /import\("\.\/assets\/hmi\.mjs"\)/);
+assert.match(source, /if \(demo\) \{\s+return demoConfiguration\(\);/);
+assert.match(source, /if \(this\.demo \|\| !this\.signedIn\) \{/);
+assert.match(source, /"\/api\/v2\/auth\/login"/);
+assert.match(source, /"\/api\/v2\/auth\/initial-admin"/);
+assert.match(source, /"\/api\/v2\/auth\/password"/);
+assert.match(source, /"\/api\/v2\/auth\/logout"/);
+assert.match(source, /"\/api\/v2\/config\/session"/);
+assert.match(source, /new WebSocket\(websocketURL\(\)\)/);
+assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
+assert.match(source, /displayPath === "home\.machine\.start"/);
+assert.equal(existsSync(new URL("./api-client.js", import.meta.url)), false);
+
+const loadConfigurationStart = source.indexOf("async function loadConfiguration");
+const demoReturn = source.indexOf("return demoConfiguration()", loadConfigurationStart);
+const configurationFetch = source.indexOf('fetch(new URL("./points.json"', loadConfigurationStart);
+assert.ok(loadConfigurationStart >= 0 && demoReturn > loadConfigurationStart && configurationFetch > demoReturn);
+
+const startDemoBranch = source.indexOf("if (this.demo) {", source.indexOf("start(): void"));
+const startSocket = source.indexOf("this.openSocket()", startDemoBranch);
+assert.ok(startDemoBranch >= 0 && startSocket > startDemoBranch);
+
+for (const asset of [
+  "./machine-bin.png",
+  "./soft-keyboard.css",
+  "./soft-keyboard.js",
+  "./vendor/simple-keyboard/index.css",
+  "./vendor/simple-keyboard/index.js",
+  "./vendor/simple-keyboard/LICENSE"
+]) {
+  assert.equal(existsSync(new URL(asset, import.meta.url)), true, "missing V1 asset " + asset);
+}

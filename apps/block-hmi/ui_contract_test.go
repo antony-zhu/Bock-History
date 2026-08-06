@@ -14,14 +14,33 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 	}
 	for _, required := range []string{
 		"id=\"hmi\"",
+		"data-page=\"home\"",
+		"data-page=\"data\"",
+		"data-page=\"maintenance\"",
+		"data-page=\"alarm\"",
+		"data-page=\"history\"",
+		"data-nav=\"home\"",
+		"data-nav=\"data\"",
+		"data-nav=\"maintenance\"",
+		"data-nav=\"alarm\"",
+		"data-nav=\"history\"",
+		"data-theme-option=\"light\"",
+		"data-theme-option=\"graphite\"",
+		"data-theme-option=\"ocean\"",
+		"data-theme-option=\"midnight\"",
+		"data-theme-option=\"titanium\"",
+		"id=\"themeMenu\"",
+		"id=\"toast\"",
+		"id=\"softKeyboardDock\"",
 		"id=\"login-form\"",
 		"id=\"initial-admin-form\"",
 		"id=\"password-form\"",
+		"id=\"logout-button\"",
 		"id=\"plc-scan-button\"",
 		"id=\"plc-disconnect-button\"",
 		"id=\"snapshot-button\"",
 		"id=\"plc-candidates\"",
-		"src=\"assets/hmi.mjs\"",
+		"import(\"./assets/hmi.mjs\")",
 	} {
 		if !strings.Contains(string(index), required) {
 			t.Fatalf("index is missing %q", required)
@@ -29,6 +48,19 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 	}
 	if strings.Contains(string(index), "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
+	}
+	for _, asset := range []string{
+		"assets/machine-bin.png",
+		"assets/soft-keyboard.css",
+		"assets/soft-keyboard.js",
+		"assets/vendor/simple-keyboard/index.css",
+		"assets/vendor/simple-keyboard/index.js",
+		"assets/vendor/simple-keyboard/LICENSE",
+		"THIRD_PARTY_NOTICES.md",
+	} {
+		if _, err := os.Stat(asset); err != nil {
+			t.Fatalf("V1 asset %q is missing: %v", asset, err)
+		}
 	}
 }
 
