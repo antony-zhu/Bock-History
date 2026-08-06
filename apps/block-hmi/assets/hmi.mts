@@ -116,8 +116,14 @@ type LegacyBackend = {
   getAudit(options?: unknown): Promise<{ events: LegacyHistory[] }>;
 };
 
+type SoftKeyboardMode = "soft" | "native";
+
 type HMISoftKeyboard = {
   close(action?: "cancel" | "commit" | "keep"): boolean;
+  getMode(): SoftKeyboardMode;
+  open(input: HTMLInputElement | HTMLTextAreaElement): boolean;
+  setMode(mode: SoftKeyboardMode, persist?: boolean): SoftKeyboardMode;
+  setPinned(pinned: boolean): void;
 };
 
 declare global {
@@ -382,13 +388,53 @@ function isDemoMode(): boolean {
 }
 
 type DemoAuthPreview = "login" | "bootstrap" | null;
+type AuthScreen = Exclude<DemoAuthPreview, null>;
 
-function demoAuthPreviewMode(): DemoAuthPreview {
-  if (!isDemoMode()) {
+type AuthStatus = {
+  authenticated: boolean;
+  bootstrapRequired: boolean;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function parseAuthStatus(value: unknown): AuthStatus | null {
+  if (!isRecord(value) ||
+    Object.keys(value).sort().join(",") !== "authenticated,bootstrapRequired" ||
+    typeof value.bootstrapRequired !== "boolean" ||
+    typeof value.authenticated !== "boolean" ||
+    (value.bootstrapRequired === true && value.authenticated === true)) {
     return null;
   }
-  const auth = new URLSearchParams(window.location.search).get("auth");
+  return {
+    authenticated: value.authenticated,
+    bootstrapRequired: value.bootstrapRequired
+  };
+}
+
+export function authScreenForStatus(status: AuthStatus | null): AuthScreen {
+  return status?.bootstrapRequired === true ? "bootstrap" : "login";
+}
+
+export function responseCreatesSession(value: unknown): boolean {
+  return isRecord(value) &&
+    typeof value.username === "string" &&
+    typeof value.role === "string" &&
+    typeof value.expiresAt === "string";
+}
+
+export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
+  const query = new URLSearchParams(search);
+  if (query.get("demo") !== "1") {
+    return null;
+  }
+  const auth = query.get("auth");
   return auth === "login" || auth === "bootstrap" ? auth : null;
+}
+
+function demoAuthPreviewMode(): DemoAuthPreview {
+  return demoAuthPreviewFromSearch(window.location.search);
 }
 
 function cloneState(state: LegacyState): LegacyState {
@@ -521,6 +567,7 @@ class AppleBridge {
   private readonly plcDevices: PLCDevice[] = [];
   private readonly pendingStartCommand = new StartCommandReceipt();
   private demoState = initialDemoState();
+  private authKeyboardOriginalMode: SoftKeyboardMode | null = null;
 
   constructor(
     private readonly config: PageConfiguration,
@@ -535,7 +582,7 @@ class AppleBridge {
     this.bindActivityReporting();
     if (this.demo) {
       if (this.authPreview !== null) {
-        this.showLogin();
+        this.showAuthentication(this.authPreview);
         this.setPLCStatus("演示模式（未连接 PLC）");
         this.renderPLCCandidates();
         return;
@@ -548,9 +595,10 @@ class AppleBridge {
       this.renderPLCCandidates();
       return;
     }
-    this.showLogin();
-    this.setPLCStatus("请登录后连接本机服务");
+    this.prepareAuthentication();
+    this.setPLCStatus("正在检查本机认证状态");
     this.renderPLCCandidates();
+    void this.resolveInitialAuthentication();
   }
 
   backend(): LegacyBackend {
@@ -576,6 +624,10 @@ class AppleBridge {
     return document.querySelector<HTMLElement>("#authLogin")!;
   }
 
+  private bootstrapSection(): HTMLElement {
+    return document.querySelector<HTMLElement>("#authBootstrap")!;
+  }
+
   private accountSection(): HTMLElement {
     return document.querySelector<HTMLElement>("#authAccount")!;
   }
@@ -595,16 +647,97 @@ class AppleBridge {
     this.authNotice().textContent = message;
   }
 
-  private showLogin(message = ""): void {
-    window.HMISoftKeyboard?.close("keep");
-    this.authPanel().hidden = false;
-    this.loginSection().hidden = false;
+  private prepareAuthentication(): void {
+    this.endAuthenticationKeyboard();
+    const panel = this.authPanel();
+    panel.hidden = true;
+    panel.setAttribute("aria-busy", "true");
+    panel.removeAttribute("data-auth-mode");
+    this.loginSection().hidden = true;
+    this.bootstrapSection().hidden = true;
     this.accountSection().hidden = true;
-    if (this.authPreview === "bootstrap") {
-      document.querySelector<HTMLDetailsElement>("#auth-first-install")!.open = true;
-    }
+    this.setHMIInteractive(false);
+    this.setAuthNotice("");
+  }
+
+  private showAuthentication(screen: AuthScreen, message = ""): void {
+    this.endAuthenticationKeyboard();
+    const panel = this.authPanel();
+    panel.hidden = false;
+    panel.setAttribute("aria-busy", "false");
+    panel.setAttribute("data-auth-mode", screen);
+    this.loginSection().hidden = screen !== "login";
+    this.bootstrapSection().hidden = screen !== "bootstrap";
+    this.accountSection().hidden = true;
     this.setHMIInteractive(false);
     this.setAuthNotice(message);
+    this.openAuthenticationKeyboard(screen);
+  }
+
+  private showLogin(message = ""): void {
+    this.showAuthentication("login", message);
+  }
+
+  private showBootstrap(message = ""): void {
+    this.showAuthentication("bootstrap", message);
+  }
+
+  private openAuthenticationKeyboard(screen: AuthScreen): void {
+    const form = document.querySelector<HTMLFormElement>(screen === "bootstrap" ? "#initial-admin-form" : "#login-form")!;
+    const input = form.querySelector<HTMLInputElement>("[data-soft-keyboard]")!;
+    const keyboard = window.HMISoftKeyboard;
+    if (keyboard !== undefined) {
+      if (this.authKeyboardOriginalMode === null) {
+        this.authKeyboardOriginalMode = keyboard.getMode();
+      }
+      keyboard.setMode("soft", false);
+      keyboard.setPinned(true);
+    }
+    window.requestAnimationFrame(() => {
+      if (this.authPanel().hidden || this.authPanel().getAttribute("data-auth-mode") !== screen) {
+        return;
+      }
+      input.focus();
+      keyboard?.open(input);
+    });
+  }
+
+  private endAuthenticationKeyboard(): void {
+    const keyboard = window.HMISoftKeyboard;
+    keyboard?.setPinned(false);
+    keyboard?.close("keep");
+    if (this.authKeyboardOriginalMode === "native") {
+      keyboard?.setMode("native", false);
+    }
+    this.authKeyboardOriginalMode = null;
+  }
+
+  private async resolveInitialAuthentication(): Promise<void> {
+    try {
+      const response = await fetch("/api/v2/auth/status", {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (!response.ok) {
+        throw new HMIAPIError(await responseMessage(response), response.status, "auth_status_failed");
+      }
+      const status = parseAuthStatus(await response.json());
+      if (status === null) {
+        this.showLogin("本机认证状态未知，请检查本机服务后重试。");
+        return;
+      }
+      if (authScreenForStatus(status) === "bootstrap") {
+        this.showBootstrap();
+        return;
+      }
+      if (status.authenticated) {
+        this.beginSession();
+        return;
+      }
+      this.showLogin();
+    } catch {
+      this.showLogin("本机认证服务不可用，请检查服务后重试。");
+    }
   }
 
   private showAccount(): void {
@@ -612,9 +745,13 @@ class AppleBridge {
       this.showLogin();
       return;
     }
-    window.HMISoftKeyboard?.close("keep");
-    this.authPanel().hidden = false;
+    this.endAuthenticationKeyboard();
+    const panel = this.authPanel();
+    panel.hidden = false;
+    panel.setAttribute("aria-busy", "false");
+    panel.removeAttribute("data-auth-mode");
     this.loginSection().hidden = true;
+    this.bootstrapSection().hidden = true;
     this.accountSection().hidden = false;
     this.setHMIInteractive(false);
     this.setAuthNotice("");
@@ -623,7 +760,7 @@ class AppleBridge {
 
   private hideAccount(): void {
     if (this.signedIn) {
-      window.HMISoftKeyboard?.close("keep");
+      this.endAuthenticationKeyboard();
       this.authPanel().hidden = true;
       this.setHMIInteractive(true);
     }
@@ -741,8 +878,18 @@ class AppleBridge {
       return;
     }
     try {
-      await jsonRequest("POST", "/api/v2/auth/initial-admin", { username, password, confirmPassword });
-      this.beginSession();
+      const response = await jsonRequest("POST", "/api/v2/auth/initial-admin", { username, password, confirmPassword });
+      let result: unknown = null;
+      try {
+        result = await response.json();
+      } catch {
+        result = null;
+      }
+      if (responseCreatesSession(result)) {
+        this.beginSession();
+        return;
+      }
+      this.showLogin("管理员已创建，请使用新账号登录。");
     } catch (error) {
       this.setAuthNotice(error instanceof Error ? error.message : "创建管理员失败");
     }
@@ -783,7 +930,7 @@ class AppleBridge {
   }
 
   private beginSession(): void {
-    window.HMISoftKeyboard?.close("keep");
+    this.endAuthenticationKeyboard();
     this.signedIn = true;
     this.authPanel().hidden = true;
     this.setHMIInteractive(true);
@@ -797,7 +944,7 @@ class AppleBridge {
   }
 
   private async logout(): Promise<void> {
-    window.HMISoftKeyboard?.close("keep");
+    this.endAuthenticationKeyboard();
     if (!this.demo) {
       this.pendingStartCommand.cancel("已退出登录，启动结果未知", 401, "unauthenticated");
       try {
@@ -815,7 +962,7 @@ class AppleBridge {
   }
 
   private endSession(message: string): void {
-    window.HMISoftKeyboard?.close("keep");
+    this.endAuthenticationKeyboard();
     this.signedIn = false;
     this.configured = false;
     this.closeSocket();

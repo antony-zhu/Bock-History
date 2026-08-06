@@ -4,6 +4,7 @@ import { rectangleIntersectionArea } from "../tools/auth-layout-probe.mjs";
 import {
   ActivationFilter,
   applyAbsoluteValues,
+  authScreenForStatus,
   buildPLCConnect,
   buildPLCDisconnect,
   buildPLCScan,
@@ -11,13 +12,38 @@ import {
   buildPointsSnapshotGet,
   buildRuntimeConfigure,
   clearTransientRuntime,
+  demoAuthPreviewFromSearch,
   isDisplayPath,
+  parseAuthStatus,
+  responseCreatesSession,
   StartCommandReceipt
 } from "./hmi.mjs";
 
 assert.equal(isDisplayPath("home.machine.start"), true);
 assert.equal(isDisplayPath("home.设备.start"), false);
 assert.equal(isDisplayPath("Home.machine.start"), false);
+
+assert.deepEqual(parseAuthStatus({ authenticated: false, bootstrapRequired: true }), {
+  authenticated: false,
+  bootstrapRequired: true
+});
+assert.deepEqual(parseAuthStatus({ authenticated: true, bootstrapRequired: false }), {
+  authenticated: true,
+  bootstrapRequired: false
+});
+assert.equal(parseAuthStatus({ authenticated: false, bootstrapRequired: "true" }), null);
+assert.equal(parseAuthStatus({ authenticated: false }), null);
+assert.equal(parseAuthStatus({ authenticated: true, bootstrapRequired: true }), null);
+assert.equal(parseAuthStatus({ authenticated: false, bootstrapRequired: false, user: "admin" }), null);
+assert.equal(authScreenForStatus(parseAuthStatus({ authenticated: false, bootstrapRequired: true })), "bootstrap");
+assert.equal(authScreenForStatus(parseAuthStatus({ authenticated: false, bootstrapRequired: false })), "login");
+assert.equal(authScreenForStatus(null), "login");
+assert.equal(responseCreatesSession({ username: "admin", role: "admin", expiresAt: "2026-08-06T00:00:00Z" }), true);
+assert.equal(responseCreatesSession({ username: "admin" }), false);
+assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=bootstrap"), "bootstrap");
+assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=login"), "login");
+assert.equal(demoAuthPreviewFromSearch("?demo=1"), null);
+assert.equal(demoAuthPreviewFromSearch("?auth=bootstrap"), null);
 
 const filter = new ActivationFilter();
 assert.equal(filter.accept({ type: "click", pointerId: 1, detail: 1, timeStamp: 100 }), true);
@@ -196,6 +222,11 @@ assert.deepEqual(keyboardLayouts("password-form"), ["full", "full", "full"]);
 assert.deepEqual(keyboardLayouts("session-policy-form"), ["numeric"]);
 assert.deepEqual(keyboardLayouts("settingsForm"), ["numeric", "numeric", "numeric"]);
 assert.match(index, /<section class="auth-overlay"[^>]*role="dialog"[^>]*aria-modal="true"/);
+assert.match(index, /<section class="auth-overlay"[^>]*id="auth-panel"[^>]*hidden/);
+assert.match(index, /<section id="authLogin" hidden>/);
+assert.match(index, /<section id="authBootstrap" hidden>/);
+assert.doesNotMatch(index, /auth-first-install/);
+assert.doesNotMatch(index, /<details\b/i);
 const authOverlayRule = index.match(/\.auth-overlay\s*\{([\s\S]*?)\n    \}/)?.[1] ?? "";
 assert.match(authOverlayRule, /background: transparent;/);
 assert.match(authOverlayRule, /background-color: transparent;/);
@@ -226,6 +257,7 @@ assert.match(keyboardSource, /activeInput\.scrollIntoView\(\{ block: "nearest", 
 assert.match(keyboardStyles, /#auth-panel\[data-keyboard-open="true"\] \{[\s\S]*?align-items: flex-start;/);
 assert.match(keyboardStyles, /#auth-panel\[data-keyboard-open="true"\] \.auth-sheet \{[\s\S]*?max-height: calc\(var\(--auth-keyboard-top, 50vh\) - 52px\);[\s\S]*?overflow-y: auto;/);
 assert.match(keyboardStyles, /#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-dock \{[\s\S]*?background: #f8fafc;[\s\S]*?backdrop-filter: none;/);
+assert.match(keyboardStyles, /#auth-panel\[data-auth-mode\] ~ #hmi #softKeyboardClose \{[\s\S]*?display: none;/);
 assert.equal(rectangleIntersectionArea(
   { left: 0, top: 0, right: 520, bottom: 299 },
   { left: 0, top: 351, right: 1319, bottom: 700 }
@@ -235,6 +267,10 @@ assert.equal(rectangleIntersectionArea(
   { left: 0, top: 540, right: 1536, bottom: 864 }
 ), 0);
 assert.match(keyboardSource, /function closeKeyboard\(action\) \{[\s\S]*?isOpen = false;\s*activeInput = null;/);
+assert.match(keyboardSource, /if \(pinned\) return true;/);
+assert.match(keyboardSource, /function setPinned\(nextPinned\) \{[\s\S]*?data-soft-keyboard-pinned/);
+assert.match(keyboardSource, /if \(pinned\) requested = "soft";/);
+assert.match(keyboardSource, /setPinned: setPinned/);
 assert.match(keyboardSource, /function openForInput\(input\) \{[\s\S]*?activeInput = input;[\s\S]*?isOpen = true;/);
 assert.match(keyboardSource, /if \(isOpen && previousInput && previousInput !== input\) \{[\s\S]*?activeInput = input;/);
 
@@ -277,15 +313,29 @@ assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(source, /displayPath === "home\.machine\.start"/);
 assert.match(source, /function demoAuthPreviewMode\(\): DemoAuthPreview/);
 assert.match(source, /auth === "login" \|\| auth === "bootstrap"/);
-assert.match(source, /if \(this\.authPreview !== null\) \{\s*this\.showLogin\(\);/);
+assert.match(source, /if \(this\.authPreview !== null\) \{\s*this\.showAuthentication\(this\.authPreview\);/);
+assert.match(source, /private async resolveInitialAuthentication\(\): Promise<void>/);
+assert.match(source, /fetch\("\/api\/v2\/auth\/status", \{[\s\S]*?credentials: "same-origin"/);
+assert.match(source, /typeof value\.bootstrapRequired !== "boolean"[\s\S]*?typeof value\.authenticated !== "boolean"/);
+assert.match(source, /Object\.keys\(value\)\.sort\(\)\.join\(","\) !== "authenticated,bootstrapRequired"/);
+assert.match(source, /value\.bootstrapRequired === true && value\.authenticated === true/);
+assert.match(source, /private prepareAuthentication\(\): void \{[\s\S]*?panel\.hidden = true;[\s\S]*?aria-busy/);
+assert.match(source, /this\.loginSection\(\)\.hidden = screen !== "login";/);
+assert.match(source, /this\.bootstrapSection\(\)\.hidden = screen !== "bootstrap";/);
+assert.match(source, /if \(authScreenForStatus\(status\) === "bootstrap"\) \{\s*this\.showBootstrap\(\);[\s\S]*?if \(status\.authenticated\) \{/);
+assert.match(source, /this\.showLogin\("本机认证服务不可用，请检查服务后重试。"\);/);
+assert.match(source, /keyboard\.setMode\("soft", false\);[\s\S]*?keyboard\.setPinned\(true\);/);
+assert.match(source, /keyboard\?\.setPinned\(false\);[\s\S]*?keyboard\?\.close\("keep"\);/);
+assert.match(source, /if \(responseCreatesSession\(result\)\) \{[\s\S]*?this\.beginSession\(\);[\s\S]*?this\.showLogin\("管理员已创建，请使用新账号登录。"\);/);
+assert.doesNotMatch(source, /auth-first-install|localStorage/);
 assert.match(source, /private setHMIInteractive\(interactive: boolean\)/);
 assert.match(source, /element\.toggleAttribute\("inert", !interactive\)/);
-for (const boundary of ["showLogin", "showAccount", "hideAccount", "beginSession", "logout", "endSession"]) {
+for (const boundary of ["prepareAuthentication", "showAuthentication", "showAccount", "hideAccount", "beginSession", "logout", "endSession"]) {
   const boundaryStart = source.search(new RegExp("\\bprivate\\s+(?:async\\s+)?" + boundary + "\\("));
   assert.ok(boundaryStart >= 0, "missing HMI boundary " + boundary);
   const nextBoundary = source.indexOf("\n  private ", boundaryStart + 1);
   const boundarySource = source.slice(boundaryStart, nextBoundary === -1 ? source.length : nextBoundary);
-  assert.match(boundarySource, /window\.HMISoftKeyboard\?\.close\("keep"\)/);
+  assert.match(boundarySource, /this\.endAuthenticationKeyboard\(\)/);
 }
 assert.match(source, /if \(event\.code === 4401\) \{\s*this\.endSession\(/);
 assert.match(source, /pendingStartCommand\.waitFor\(requestId\)/);

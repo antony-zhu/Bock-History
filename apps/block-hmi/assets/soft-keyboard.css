@@ -258,19 +258,14 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   min-height: 42px;
 }
 
-#auth-panel[data-keyboard-open="true"] .auth-first-install {
-  margin-top: 12px;
-  padding-top: 10px;
-}
-
-#auth-panel[data-keyboard-open="true"] .auth-first-install summary {
-  margin-bottom: 8px;
-}
-
 #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
   background: #f8fafc;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+#auth-panel[data-auth-mode] ~ #hmi #softKeyboardClose {
+  display: none;
 }
 
 .soft-keyboard-head {

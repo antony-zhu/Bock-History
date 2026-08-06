@@ -3719,19 +3719,6 @@
       opacity: 0.45;
     }
 
-    .auth-first-install {
-      border-top: 1px solid #d5dee3;
-      margin-top: 22px;
-      padding-top: 18px;
-    }
-
-    .auth-first-install summary {
-      color: #405866;
-      cursor: pointer;
-      font-weight: 800;
-      margin-bottom: 14px;
-    }
-
     .auth-account-head {
       align-items: center;
       display: flex;
@@ -3805,28 +3792,28 @@
   <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260721.2">
 </head>
 <body>
-  <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" aria-modal="true">
+  <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" aria-modal="true" hidden>
     <div class="auth-sheet">
       <p class="auth-kicker">BLOCK LOCAL HMI</p>
       <h1 id="authTitle">料仓控制台</h1>
       <p class="auth-copy">请使用本机账户继续操作。</p>
       <p class="auth-notice" id="authNotice" role="status" aria-live="polite"></p>
 
-      <section id="authLogin">
+      <section id="authLogin" hidden>
         <form class="auth-form" id="login-form">
           <label>用户名<input name="username" autocomplete="username" required data-soft-keyboard="full" data-soft-label="登录用户名"></label>
           <label>密码<input name="password" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="登录密码"></label>
           <button type="submit">登录</button>
         </form>
-        <details class="auth-first-install" id="auth-first-install">
-          <summary>首次安装：创建管理员</summary>
-          <form class="auth-form" id="initial-admin-form">
-            <label>管理员用户名<input name="username" value="admin" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名"></label>
-            <label>密码<input name="password" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="管理员密码"></label>
-            <label>确认密码<input name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认管理员密码"></label>
-            <button type="submit">创建管理员</button>
-          </form>
-        </details>
+      </section>
+
+      <section id="authBootstrap" hidden>
+        <form class="auth-form" id="initial-admin-form">
+          <label>管理员用户名<input name="username" value="admin" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名"></label>
+          <label>密码<input name="password" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="管理员密码"></label>
+          <label>确认密码<input name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认管理员密码"></label>
+          <button type="submit">创建管理员</button>
+        </form>
       </section>
 
       <section id="authAccount" hidden>

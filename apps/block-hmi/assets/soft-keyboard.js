@@ -32,6 +32,7 @@
   var initializing = true;
   var initialized = false;
   var handlingSoftKey = false;
+  var pinned = false;
 
   var layouts = {
     numeric: [
@@ -503,6 +504,8 @@
       return false;
     }
 
+    if (pinned) return true;
+
     if (input) input.setAttribute("aria-expanded", "false");
     clearKeyboardCache(activeInputName);
     isOpen = false;
@@ -630,6 +633,7 @@
 
   function setMode(nextMode, persist) {
     var requested = nextMode === "soft" ? "soft" : "native";
+    if (pinned) requested = "soft";
     mode = requested === "soft" && available && enabled ? "soft" : "native";
     if (mode === "soft") {
       applySoftReadonly();
@@ -646,6 +650,11 @@
       initial: initializing
     }));
     return mode;
+  }
+
+  function setPinned(nextPinned) {
+    pinned = nextPinned === true;
+    root.toggleAttribute("data-soft-keyboard-pinned", pinned);
   }
 
   function bindInput(input) {
@@ -836,6 +845,7 @@
     validateInput: validateInput,
     validateForm: validateForm,
     setMode: setMode,
+    setPinned: setPinned,
     getMode: function () { return mode; },
     isOpen: function () { return isOpen; },
     isAvailable: function () { return available; }
