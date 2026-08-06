@@ -24,6 +24,23 @@
 前端权限仅负责本机 HMI 的交互门禁。Block Agent 仍负责点位表、Mask Write、
 PLC 连接状态及安全校验，并对同机 HMI 返回相同的运行时数据。
 
+## 维护页
+
+维护页固定为四个本机 tab：生产参数、Wi-Fi、PLC 通信和账号管理。每个 tab
+独立滚动，所有输入都可使用软键盘。
+
+- 生产参数的目标、换刀件数和抽检间隔在编辑停止 650 ms 后通过本机
+  `PATCH /api/v2/maintenance/production` 保存；单框工件数量单独保存。
+- Wi-Fi 状态从本机 `GET /api/v2/maintenance/connectivity` 读取；连接请求发送到
+  `POST /api/v2/maintenance/wifi/connect`。密码只用于当前请求，提交后立即清空，
+  不会回显。
+- PLC 页只显示现有 WebSocket 的连接、最近采样/错误、点数和实时点值，并保留
+  既有的扫描、连接、断开和刷新操作；不提供 PLC 网络或点表手工配置。
+- 账号页仍只使用浏览器本地管理员、密码修改和会话超时设置；维护接口不引入
+  Cookie、角色或多账户 API。
+
+`?demo=1` 在浏览器内模拟上述维护值和 Wi-Fi 状态，不会请求或配置真实网络。
+
 ## PLC 连接
 
 手动连接成功后，Block Agent 在本地状态目录保存 PLC endpoint。运行时收到完整

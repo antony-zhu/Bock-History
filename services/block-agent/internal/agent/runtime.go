@@ -16,10 +16,12 @@ import (
 
 	"block.local/block-agent/internal/alarmhistory"
 	"block.local/block-agent/internal/auth"
+	"block.local/block-agent/internal/maintenance"
 	"block.local/block-agent/internal/mqttv2"
 	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
+	"block.local/block-agent/internal/wifi"
 	"golang.org/x/net/websocket"
 )
 
@@ -39,6 +41,9 @@ type Runtime struct {
 	mqtt            MQTTOptions
 	alarms          *alarmhistory.Service
 	plcEndpointPath string
+	production      *maintenance.Store
+	wifiBackend     wifi.Backend
+	wifiInterface   string
 	alarmID         atomic.Uint64
 
 	mu         sync.Mutex
@@ -71,6 +76,9 @@ type RuntimeOptions struct {
 	AlarmStore      alarmhistory.Store
 	MQTT            MQTTOptions
 	PLCEndpointPath string
+	MaintenancePath string
+	WiFiBackend     wifi.Backend
+	WiFiInterface   string
 }
 
 // NewLocalRuntime creates the empty local runtime. It performs no PLC, MQTT
@@ -103,9 +111,14 @@ func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory pl
 	if now == nil {
 		now = time.Now
 	}
+	production, err := maintenance.Open(options.MaintenancePath)
+	if err != nil {
+		return nil, err
+	}
 	runtime := &Runtime{
 		address: address, now: now, store: pointstore.New(), factory: factory, auth: authService,
-		mqtt: options.MQTT, plcEndpointPath: options.PLCEndpointPath,
+		mqtt: options.MQTT, plcEndpointPath: options.PLCEndpointPath, production: production,
+		wifiBackend: options.WiFiBackend, wifiInterface: options.WiFiInterface,
 	}
 	if options.AlarmStore != nil {
 		runtime.alarms = alarmhistory.New(options.AlarmStore, runtimeAlarmNotifier{runtime: runtime})
@@ -118,6 +131,9 @@ func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory pl
 	mux.HandleFunc("/api/v2/auth/logout", runtime.logout)
 	mux.HandleFunc("/api/v2/auth/password", runtime.changePassword)
 	mux.HandleFunc("/api/v2/config/session", runtime.setSessionPolicy)
+	mux.HandleFunc("/api/v2/maintenance/production", runtime.productionSettings)
+	mux.HandleFunc("/api/v2/maintenance/connectivity", runtime.connectivity)
+	mux.HandleFunc("/api/v2/maintenance/wifi/connect", runtime.connectWiFi)
 	mux.Handle("/ws", websocket.Server{Handler: websocket.Handler(runtime.serveWS), Handshake: runtime.checkHandshake})
 	mux.Handle("/", staticHMI(hmi))
 	runtime.server = &http.Server{

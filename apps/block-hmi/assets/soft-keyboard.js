@@ -829,6 +829,11 @@
     dock.addEventListener("mousedown", function (event) {
       event.preventDefault();
     });
+    dock.addEventListener("transitionend", function (event) {
+      if (event.target === dock && event.propertyName === "transform" && isOpen) {
+        syncAuthKeyboardLayout();
+      }
+    });
     window.addEventListener("resize", function () {
       if (isOpen) syncAuthKeyboardLayout();
     });

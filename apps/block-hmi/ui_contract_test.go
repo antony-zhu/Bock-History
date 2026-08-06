@@ -28,6 +28,17 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`id="plc-scan-button"`,
 		`id="plc-disconnect-button"`,
 		`id="snapshot-button"`,
+		`data-maintenance-tab="production"`,
+		`data-maintenance-tab="wifi"`,
+		`data-maintenance-tab="plc"`,
+		`data-maintenance-tab="accounts"`,
+		`data-maintenance-panel="production"`,
+		`data-maintenance-panel="wifi"`,
+		`data-maintenance-panel="plc"`,
+		`data-maintenance-panel="accounts"`,
+		`/api/v2/maintenance/production`,
+		`/api/v2/maintenance/connectivity`,
+		`/api/v2/maintenance/wifi/connect`,
 		`id="operatorName"`,
 		`import("./assets/hmi.mjs")`,
 		`function requireFrontendPermission(permission)`,
@@ -43,8 +54,36 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	if strings.Contains(page, "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
 	}
-	if !regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.settings-layout \{.*?overflow-y: auto;.*?overscroll-behavior: contain;`).MatchString(page) {
-		t.Fatal("maintenance settings and local account do not have an isolated scroll container")
+	if !regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.settings-layout \{.*?overflow: hidden;`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)\.maintenance-panel \{.*?overflow-y: auto;.*?overscroll-behavior: contain;`).MatchString(page) {
+		t.Fatal("maintenance panels do not have isolated local scrolling")
+	}
+	passwordInputs := regexp.MustCompile(`<input id="([^"]+)"[^>]*type="password"`).FindAllStringSubmatch(page, -1)
+	passwordToggles := regexp.MustCompile(`<button[^>]*aria-controls="([^"]+)"[^>]*data-password-toggle`).FindAllStringSubmatch(page, -1)
+	if len(passwordInputs) != 7 || len(passwordToggles) != len(passwordInputs) {
+		t.Fatalf("password visibility controls do not cover every password input: inputs=%d toggles=%d", len(passwordInputs), len(passwordToggles))
+	}
+	passwordInputIDs := map[string]bool{}
+	for _, match := range passwordInputs {
+		passwordInputIDs[match[1]] = true
+	}
+	for _, match := range passwordToggles {
+		if !passwordInputIDs[match[1]] {
+			t.Fatalf("password visibility control targets unknown input %q", match[1])
+		}
+	}
+	if !strings.Contains(page, `class="password-visibility-toggle" type="button"`) || !strings.Contains(page, `aria-label="显示密码"`) || !strings.Contains(page, `aria-pressed="false"`) {
+		t.Fatal("password visibility controls are missing button semantics or accessible state")
+	}
+	if !strings.Contains(page, `}, 650);`) || strings.Contains(page, `backend.updateSettings`) {
+		t.Fatal("production settings do not use the dedicated 650 ms local Agent save path")
+	}
+	keyboardCSS, err := os.ReadFile("assets/soft-keyboard.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] \{.*?--auth-sheet-top-gap:.*?padding-bottom: calc\(100vh - var\(--auth-keyboard-top`).Match(keyboardCSS) {
+		t.Fatal("auth keyboard layout does not reserve a bounded area above the keyboard")
 	}
 
 	bridge, err := os.ReadFile("assets/hmi.mts")
@@ -59,6 +98,9 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`crypto.subtle.digest("SHA-256"`,
 		`private prepareGuestHMI(): void`,
 		`private moveLocalAdministrationToMaintenance(): void`,
+		`#accountSettingsPanel`,
+		`private renderPLCReadOnly(): void`,
+		`private bindPasswordVisibilityToggles(): void`,
 		`private requirePermission(permission: "operate" | "maintenance"): boolean`,
 		`this.openSocket();`,
 		`buildRuntimeConfigure(this.config.points)`,
@@ -88,6 +130,9 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	}
 	if !regexp.MustCompile(`private sendPLCScan[\s\S]*?requirePermission\("maintenance"\)`).MatchString(source) {
 		t.Fatal("HMI PLC actions are not protected by the frontend maintenance gate")
+	}
+	if !strings.Contains(source, `toggle.addEventListener("pointerdown", (event) => event.preventDefault())`) || !strings.Contains(source, `input.type = input.type === "password" ? "text" : "password";`) {
+		t.Fatal("password visibility toggle does not preserve the current input target")
 	}
 	for _, asset := range []string{
 		"assets/hmi.mjs",

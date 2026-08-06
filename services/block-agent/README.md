@@ -115,6 +115,19 @@ Agent 本地 API socket：
 - `POST /api/v1/alarms/{id}/ack`
 - `GET /api/v1/audit`
 
+本机 HMI 维护接口：
+
+- `GET` / `PATCH /api/v2/maintenance/production`：读取或更新目标产能、换刀件数、
+  抽检间隔和单框工件数量；数据以原子 JSON 文件保存在 Agent 本地状态目录。
+- `GET /api/v2/maintenance/connectivity`：即时读取本机网卡、Wi-Fi 和 BDM 连接
+  状态。BDM 只返回 `not_configured` 或 `unknown`，不维护额外状态缓存。
+- `POST /api/v2/maintenance/wifi/connect`：仅接受本机 HMI 的 SSID 和当前密码，
+  通过 NetworkManager 的 mode `0600` 临时 keyfile 应用连接。密码不会进入响应、
+  日志或命令行参数，临时 keyfile 在调用结束后删除。
+
+这些维护接口不实现 Cookie、角色或多账户认证；HMI 保留自己的浏览器本地管理员
+交互门禁。它们不提供 PLC 写入、BDM 控制、远程配置或任何 Pad 写接口。
+
 这些写操作只属于 Block 现场本地接口，不会从 BDM 或 Pad 调用。请求必须带
 稳定 `Idempotency-Key`；Agent 在发送前写入 SQLite，按单队列执行，并在
 独立读回确认后才标记 `EXECUTED`。传输结果不确定时记录 `UNKNOWN`，不会

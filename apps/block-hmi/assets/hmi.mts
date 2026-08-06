@@ -110,7 +110,6 @@ type LegacyState = {
 type LegacyBackend = {
   APIError: typeof HMIAPIError;
   getState(): Promise<{ state: LegacyState }>;
-  updateSettings(settings: Record<string, unknown>, context?: unknown): Promise<{ state: LegacyState }>;
   sendCommand(command: string, payload?: Record<string, unknown>, context?: unknown): Promise<{ state: LegacyState }>;
   acknowledgeAlarm(alarmID: number, context?: unknown): Promise<{ state: LegacyState }>;
   getAudit(options?: unknown): Promise<{ events: LegacyHistory[] }>;
@@ -233,6 +232,16 @@ export function applyAbsoluteValues(target: Map<string, PointValue>, values: Rec
   for (const [pointID, pointValue] of Object.entries(values)) {
     target.set(pointID, { ...pointValue });
   }
+}
+
+function latestPointTime(values: Record<string, PointValue>): string | null {
+  let latest: string | null = null;
+  for (const point of Object.values(values)) {
+    if (typeof point.updatedAt === "string" && (latest === null || point.updatedAt > latest)) {
+      latest = point.updatedAt;
+    }
+  }
+  return latest;
 }
 
 export function clearTransientRuntime(values: Map<string, PointValue>, devices: PLCDevice[]): void {
@@ -607,6 +616,8 @@ class AppleBridge {
   private lastActivityAt = Number.NEGATIVE_INFINITY;
   private revision = 0;
   private plcState: PLCDevice["state"] = "disconnected";
+  private lastPLCSampleAt: string | null = null;
+  private lastPLCError = "";
   private readonly values = new Map<string, PointValue>();
   private readonly plcDevices: PLCDevice[] = [];
   private readonly pendingStartCommand = new StartCommandReceipt();
@@ -630,6 +641,7 @@ class AppleBridge {
     };
     this.moveLocalAdministrationToMaintenance();
     this.bindAuthForms();
+    this.bindPasswordVisibilityToggles();
     this.bindAccountControls();
     this.bindPLCControls();
     this.bindActivityReporting();
@@ -654,7 +666,6 @@ class AppleBridge {
     return {
       APIError: HMIAPIError,
       getState: () => this.getState(),
-      updateSettings: (settings) => this.updateSettings(settings),
       sendCommand: (command, payload) => this.sendCommand(command, payload),
       acknowledgeAlarm: (alarmID) => this.acknowledgeAlarm(alarmID),
       getAudit: () => Promise.resolve({ events: cloneState(this.currentState()).history })
@@ -794,6 +805,29 @@ class AppleBridge {
     });
   }
 
+  private bindPasswordVisibilityToggles(): void {
+    document.querySelectorAll<HTMLButtonElement>("[data-password-toggle]").forEach((toggle) => {
+      const inputId = toggle.getAttribute("aria-controls");
+      const input = inputId === null ? null : document.getElementById(inputId);
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      const syncLabel = () => {
+        const visible = input.type === "text";
+        toggle.setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
+        toggle.setAttribute("aria-pressed", String(visible));
+      };
+      toggle.addEventListener("pointerdown", (event) => event.preventDefault());
+      toggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        input.type = input.type === "password" ? "text" : "password";
+        syncLabel();
+        input.focus();
+      });
+      syncLabel();
+    });
+  }
+
   private bindAccountControls(): void {
     const operator = document.querySelector<HTMLElement>("#operatorName")!;
     operator.tabIndex = 0;
@@ -809,7 +843,7 @@ class AppleBridge {
 
   private moveLocalAdministrationToMaintenance(): void {
     const account = document.querySelector<HTMLElement>("#authAccount")!;
-    const maintenance = document.querySelector<HTMLElement>("[data-page=\"maintenance\"] .settings-layout")!;
+    const maintenance = document.querySelector<HTMLElement>("#accountSettingsPanel")!;
     document.querySelector<HTMLElement>("#auth-close")?.remove();
     document.querySelector<HTMLElement>("#logout-button")?.remove();
     const notice = document.createElement("p");
@@ -823,7 +857,9 @@ class AppleBridge {
       idleTimeout.value = String(readLocalSettings(() => window.localStorage).idleTimeoutSeconds);
     }
     account.hidden = false;
-    maintenance.append(account);
+    if (account.parentElement !== maintenance) {
+      maintenance.append(account);
+    }
   }
 
   private bindPLCControls(): void {
@@ -1176,6 +1212,7 @@ class AppleBridge {
       this.values.clear();
       applyAbsoluteValues(this.values, message.values);
       this.revision += 1;
+      this.lastPLCSampleAt = latestPointTime(message.values) ?? new Date().toISOString();
       this.setPLCStatus("已接收 PLC 当前状态");
       this.emitState();
       return;
@@ -1183,6 +1220,8 @@ class AppleBridge {
     if (message.type === "points.changed" && message.values !== undefined) {
       applyAbsoluteValues(this.values, message.values);
       this.revision += 1;
+      this.lastPLCSampleAt = latestPointTime(message.values) ?? new Date().toISOString();
+      this.renderPLCReadOnly();
       this.emitState();
       return;
     }
@@ -1205,11 +1244,16 @@ class AppleBridge {
       if (message.state === "disconnected") {
         this.plcDevices.splice(0, this.plcDevices.length);
       }
+      if (message.state === "error") {
+        this.lastPLCError = plcStateText(message.state, message.deviceId);
+      }
       this.setPLCStatus(plcStateText(message.state, message.deviceId));
       this.renderPLCCandidates();
       return;
     }
     if (message.success === false) {
+      this.lastPLCError = message.error?.message ?? errorText(message.error?.code);
+      this.renderPLCReadOnly();
       this.setAuthNotice(errorText(message.error?.code));
     }
   }
@@ -1266,23 +1310,6 @@ class AppleBridge {
       return undefined;
     }
     return this.values.get(binding.readPoint)?.value;
-  }
-
-  private updateSettings(settings: Record<string, unknown>): Promise<{ state: LegacyState }> {
-    if (!this.requirePermission("maintenance")) {
-      return Promise.reject(new HMIAPIError("请登录管理员后修改维护参数", 403, "permission_denied"));
-    }
-    if (!this.demo) {
-      return Promise.reject(new HMIAPIError("当前 v2 未提供维护参数写入", 501, "not_supported"));
-    }
-    const state = cloneState(this.demoState);
-    state.target = positiveInteger(settings.target, state.target);
-    state.toolLimit = positiveInteger(settings.toolLimit, state.toolLimit);
-    state.inspectInterval = positiveInteger(settings.inspectInterval, state.inspectInterval);
-    state.revision += 1;
-    this.demoState = state;
-    this.emitState();
-    return Promise.resolve({ state: cloneState(state) });
   }
 
   private sendCommand(command: string, payload: Record<string, unknown> = {}): Promise<{ state: LegacyState }> {
@@ -1412,6 +1439,26 @@ class AppleBridge {
 
   private setPLCStatus(message: string): void {
     document.querySelector<HTMLElement>("#plc-status")!.textContent = message;
+    this.renderPLCReadOnly();
+  }
+
+  private renderPLCReadOnly(): void {
+    const connection = document.querySelector<HTMLElement>("#plc-connection-value");
+    const sample = document.querySelector<HTMLElement>("#plc-last-sample");
+    const error = document.querySelector<HTMLElement>("#plc-last-error");
+    const pointCount = document.querySelector<HTMLElement>("#plc-point-count");
+    const livePoints = document.querySelector<HTMLElement>("#plc-live-points");
+    if (connection === null || sample === null || error === null || pointCount === null || livePoints === null) {
+      return;
+    }
+    connection.textContent = plcStateText(this.plcState);
+    sample.textContent = this.lastPLCSampleAt ?? "—";
+    error.textContent = this.lastPLCError || "—";
+    pointCount.textContent = String(this.config.points.length || this.values.size);
+    const entries = [...this.values.entries()].slice(0, 50);
+    livePoints.textContent = entries.length === 0
+      ? "等待 PLC 实时点值"
+      : entries.map(([pointID, point]) => pointID + ": " + String(point.value) + " · " + point.quality + " · " + point.updatedAt).join("\n");
   }
 
   private renderPLCCandidates(): void {
@@ -1468,10 +1515,6 @@ class AppleBridge {
       if (mode !== null) {
         mode.dataset.backendUnavailable = "true";
       }
-      const save = document.querySelector<HTMLButtonElement>(".save-button");
-      if (save !== null) {
-        save.dataset.backendUnavailable = "true";
-      }
       document.querySelectorAll<HTMLButtonElement>(".ack-button").forEach((button) => {
         button.dataset.backendUnavailable = "true";
       });
@@ -1485,11 +1528,6 @@ class AppleBridge {
 
 function formValue(form: HTMLFormElement, name: string): string {
   return String(new FormData(form).get(name) ?? "");
-}
-
-function positiveInteger(value: unknown, fallback: number): number {
-  const numberValue = Number(value);
-  return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : fallback;
 }
 
 function plcStateText(state: PLCDevice["state"], deviceID?: string): string {

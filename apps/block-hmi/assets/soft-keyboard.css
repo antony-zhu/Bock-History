@@ -212,15 +212,19 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 }
 
 #auth-panel[data-keyboard-open="true"] {
+  --auth-sheet-bottom-gap: 16px;
+  --auth-sheet-top-gap: max(16px, env(safe-area-inset-top));
   align-items: flex-start;
-  padding-top: max(16px, env(safe-area-inset-top));
+  padding-top: var(--auth-sheet-top-gap);
+  padding-bottom: calc(100vh - var(--auth-keyboard-top, 50vh) + var(--auth-sheet-bottom-gap));
 }
 
 #auth-panel[data-keyboard-open="true"] .auth-sheet {
-  max-height: calc(var(--auth-keyboard-top, 50vh) - 52px);
+  max-height: calc(var(--auth-keyboard-top, 50vh) - var(--auth-sheet-top-gap) - var(--auth-sheet-bottom-gap));
   min-height: 0;
   padding: 18px 28px;
   border-radius: 22px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -248,7 +252,8 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   gap: 9px;
 }
 
-#auth-panel[data-keyboard-open="true"] .auth-form label {
+#auth-panel[data-keyboard-open="true"] .auth-form label,
+#auth-panel[data-keyboard-open="true"] .auth-form .auth-field {
   gap: 4px;
   font-size: 13px;
 }

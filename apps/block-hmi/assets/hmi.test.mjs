@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { assertAuthKeyboardLayout, authKeyboardSafeGap } from "../tools/auth-layout-probe.mjs";
 import {
   ActivationFilter,
   applyAbsoluteValues,
@@ -102,12 +103,17 @@ assert.equal(devices.length, 0);
 
 const source = readFileSync(new URL("./hmi.mts", import.meta.url), "utf8");
 const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
+const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
 assert.match(source, /crypto\.subtle\.digest\("SHA-256"/);
 assert.match(source, /localAdminStorageKey = "block-hmi-local-admin-v1"/);
 assert.match(source, /localSessionStorageKey = "block-hmi-local-session-v1"/);
 assert.match(source, /localSettingsStorageKey = "block-hmi-local-settings-v1"/);
 assert.match(source, /this\.prepareGuestHMI\(\);[\s\S]*?this\.openSocket\(\);/);
 assert.match(source, /private moveLocalAdministrationToMaintenance\(\): void/);
+assert.match(source, /private bindPasswordVisibilityToggles\(\): void/);
+assert.match(source, /toggle\.addEventListener\("pointerdown", \(event\) => event\.preventDefault\(\)\)/);
+assert.match(source, /input\.type = input\.type === "password" \? "text" : "password";/);
 assert.match(source, /private requirePermission\(permission: "operate" \| "maintenance"\): boolean/);
 const becomeGuest = source.match(/private becomeGuest\(\): void \{[\s\S]*?\n  \}\n\n  private openSocket/);
 assert.notEqual(becomeGuest, null);
@@ -123,10 +129,66 @@ assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(index, /window\.BlockHMIReady\.then\(syncFrontendPermissions\)/);
 assert.match(index, /function requireFrontendPermission\(permission\)/);
 assert.match(index, /name === "maintenance" && !requireFrontendPermission\("maintenance"\)/);
-assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
+assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S]*?overflow: hidden;/);
+assert.match(index, /\.maintenance-panel \{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
 assert.match(index, /window\.addEventListener\("block-hmi-guest", \(\) => \{[\s\S]*?switchPage\("home"\)/);
 assert.match(index, /if \(!requireFrontendPermission\("operate"\)\) return false;/);
-assert.match(index, /if \(!requireFrontendPermission\("maintenance"\)\) return;/);
+assert.match(index, /async function saveProductionSettings\(manual = false\) \{[\s\S]*?requireFrontendPermission\("maintenance"\)/);
+assert.match(index, /data-maintenance-tab="production"[\s\S]*?data-maintenance-tab="wifi"[\s\S]*?data-maintenance-tab="plc"[\s\S]*?data-maintenance-tab="accounts"/);
+assert.match(index, /data-maintenance-panel="production"[\s\S]*?data-maintenance-panel="wifi"[\s\S]*?data-maintenance-panel="plc"[\s\S]*?data-maintenance-panel="accounts"/);
+assert.match(index, /setTimeout\(\(\) => \{[\s\S]*?saveProductionSettings\(\);[\s\S]*?\}, 650\)/);
+assert.match(index, /"\/api\/v2\/maintenance\/production"/);
+assert.match(index, /"\/api\/v2\/maintenance\/connectivity"/);
+assert.match(index, /"\/api\/v2\/maintenance\/wifi\/connect"/);
+assert.doesNotMatch(index, /backend\.updateSettings/);
 assert.doesNotMatch(index, /api-client\.js/);
+const passwordInputIDs = [...index.matchAll(/<input id="([^"]+)"[^>]*type="password"/g)].map((match) => match[1]);
+const passwordToggleIDs = [...index.matchAll(/<button[^>]*aria-controls="([^"]+)"[^>]*data-password-toggle/g)].map((match) => match[1]);
+assert.equal(passwordInputIDs.length, 7);
+assert.deepEqual(passwordToggleIDs.sort(), passwordInputIDs.sort());
+assert.match(index, /class="password-visibility-toggle" type="button"[^>]*aria-label="显示密码"[^>]*aria-pressed="false"/);
+assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] \{[\s\S]*?--auth-sheet-top-gap:[\s\S]*?padding-bottom: calc\(100vh - var\(--auth-keyboard-top/);
+assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] \.auth-sheet \{[\s\S]*?max-height: calc\(var\(--auth-keyboard-top[\s\S]*?overflow-y: auto;/);
+assert.match(keyboardSource, /dock\.addEventListener\("transitionend", function \(event\) \{[\s\S]*?syncAuthKeyboardLayout\(\);/);
+assert.match(source, /const maintenance = document\.querySelector<HTMLElement>\("#accountSettingsPanel"\)!;/);
+assert.match(source, /private renderPLCReadOnly\(\): void/);
 assert.equal(existsSync(new URL("./machine-bin.png", import.meta.url)), true);
 assert.equal(existsSync(new URL("./soft-keyboard.js", import.meta.url)), true);
+
+function rectangle(top, bottom, left = 0, right = 520) {
+  return { top, bottom, left, right, width: right - left, height: bottom - top };
+}
+
+function probeElement(rect, computedStyle, options = {}) {
+  return {
+    hidden: options.hidden ?? false,
+    clientHeight: options.clientHeight ?? rect.height,
+    scrollHeight: options.scrollHeight ?? rect.height,
+    computedStyle,
+    getAttribute: options.getAttribute ?? (() => null),
+    getBoundingClientRect: () => rect,
+    getClientRects: () => options.visible === false ? [] : [rect]
+  };
+}
+
+const visualStyle = { backgroundColor: "rgb(1, 2, 3)", filter: "none", opacity: "1", backdropFilter: "none" };
+const authPanelProbe = probeElement(rectangle(0, 900), {
+  backgroundColor: "rgba(0, 0, 0, 0)", filter: "none", opacity: "1", overflow: "hidden", pointerEvents: "none"
+}, { getAttribute: (name) => name === "data-keyboard-open" ? "true" : null });
+const authSheetProbe = probeElement(rectangle(16, 386), { overflowY: "auto", pointerEvents: "auto" }, { clientHeight: 370, scrollHeight: 430 });
+const keyboardDockProbe = probeElement(rectangle(402, 740, 28, 1572), {}, { visible: true });
+const probeElements = new Map([
+  ["#auth-panel", authPanelProbe],
+  ["#auth-panel .auth-sheet", authSheetProbe],
+  ["#softKeyboardDock", keyboardDockProbe],
+  ["#hmi", probeElement(rectangle(0, 900), visualStyle)],
+  ["#hmi-topbar", probeElement(rectangle(0, 66), visualStyle)],
+  ["#hmi-pages", probeElement(rectangle(66, 758), visualStyle)],
+  ["#hmi-footer", probeElement(rectangle(758, 900), visualStyle)]
+]);
+const layoutResult = assertAuthKeyboardLayout({ querySelector: (selector) => probeElements.get(selector) }, {
+  innerHeight: 900,
+  getComputedStyle: (element) => element.computedStyle
+});
+assert.equal(layoutResult.sheetTopGap, authKeyboardSafeGap);
+assert.equal(layoutResult.sheetKeyboardGap, authKeyboardSafeGap);

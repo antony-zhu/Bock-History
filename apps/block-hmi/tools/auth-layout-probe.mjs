@@ -1,4 +1,5 @@
 const visualSelectors = ["#hmi", "#hmi-topbar", "#hmi-pages", "#hmi-footer"];
+export const authKeyboardSafeGap = 16;
 
 export function rectangleIntersectionArea(first, second) {
   const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left));
@@ -27,15 +28,23 @@ export function inspectAuthKeyboardLayout(documentRef = document, windowRef = wi
   const sheetStyle = windowRef.getComputedStyle(sheet);
   const keyboardOpen = authPanel.getAttribute("data-keyboard-open") === "true";
   const dockVisible = !dock.hidden && dock.getClientRects().length > 0;
+  const sheetRect = sheet.getBoundingClientRect();
+  const dockRect = dock.getBoundingClientRect();
   return {
     keyboardOpen,
     dockVisible,
-    intersectionArea: dockVisible ? rectangleIntersectionArea(sheet.getBoundingClientRect(), dock.getBoundingClientRect()) : 0,
+    intersectionArea: dockVisible ? rectangleIntersectionArea(sheetRect, dockRect) : 0,
+    sheetTopGap: sheetRect.top,
+    sheetKeyboardGap: dockVisible ? dockRect.top - sheetRect.bottom : null,
+    sheetBottom: sheetRect.bottom,
+    viewportHeight: windowRef.innerHeight,
     authPointerEvents: authStyle.pointerEvents,
     authBackgroundColor: authStyle.backgroundColor,
     authFilter: authStyle.filter,
     authOpacity: authStyle.opacity,
+    authOverflow: authStyle.overflow,
     sheetPointerEvents: sheetStyle.pointerEvents,
+    sheetOverflowY: sheetStyle.overflowY,
     hmi: captureHMIVisualState(documentRef, windowRef)
   };
 }
@@ -48,6 +57,13 @@ export function assertAuthKeyboardLayout(documentRef = document, windowRef = win
   if (result.authFilter !== "none" || result.authOpacity !== "1") throw new Error("auth host visually alters the HMI");
   if (result.keyboardOpen && result.dockVisible && result.intersectionArea !== 0) {
     throw new Error("auth sheet overlaps the soft keyboard");
+  }
+  if (result.keyboardOpen && result.dockVisible) {
+    if (result.sheetTopGap < authKeyboardSafeGap) throw new Error("auth sheet is above the safe top margin");
+    if (result.sheetKeyboardGap < authKeyboardSafeGap) throw new Error("auth sheet is too close to the soft keyboard");
+    if (result.sheetBottom > result.viewportHeight) throw new Error("auth sheet extends below the viewport");
+    if (result.authOverflow !== "hidden") throw new Error("auth host may scroll outside the sheet");
+    if (result.sheetOverflowY !== "auto") throw new Error("auth sheet does not own its vertical scroll");
   }
   return result;
 }

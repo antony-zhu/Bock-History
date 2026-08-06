@@ -19,12 +19,14 @@ import (
 	"block.local/block-agent/internal/mqttv2"
 	"block.local/block-agent/internal/sshbootstrap"
 	"block.local/block-agent/internal/storage"
+	"block.local/block-agent/internal/wifi"
 )
 
 func main() {
 	localHTTPAddress := flag.String("local-http-address", "127.0.0.1:8080", "loopback HTTP and WebSocket address")
 	stateDatabase := flag.String("state-db", "data/block.db", "local SQLite database path")
 	hmiStaticDirectory := flag.String("hmi-static-dir", "", "directory containing the local HMI static build")
+	wifiInterface := flag.String("wifi-interface", "wlan0", "NetworkManager Wi-Fi interface used by local HMI maintenance")
 	maintenanceHTTPSAddress := flag.String("maintenance-https-address", "", "maintenance HTTPS address, such as 0.0.0.0:8443")
 	maintenanceTLSCertificate := flag.String("maintenance-tls-cert", "", "maintenance HTTPS certificate path")
 	maintenanceTLSPrivateKey := flag.String("maintenance-tls-key", "", "maintenance HTTPS private key path")
@@ -63,9 +65,13 @@ func main() {
 		log.Fatalf("initialize Block authentication: %v", err)
 	}
 	defer authService.Close()
+	dataDirectory := filepath.Dir(*stateDatabase)
 	runtime, err := agentapp.NewLocalRuntimeWithOptions(*localHTTPAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
 		AlarmStore:      store,
-		PLCEndpointPath: filepath.Join(filepath.Dir(*stateDatabase), "plc-endpoint.json"),
+		PLCEndpointPath: filepath.Join(dataDirectory, "plc-endpoint.json"),
+		MaintenancePath: filepath.Join(dataDirectory, "maintenance.json"),
+		WiFiBackend:     wifi.NewNetworkManager(nil, filepath.Join(dataDirectory, "wifi-tmp")),
+		WiFiInterface:   *wifiInterface,
 		MQTT: agentapp.MQTTOptions{
 			Enabled: *mqttsV2Enabled,
 			Connection: mqttv2.ConnectionConfig{
