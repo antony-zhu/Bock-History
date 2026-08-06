@@ -206,6 +206,9 @@ assert.match(keyboardSource, /\["hidden", "button", "submit", "reset", "checkbox
 assert.match(keyboardSource, /new window\.MutationObserver/);
 assert.match(keyboardSource, /attributeFilter: \["disabled", "hidden", "type", "inputmode"\]/);
 assert.match(keyboardSource, /activeInput\.type === "password"/);
+assert.match(keyboardSource, /function closeKeyboard\(action\) \{[\s\S]*?isOpen = false;\s*activeInput = null;/);
+assert.match(keyboardSource, /function openForInput\(input\) \{[\s\S]*?activeInput = input;[\s\S]*?isOpen = true;/);
+assert.match(keyboardSource, /if \(isOpen && previousInput && previousInput !== input\) \{[\s\S]*?activeInput = input;/);
 
 for (const page of ["home", "data", "maintenance", "alarm", "history"]) {
   assert.match(index, new RegExp('data-page="' + page + '"'));
@@ -249,6 +252,14 @@ assert.match(source, /auth === "login" \|\| auth === "bootstrap"/);
 assert.match(source, /if \(this\.authPreview !== null\) \{\s*this\.showLogin\(\);/);
 assert.match(source, /private setHMIInteractive\(interactive: boolean\)/);
 assert.match(source, /element\.toggleAttribute\("inert", !interactive\)/);
+for (const boundary of ["showLogin", "showAccount", "hideAccount", "beginSession", "logout", "endSession"]) {
+  const boundaryStart = source.search(new RegExp("\\bprivate\\s+(?:async\\s+)?" + boundary + "\\("));
+  assert.ok(boundaryStart >= 0, "missing HMI boundary " + boundary);
+  const nextBoundary = source.indexOf("\n  private ", boundaryStart + 1);
+  const boundarySource = source.slice(boundaryStart, nextBoundary === -1 ? source.length : nextBoundary);
+  assert.match(boundarySource, /window\.HMISoftKeyboard\?\.close\("keep"\)/);
+}
+assert.match(source, /if \(event\.code === 4401\) \{\s*this\.endSession\(/);
 assert.match(source, /pendingStartCommand\.waitFor\(requestId\)/);
 assert.match(source, /buildPointCommand\(binding\.writePoint, binding\.action, requestId\)/);
 assert.match(source, /pendingStartCommand\.receive\(message\)/);

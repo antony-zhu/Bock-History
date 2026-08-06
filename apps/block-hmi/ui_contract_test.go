@@ -105,6 +105,8 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 		"private setHMIInteractive(interactive: boolean)",
 		`element.toggleAttribute("inert", !interactive)`,
 		"if (this.authPreview !== null)",
+		`window.HMISoftKeyboard?.close("keep")`,
+		"if (event.code === 4401)",
 	} {
 		if !strings.Contains(string(bridge), required) {
 			t.Fatalf("HMI bridge is missing %q", required)

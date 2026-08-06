@@ -409,6 +409,7 @@ class AppleBridge {
         this.authNotice().textContent = message;
     }
     showLogin(message = "") {
+        window.HMISoftKeyboard?.close("keep");
         this.authPanel().hidden = false;
         this.loginSection().hidden = false;
         this.accountSection().hidden = true;
@@ -423,6 +424,7 @@ class AppleBridge {
             this.showLogin();
             return;
         }
+        window.HMISoftKeyboard?.close("keep");
         this.authPanel().hidden = false;
         this.loginSection().hidden = true;
         this.accountSection().hidden = false;
@@ -432,6 +434,7 @@ class AppleBridge {
     }
     hideAccount() {
         if (this.signedIn) {
+            window.HMISoftKeyboard?.close("keep");
             this.authPanel().hidden = true;
             this.setHMIInteractive(true);
         }
@@ -575,6 +578,7 @@ class AppleBridge {
         }
     }
     beginSession() {
+        window.HMISoftKeyboard?.close("keep");
         this.signedIn = true;
         this.authPanel().hidden = true;
         this.setHMIInteractive(true);
@@ -587,6 +591,7 @@ class AppleBridge {
         this.openSocket();
     }
     async logout() {
+        window.HMISoftKeyboard?.close("keep");
         if (!this.demo) {
             this.pendingStartCommand.cancel("已退出登录，启动结果未知", 401, "unauthenticated");
             try {
@@ -604,6 +609,7 @@ class AppleBridge {
         this.hideAccount();
     }
     endSession(message) {
+        window.HMISoftKeyboard?.close("keep");
         this.signedIn = false;
         this.configured = false;
         this.closeSocket();

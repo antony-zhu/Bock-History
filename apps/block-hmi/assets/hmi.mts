@@ -116,9 +116,14 @@ type LegacyBackend = {
   getAudit(options?: unknown): Promise<{ events: LegacyHistory[] }>;
 };
 
+type HMISoftKeyboard = {
+  close(action?: "cancel" | "commit" | "keep"): boolean;
+};
+
 declare global {
   interface Window {
     HMIBackend?: LegacyBackend;
+    HMISoftKeyboard?: HMISoftKeyboard;
   }
 }
 
@@ -591,6 +596,7 @@ class AppleBridge {
   }
 
   private showLogin(message = ""): void {
+    window.HMISoftKeyboard?.close("keep");
     this.authPanel().hidden = false;
     this.loginSection().hidden = false;
     this.accountSection().hidden = true;
@@ -606,6 +612,7 @@ class AppleBridge {
       this.showLogin();
       return;
     }
+    window.HMISoftKeyboard?.close("keep");
     this.authPanel().hidden = false;
     this.loginSection().hidden = true;
     this.accountSection().hidden = false;
@@ -616,6 +623,7 @@ class AppleBridge {
 
   private hideAccount(): void {
     if (this.signedIn) {
+      window.HMISoftKeyboard?.close("keep");
       this.authPanel().hidden = true;
       this.setHMIInteractive(true);
     }
@@ -775,6 +783,7 @@ class AppleBridge {
   }
 
   private beginSession(): void {
+    window.HMISoftKeyboard?.close("keep");
     this.signedIn = true;
     this.authPanel().hidden = true;
     this.setHMIInteractive(true);
@@ -788,6 +797,7 @@ class AppleBridge {
   }
 
   private async logout(): Promise<void> {
+    window.HMISoftKeyboard?.close("keep");
     if (!this.demo) {
       this.pendingStartCommand.cancel("已退出登录，启动结果未知", 401, "unauthenticated");
       try {
@@ -805,6 +815,7 @@ class AppleBridge {
   }
 
   private endSession(message: string): void {
+    window.HMISoftKeyboard?.close("keep");
     this.signedIn = false;
     this.configured = false;
     this.closeSocket();
