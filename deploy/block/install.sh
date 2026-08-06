@@ -13,6 +13,18 @@ CURRENT_LINK=/opt/block/current
 STATE_ROOT=/var/lib/block-release
 CONFIG_ROOT=/etc/block
 SYSTEMD_ROOT=/etc/systemd/system
+ROLLBACK_ARMED=false
+
+rollback_install() {
+  STATUS=$?
+  trap - ERR
+  if [ "$ROLLBACK_ARMED" = true ]; then
+    "$CURRENT_LINK/deploy/rollback.sh" --execute
+  fi
+  exit "$STATUS"
+}
+
+trap rollback_install ERR
 
 usage() {
   cat <<'EOF'
@@ -137,6 +149,7 @@ fi
 NEXT_LINK=$PREFIX/.current-next-$$
 ln -s "$RELEASE_DIR" "$NEXT_LINK"
 mv -Tf "$NEXT_LINK" "$CURRENT_LINK"
+ROLLBACK_ARMED=true
 
 for LEGACY_UNIT in block-agent.service block-hmi.service block-plc-simulator.service; do
   systemctl disable --now "$LEGACY_UNIT" >/dev/null 2>&1 || true
@@ -144,9 +157,13 @@ for LEGACY_UNIT in block-agent.service block-hmi.service block-plc-simulator.ser
 done
 
 systemctl daemon-reload
-systemctl enable --now block.service
+systemctl enable block.service
+systemctl enable block-kiosk.service
+systemctl restart block.service
 "$CURRENT_LINK/deploy/health-check.sh" --expected-version "$VERSION" --retries 30 --delay 1
-systemctl enable --now block-kiosk.service
+systemctl restart block-kiosk.service
 printf '%s\n' "$VERSION" > "$STATE_ROOT/current-version"
+ROLLBACK_ARMED=false
+trap - ERR
 
 printf 'installed Block release %s\n' "$VERSION"

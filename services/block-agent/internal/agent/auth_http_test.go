@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -31,8 +32,9 @@ func TestLocalAuthBootstrapLoginActivityLogoutAndStaticHMI(t *testing.T) {
 	}
 	defer authService.Close()
 	runtime, err := NewLocalRuntimeWithServices("127.0.0.1:0", time.Now, nil, fstest.MapFS{
-		"index.html":    {Data: []byte("<main>Block HMI</main>")},
-		"assets/app.js": {Data: []byte("console.log('block')")},
+		"index.html":               {Data: []byte("<main>Block HMI</main>")},
+		"assets/hmi.mjs":           {Data: []byte("console.log('block')")},
+		"downloads/diagnostic.zip": {Data: []byte("download")},
 	}, authService)
 	if err != nil {
 		t.Fatal(err)
@@ -51,8 +53,8 @@ func TestLocalAuthBootstrapLoginActivityLogoutAndStaticHMI(t *testing.T) {
 	response := postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
 		"username": "admin", "password": "one",
 	})
-	if response.StatusCode != http.StatusBadRequest {
-		t.Fatalf("initial admin without confirmation status=%d", response.StatusCode)
+	if response.StatusCode != http.StatusBadRequest || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("initial admin without confirmation status=%d cache-control=%q", response.StatusCode, response.Header.Get("Cache-Control"))
 	}
 	response.Body.Close()
 
@@ -88,8 +90,24 @@ func TestLocalAuthBootstrapLoginActivityLogoutAndStaticHMI(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusOK || string(body) != "<main>Block HMI</main>" {
-		t.Fatalf("static HMI response=%d body=%q", response.StatusCode, body)
+	if response.StatusCode != http.StatusOK || string(body) != "<main>Block HMI</main>" || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("static HMI response=%d cache-control=%q body=%q", response.StatusCode, response.Header.Get("Cache-Control"), body)
+	}
+	response, err = client.Get(address + "/assets/hmi.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("HMI module response=%d cache-control=%q", response.StatusCode, response.Header.Get("Cache-Control"))
+	}
+	response, err = client.Get(address + "/downloads/diagnostic.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "" {
+		t.Fatalf("download response=%d cache-control=%q", response.StatusCode, response.Header.Get("Cache-Control"))
 	}
 
 	response = postJSON(t, client, address+"/api/v2/auth/logout", map[string]string{})
@@ -141,6 +159,31 @@ func TestLocalAuthBootstrapLoginActivityLogoutAndStaticHMI(t *testing.T) {
 		t.Fatalf("password change status=%d", response.StatusCode)
 	}
 	response.Body.Close()
+}
+
+func TestStaticHMICacheControlExcludesAPIRoutes(t *testing.T) {
+	handler := staticHMI(fstest.MapFS{
+		"index.html":               {Data: []byte("<main>Block HMI</main>")},
+		"assets/hmi.mjs":           {Data: []byte("console.log('block')")},
+		"downloads/diagnostic.zip": {Data: []byte("download")},
+	})
+	for _, test := range []struct {
+		path         string
+		cacheControl string
+	}{
+		{path: "/", cacheControl: "no-store"},
+		{path: "/assets/hmi.mjs", cacheControl: "no-store"},
+		{path: "/api/v2/maintenance/production", cacheControl: ""},
+		{path: "/downloads/diagnostic.zip", cacheControl: ""},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+			if got := response.Header().Get("Cache-Control"); got != test.cacheControl {
+				t.Fatalf("cache-control=%q, want %q", got, test.cacheControl)
+			}
+		})
+	}
 }
 
 func TestWebSocketAllowsGuestRuntimeAndRejectsForeignOrigin(t *testing.T) {

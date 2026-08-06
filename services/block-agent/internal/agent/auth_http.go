@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -187,8 +188,26 @@ func staticHMI(files fs.FS) http.Handler {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		if isHMIStaticResource(request.URL.Path) {
+			writer.Header().Set("Cache-Control", "no-store")
+		}
 		server.ServeHTTP(writer, request)
 	})
+}
+
+func isHMIStaticResource(requestPath string) bool {
+	if requestPath == "/" || requestPath == "/index.html" {
+		return true
+	}
+	if strings.HasPrefix(requestPath, "/api/") || requestPath == "/ws" {
+		return false
+	}
+	switch path.Ext(requestPath) {
+	case ".css", ".html", ".ico", ".jpeg", ".jpg", ".js", ".json", ".mjs", ".png", ".svg", ".webp", ".woff", ".woff2":
+		return true
+	default:
+		return false
+	}
 }
 
 func requireAuthMethod(writer http.ResponseWriter, request *http.Request, method string) bool {

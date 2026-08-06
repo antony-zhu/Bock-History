@@ -63,6 +63,36 @@ if config["BLOCK_MQTTS_V2_ENDPOINT"] != "mqtts://bdm.example.invalid:8883":
     raise SystemExit("BDM connection defaults must be MQTTS on 8883")
 PY
 
+python3 - "$SCRIPT_DIR/install.sh" <<'PY'
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+steps = (
+    'mv -Tf "$NEXT_LINK" "$CURRENT_LINK"',
+    'ROLLBACK_ARMED=true',
+    'systemctl daemon-reload',
+    'systemctl enable block.service',
+    'systemctl enable block-kiosk.service',
+    'systemctl restart block.service',
+    '"$CURRENT_LINK/deploy/health-check.sh" --expected-version "$VERSION" --retries 30 --delay 1',
+    'systemctl restart block-kiosk.service',
+)
+positions = []
+for step in steps:
+    try:
+        positions.append(source.index(step))
+    except ValueError:
+        raise SystemExit(f"install is missing release activation step: {step}")
+if positions != sorted(positions):
+    raise SystemExit("install must enable then restart Block, pass the health gate, then restart kiosk")
+if "systemctl enable --now" in source:
+    raise SystemExit("install must restart active services after enabling them")
+if 'trap rollback_install ERR' not in source or '"$CURRENT_LINK/deploy/rollback.sh" --execute' not in source:
+    raise SystemExit("install failure after current switch must enter rollback")
+if source.rfind("ROLLBACK_ARMED=false") <= positions[-1]:
+    raise SystemExit("install rollback must remain armed through the kiosk restart")
+PY
+
 UNIT_COUNT=$(find "$SCRIPT_DIR/systemd" -maxdepth 1 -type f -name '*.service' | wc -l)
 if [ "$UNIT_COUNT" -ne 2 ] || [ ! -f "$SCRIPT_DIR/systemd/block.service" ] || [ ! -f "$SCRIPT_DIR/systemd/block-kiosk.service" ]; then
   fail "exactly block.service and block-kiosk.service are required"
