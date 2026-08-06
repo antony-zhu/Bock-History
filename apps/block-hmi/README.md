@@ -54,6 +54,16 @@ python -m http.server 4173 --bind 127.0.0.1 --directory .
 /api/v2/**，也不连接 /ws；主题、导航、toast、二次确认、软键盘和设备图
 交互仍可用。
 
+演示认证入口固定如下：
+
+- `http://127.0.0.1:4173/?demo=1&auth=login` 是自动入口。首次（或浏览器
+  无法读取演示标记）只显示创建管理员悬浮窗和常驻软键盘；创建成功后进入 HMI。
+  同一浏览器随后再次打开该地址时，只显示普通登录悬浮窗和常驻软键盘。
+- `http://127.0.0.1:4173/?demo=1&auth=bootstrap` 始终强制显示创建管理员
+  页面，供测试首次安装页面使用。
+- demo 只使用 `block-hmi-demo-admin-created-v1` 记录“管理员已创建”；不存储、
+  不校验用户名、密码、哈希、Cookie 或会话，也不提供页面内的认证入口切换。
+
 生产模式不带 demo=1。它显示本机登录/首次管理员覆盖层，保留修改密码、退出
 和默认 300 秒不活动退出设置；认证后从 assets/points.json 配置 v2
 runtime.configure，并通过 /ws 接收 points.snapshot 与 points.changed。

@@ -223,6 +223,8 @@ function websocketURL() {
 function isDemoMode() {
     return new URLSearchParams(window.location.search).get("demo") === "1";
 }
+export const demoAdminCreatedStorageKey = "block-hmi-demo-admin-created-v1";
+export const demoAdminCreatedStorageValue = "true";
 function isRecord(value) {
     return typeof value === "object" && value !== null;
 }
@@ -256,8 +258,27 @@ export function demoAuthPreviewFromSearch(search) {
     const auth = query.get("auth");
     return auth === "login" || auth === "bootstrap" ? auth : null;
 }
+export function demoAuthScreenForPreview(preview, storage) {
+    if (preview !== "login") {
+        return preview;
+    }
+    try {
+        return storage()?.getItem(demoAdminCreatedStorageKey) === demoAdminCreatedStorageValue ? "login" : "bootstrap";
+    }
+    catch {
+        return "bootstrap";
+    }
+}
+export function markDemoAdminCreated(storage) {
+    try {
+        storage()?.setItem(demoAdminCreatedStorageKey, demoAdminCreatedStorageValue);
+    }
+    catch {
+        // If browser storage is unavailable, the next demo login returns to the first-install screen.
+    }
+}
 function demoAuthPreviewMode() {
-    return demoAuthPreviewFromSearch(window.location.search);
+    return demoAuthScreenForPreview(demoAuthPreviewFromSearch(window.location.search), () => window.localStorage);
 }
 function cloneState(state) {
     return JSON.parse(JSON.stringify(state));
@@ -646,6 +667,7 @@ class AppleBridge {
             return;
         }
         if (this.demo) {
+            markDemoAdminCreated(() => window.localStorage);
             this.beginSession();
             return;
         }

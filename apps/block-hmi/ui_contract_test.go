@@ -141,6 +141,13 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 		"function demoAuthPreviewMode(): DemoAuthPreview",
 		"export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview",
 		`auth === "login" || auth === "bootstrap"`,
+		`export const demoAdminCreatedStorageKey = "block-hmi-demo-admin-created-v1"`,
+		"export function demoAuthScreenForPreview(preview: DemoAuthPreview, storage: DemoStorageReader): DemoAuthPreview",
+		`if (preview !== "login")`,
+		`storage()?.getItem(demoAdminCreatedStorageKey) === demoAdminCreatedStorageValue ? "login" : "bootstrap"`,
+		"export function markDemoAdminCreated(storage: DemoStorageWriter): void",
+		`storage()?.setItem(demoAdminCreatedStorageKey, demoAdminCreatedStorageValue);`,
+		`markDemoAdminCreated(() => window.localStorage);`,
 		`this.showAuthentication(this.authPreview);`,
 		"private prepareAuthentication(): void",
 		"private async resolveInitialAuthentication(): Promise<void>",
@@ -164,8 +171,8 @@ func TestStaticHMIUsesV2RuntimeAssets(t *testing.T) {
 			t.Fatalf("HMI bridge is missing %q", required)
 		}
 	}
-	if strings.Contains(string(bridge), "auth-first-install") || strings.Contains(string(bridge), "localStorage") {
-		t.Fatal("auth bootstrap must not use a manual switch or local storage")
+	if strings.Contains(string(bridge), "auth-first-install") {
+		t.Fatal("auth bootstrap must not use a manual switch")
 	}
 	for _, asset := range []string{
 		"assets/machine-bin.png",

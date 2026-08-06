@@ -389,6 +389,11 @@ function isDemoMode(): boolean {
 
 type DemoAuthPreview = "login" | "bootstrap" | null;
 type AuthScreen = Exclude<DemoAuthPreview, null>;
+type DemoStorageReader = () => Pick<Storage, "getItem"> | null | undefined;
+type DemoStorageWriter = () => Pick<Storage, "setItem"> | null | undefined;
+
+export const demoAdminCreatedStorageKey = "block-hmi-demo-admin-created-v1";
+export const demoAdminCreatedStorageValue = "true";
 
 type AuthStatus = {
   authenticated: boolean;
@@ -433,8 +438,30 @@ export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
   return auth === "login" || auth === "bootstrap" ? auth : null;
 }
 
+export function demoAuthScreenForPreview(preview: DemoAuthPreview, storage: DemoStorageReader): DemoAuthPreview {
+  if (preview !== "login") {
+    return preview;
+  }
+  try {
+    return storage()?.getItem(demoAdminCreatedStorageKey) === demoAdminCreatedStorageValue ? "login" : "bootstrap";
+  } catch {
+    return "bootstrap";
+  }
+}
+
+export function markDemoAdminCreated(storage: DemoStorageWriter): void {
+  try {
+    storage()?.setItem(demoAdminCreatedStorageKey, demoAdminCreatedStorageValue);
+  } catch {
+    // If browser storage is unavailable, the next demo login returns to the first-install screen.
+  }
+}
+
 function demoAuthPreviewMode(): DemoAuthPreview {
-  return demoAuthPreviewFromSearch(window.location.search);
+  return demoAuthScreenForPreview(
+    demoAuthPreviewFromSearch(window.location.search),
+    () => window.localStorage
+  );
 }
 
 function cloneState(state: LegacyState): LegacyState {
@@ -874,6 +901,7 @@ class AppleBridge {
       return;
     }
     if (this.demo) {
+      markDemoAdminCreated(() => window.localStorage);
       this.beginSession();
       return;
     }

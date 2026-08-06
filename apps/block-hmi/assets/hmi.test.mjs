@@ -12,8 +12,12 @@ import {
   buildPointsSnapshotGet,
   buildRuntimeConfigure,
   clearTransientRuntime,
+  demoAdminCreatedStorageKey,
+  demoAdminCreatedStorageValue,
+  demoAuthScreenForPreview,
   demoAuthPreviewFromSearch,
   isDisplayPath,
+  markDemoAdminCreated,
   parseAuthStatus,
   responseCreatesSession,
   StartCommandReceipt
@@ -44,6 +48,43 @@ assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=bootstrap"), "bootstrap");
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=login"), "login");
 assert.equal(demoAuthPreviewFromSearch("?demo=1"), null);
 assert.equal(demoAuthPreviewFromSearch("?auth=bootstrap"), null);
+
+const demoStorageValues = new Map();
+const demoStorageWrites = [];
+const demoStorage = () => ({
+  getItem(key) {
+    return demoStorageValues.get(key) ?? null;
+  },
+  setItem(key, value) {
+    demoStorageWrites.push([key, value]);
+    demoStorageValues.set(key, value);
+  }
+});
+const demoLoginPreview = demoAuthPreviewFromSearch("?demo=1&auth=login");
+assert.equal(demoAuthScreenForPreview(demoLoginPreview, demoStorage), "bootstrap");
+assert.equal(demoAuthScreenForPreview(demoAuthPreviewFromSearch("?demo=1"), demoStorage), null);
+assert.equal(demoAuthScreenForPreview(demoLoginPreview, () => { throw new Error("storage unavailable"); }), "bootstrap");
+demoStorageValues.set(demoAdminCreatedStorageKey, demoAdminCreatedStorageValue);
+assert.equal(demoAuthScreenForPreview(demoLoginPreview, demoStorage), "login");
+assert.equal(
+  demoAuthScreenForPreview(demoAuthPreviewFromSearch("?demo=1&auth=bootstrap"), demoStorage),
+  "bootstrap"
+);
+let productionReadDemoStorage = false;
+assert.equal(
+  demoAuthScreenForPreview(null, () => {
+    productionReadDemoStorage = true;
+    return demoStorage();
+  }),
+  null
+);
+assert.equal(productionReadDemoStorage, false);
+demoStorageValues.clear();
+demoStorageWrites.length = 0;
+markDemoAdminCreated(demoStorage);
+assert.deepEqual(demoStorageWrites, [[demoAdminCreatedStorageKey, demoAdminCreatedStorageValue]]);
+assert.deepEqual([...demoStorageValues], [[demoAdminCreatedStorageKey, demoAdminCreatedStorageValue]]);
+assert.equal(demoAuthScreenForPreview(demoLoginPreview, demoStorage), "login");
 
 const filter = new ActivationFilter();
 assert.equal(filter.accept({ type: "click", pointerId: 1, detail: 1, timeStamp: 100 }), true);
@@ -313,6 +354,12 @@ assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(source, /displayPath === "home\.machine\.start"/);
 assert.match(source, /function demoAuthPreviewMode\(\): DemoAuthPreview/);
 assert.match(source, /auth === "login" \|\| auth === "bootstrap"/);
+assert.match(source, /export const demoAdminCreatedStorageKey = "block-hmi-demo-admin-created-v1"/);
+assert.match(source, /export function demoAuthScreenForPreview\(preview: DemoAuthPreview, storage: DemoStorageReader\): DemoAuthPreview/);
+assert.match(source, /if \(preview !== "login"\) \{\s+return preview;/);
+assert.match(source, /storage\(\)\?\.getItem\(demoAdminCreatedStorageKey\) === demoAdminCreatedStorageValue \? "login" : "bootstrap"/);
+assert.match(source, /export function markDemoAdminCreated\(storage: DemoStorageWriter\): void \{[\s\S]*?storage\(\)\?\.setItem\(demoAdminCreatedStorageKey, demoAdminCreatedStorageValue\);/);
+assert.match(source, /demoAuthScreenForPreview\(\s+demoAuthPreviewFromSearch\(window\.location\.search\),\s+\(\) => window\.localStorage\s+\)/);
 assert.match(source, /if \(this\.authPreview !== null\) \{\s*this\.showAuthentication\(this\.authPreview\);/);
 assert.match(source, /private async resolveInitialAuthentication\(\): Promise<void>/);
 assert.match(source, /fetch\("\/api\/v2\/auth\/status", \{[\s\S]*?credentials: "same-origin"/);
@@ -327,7 +374,11 @@ assert.match(source, /this\.showLogin\("本机认证服务不可用，请检查�
 assert.match(source, /keyboard\.setMode\("soft", false\);[\s\S]*?keyboard\.setPinned\(true\);/);
 assert.match(source, /keyboard\?\.setPinned\(false\);[\s\S]*?keyboard\?\.close\("keep"\);/);
 assert.match(source, /if \(responseCreatesSession\(result\)\) \{[\s\S]*?this\.beginSession\(\);[\s\S]*?this\.showLogin\("管理员已创建，请使用新账号登录。"\);/);
-assert.doesNotMatch(source, /auth-first-install|localStorage/);
+assert.match(source, /if \(this\.demo\) \{\s*markDemoAdminCreated\(\(\) => window\.localStorage\);\s*this\.beginSession\(\);/);
+assert.match(source, /private async login\(username: string, password: string\): Promise<void> \{\s*if \(this\.demo\) \{\s*this\.beginSession\(\);\s*return;\s*\}\s*try \{\s*await jsonRequest\("POST", "\/api\/v2\/auth\/login"/);
+assert.match(source, /private async createInitialAdmin\(username: string, password: string, confirmPassword: string\): Promise<void> \{[\s\S]*?if \(this\.demo\) \{\s*markDemoAdminCreated\(\(\) => window\.localStorage\);\s*this\.beginSession\(\);\s*return;\s*\}\s*try \{\s*const response = await jsonRequest\("POST", "\/api\/v2\/auth\/initial-admin"/);
+assert.doesNotMatch(source, /auth-first-install/);
+assert.doesNotMatch(index, /auth-(?:switch|toggle|selector)|data-auth-screen/);
 assert.match(source, /private setHMIInteractive\(interactive: boolean\)/);
 assert.match(source, /element\.toggleAttribute\("inert", !interactive\)/);
 for (const boundary of ["prepareAuthentication", "showAuthentication", "showAccount", "hideAccount", "beginSession", "logout", "endSession"]) {
