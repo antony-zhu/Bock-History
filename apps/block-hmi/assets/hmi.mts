@@ -971,6 +971,9 @@ class AppleBridge {
       // Session storage is optional for the frontend gate.
     }
     this.authPanel().hidden = true;
+    if (document.querySelector<HTMLElement>("[data-page=\"maintenance\"]")?.hidden === false) {
+      window.dispatchEvent(new Event("block-hmi-guest"));
+    }
     this.updateAccountControl();
     this.emitPermissionChange();
     this.renderPLCCandidates();

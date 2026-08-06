@@ -33,6 +33,8 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
+		`window.addEventListener("block-hmi-guest", () => {`,
+		`switchPage("home")`,
 	} {
 		if !strings.Contains(page, required) {
 			t.Fatalf("index is missing %q", required)
@@ -40,6 +42,9 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	}
 	if strings.Contains(page, "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
+	}
+	if !regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.settings-layout \{.*?overflow-y: auto;.*?overscroll-behavior: contain;`).MatchString(page) {
+		t.Fatal("maintenance settings and local account do not have an isolated scroll container")
 	}
 
 	bridge, err := os.ReadFile("assets/hmi.mts")
@@ -60,6 +65,7 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`this.refreshLocalSession();`,
 		`window.sessionStorage.setItem(localSessionStorageKey`,
 		`window.sessionStorage.removeItem(localSessionStorageKey)`,
+		`new Event("block-hmi-guest")`,
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("HMI bridge is missing %q", required)
