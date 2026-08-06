@@ -74,7 +74,18 @@ VERSION
 随后所有命令均在目标机执行。先做只读盘点；身份、当前版本或服务状态有任何一
 项与发布单不符时立即 STOP，不传输、不安装、不重启。
 
+在目标机的同一个 shell 中重新设置发布版本。此值必须与第 2 节已构建并签核的
+`VERSION` 完全一致，后续备份、暂存、安装和验收命令都使用它。
+
 ```bash
+VERSION='<approved-version>'
+case "$VERSION" in
+  ''|*[!A-Za-z0-9._-]*)
+    printf 'invalid approved version: %s\n' "$VERSION" >&2
+    exit 1
+    ;;
+esac
+
 sudo /opt/block/current/deploy/version.sh
 sudo systemctl is-active block.service block-kiosk.service
 sudo ss -ltnp | grep -E ':(22|8080|8443|9443)([[:space:]]|$)'
