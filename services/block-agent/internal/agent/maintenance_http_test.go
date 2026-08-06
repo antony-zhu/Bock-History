@@ -38,8 +38,9 @@ func TestMaintenanceProductionAndConnectivityHTTP(t *testing.T) {
 		MaintenancePath: path, WiFiBackend: fakeWiFi, WiFiInterface: "wlan0",
 	})
 	defer stopRuntime(t, cancel, done)
+	baseURL := "http://" + address
 
-	response, err := http.Get(address + "/api/v2/maintenance/production")
+	response, err := http.Get(baseURL + "/api/v2/maintenance/production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestMaintenanceProductionAndConnectivityHTTP(t *testing.T) {
 		t.Fatalf("initial production status=%d body=%#v", response.StatusCode, initial)
 	}
 
-	response = patchMaintenance(t, address+"/api/v2/maintenance/production", map[string]int{
+	response = patchMaintenance(t, baseURL+"/api/v2/maintenance/production", map[string]int{
 		"targetProduction": 800, "piecesPerBox": 24,
 	})
 	if response.StatusCode != http.StatusOK {
@@ -68,14 +69,14 @@ func TestMaintenanceProductionAndConnectivityHTTP(t *testing.T) {
 		t.Fatalf("persisted production = %#v", got)
 	}
 
-	response = patchMaintenance(t, address+"/api/v2/maintenance/production", map[string]int{"piecesPerBox": 0})
+	response = patchMaintenance(t, baseURL+"/api/v2/maintenance/production", map[string]int{"piecesPerBox": 0})
 	if response.StatusCode != http.StatusBadRequest {
 		response.Body.Close()
 		t.Fatalf("invalid production status=%d", response.StatusCode)
 	}
 	response.Body.Close()
 
-	response, err = http.Get(address + "/api/v2/maintenance/connectivity")
+	response, err = http.Get(baseURL + "/api/v2/maintenance/connectivity")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestMaintenanceProductionAndConnectivityHTTP(t *testing.T) {
 		t.Fatalf("connectivity status=%d body=%#v", response.StatusCode, connectivity)
 	}
 
-	response = postMaintenance(t, address+"/api/v2/maintenance/wifi/connect", map[string]string{"ssid": "Workshop", "password": "test-secret"})
+	response = postMaintenance(t, baseURL+"/api/v2/maintenance/wifi/connect", map[string]string{"ssid": "Workshop", "password": "test-secret"})
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
 		t.Fatalf("wifi connect status=%d", response.StatusCode)
