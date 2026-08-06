@@ -272,6 +272,54 @@ class HMIAPIError extends Error {
         this.code = code;
     }
 }
+export const startCommandResultTimeoutMilliseconds = 5000;
+// The V2 HMI currently exposes exactly one real operation: the Start pulse.
+// This keeps its one request/result pair explicit rather than introducing a command queue.
+export class StartCommandReceipt {
+    timeoutMilliseconds;
+    pending = null;
+    constructor(timeoutMilliseconds = startCommandResultTimeoutMilliseconds) {
+        this.timeoutMilliseconds = timeoutMilliseconds;
+    }
+    waitFor(requestID) {
+        if (this.pending !== null) {
+            return Promise.reject(new HMIAPIError("启动命令仍在等待 PLC 结果", 409, "command_pending"));
+        }
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                if (this.pending?.requestID === requestID) {
+                    this.cancel("未收到 PLC 执行结果，结果未知", 504, "timeout");
+                }
+            }, this.timeoutMilliseconds);
+            this.pending = { requestID, timeout, resolve, reject };
+        });
+    }
+    receive(message) {
+        const pending = this.pending;
+        if (pending === null || message.type !== "point.result" || message.requestId !== pending.requestID) {
+            return false;
+        }
+        clearTimeout(pending.timeout);
+        this.pending = null;
+        if (message.success === true) {
+            pending.resolve();
+        }
+        else {
+            const code = message.error?.code ?? "point_command_failed";
+            pending.reject(new HMIAPIError(message.error?.message ?? errorText(code), 502, code));
+        }
+        return true;
+    }
+    cancel(message, status, code) {
+        const pending = this.pending;
+        if (pending === null) {
+            return;
+        }
+        clearTimeout(pending.timeout);
+        this.pending = null;
+        pending.reject(new HMIAPIError(message, status, code));
+    }
+}
 class AppleBridge {
     config;
     demo;
@@ -285,6 +333,7 @@ class AppleBridge {
     plcState = "disconnected";
     values = new Map();
     plcDevices = [];
+    pendingStartCommand = new StartCommandReceipt();
     demoState = initialDemoState();
     constructor(config, demo) {
         this.config = config;
@@ -505,6 +554,7 @@ class AppleBridge {
     }
     async logout() {
         if (!this.demo) {
+            this.pendingStartCommand.cancel("已退出登录，启动结果未知", 401, "unauthenticated");
             try {
                 await fetch("/api/v2/auth/logout", {
                     method: "POST",
@@ -554,6 +604,7 @@ class AppleBridge {
             if (this.socket !== socket) {
                 return;
             }
+            this.pendingStartCommand.cancel("本机服务连接中断，启动结果未知", 503, "network_error");
             this.socket = null;
             this.configured = false;
             clearTransientRuntime(this.values, this.plcDevices);
@@ -573,6 +624,7 @@ class AppleBridge {
             window.clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        this.pendingStartCommand.cancel("本机服务连接已关闭，启动结果未知", 503, "network_error");
         const socket = this.socket;
         this.socket = null;
         socket?.close();
@@ -598,6 +650,9 @@ class AppleBridge {
         }
         catch {
             this.setAuthNotice("收到无法识别的本机服务消息");
+            return;
+        }
+        if (this.pendingStartCommand.receive(message)) {
             return;
         }
         if (message.type === "runtime.configured") {
@@ -729,8 +784,15 @@ class AppleBridge {
         if (!this.canSendRuntime()) {
             return Promise.reject(new HMIAPIError("PLC 尚未连接", 503, "plc_not_connected"));
         }
-        this.sendRuntimeRequest(buildPointCommand(binding.writePoint, binding.action));
-        return Promise.resolve({ state: cloneState(this.currentState()) });
+        const requestId = requestID();
+        const confirmation = this.pendingStartCommand.waitFor(requestId);
+        try {
+            this.socket.send(JSON.stringify(buildPointCommand(binding.writePoint, binding.action, requestId)));
+        }
+        catch {
+            this.pendingStartCommand.cancel("启动命令未发送，结果未知", 503, "network_error");
+        }
+        return confirmation.then(() => ({ state: cloneState(this.currentState()) }));
     }
     acknowledgeAlarm(alarmID) {
         if (!this.demo) {

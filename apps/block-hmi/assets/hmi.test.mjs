@@ -10,7 +10,8 @@ import {
   buildPointsSnapshotGet,
   buildRuntimeConfigure,
   clearTransientRuntime,
-  isDisplayPath
+  isDisplayPath,
+  StartCommandReceipt
 } from "./hmi.mjs";
 
 assert.equal(isDisplayPath("home.machine.start"), true);
@@ -106,6 +107,38 @@ assert.deepEqual(
   }
 );
 
+const waitingForStart = new StartCommandReceipt(50);
+const noResult = waitingForStart.waitFor("start-no-result");
+let noResultSettled = false;
+void noResult.then(() => { noResultSettled = true; }, () => { noResultSettled = true; });
+await Promise.resolve();
+assert.equal(noResultSettled, false, "a sent Start command must wait for point.result");
+assert.equal(waitingForStart.receive({ type: "point.result", requestId: "unrelated-result", success: true }), false);
+await Promise.resolve();
+assert.equal(noResultSettled, false, "an unrelated point.result must not confirm Start");
+waitingForStart.cancel("本机服务连接已关闭，启动结果未知", 503, "network_error");
+await assert.rejects(noResult, (error) => error.code === "network_error");
+
+const successfulStart = new StartCommandReceipt(50);
+const startConfirmed = successfulStart.waitFor("start-success");
+assert.equal(successfulStart.receive({ type: "point.result", requestId: "start-success", success: true }), true);
+await startConfirmed;
+
+const failedStart = new StartCommandReceipt(50);
+const startFailed = failedStart.waitFor("start-failure");
+assert.equal(failedStart.receive({
+  type: "point.result",
+  requestId: "start-failure",
+  success: false,
+  error: { code: "PLC_WRITE_FAILED", message: "PLC 写入失败" }
+}), true);
+await assert.rejects(startFailed, (error) => error.code === "PLC_WRITE_FAILED" && error.message === "PLC 写入失败");
+
+const timedOutStart = new StartCommandReceipt(1);
+await assert.rejects(timedOutStart.waitFor("start-timeout"), (error) =>
+  error.code === "timeout" && error.message === "未收到 PLC 执行结果，结果未知"
+);
+
 const values = new Map();
 applyAbsoluteValues(values, {
   "machine.startFeedback": {
@@ -175,6 +208,12 @@ assert.match(source, /"\/api\/v2\/config\/session"/);
 assert.match(source, /new WebSocket\(websocketURL\(\)\)/);
 assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(source, /displayPath === "home\.machine\.start"/);
+assert.match(source, /pendingStartCommand\.waitFor\(requestId\)/);
+assert.match(source, /buildPointCommand\(binding\.writePoint, binding\.action, requestId\)/);
+assert.match(source, /pendingStartCommand\.receive\(message\)/);
+assert.match(source, /pendingStartCommand\.cancel\("本机服务连接中断，启动结果未知"/);
+assert.match(source, /pendingStartCommand\.cancel\("本机服务连接已关闭，启动结果未知"/);
+assert.match(source, /pendingStartCommand\.cancel\("已退出登录，启动结果未知"/);
 assert.equal(existsSync(new URL("./api-client.js", import.meta.url)), false);
 
 const loadConfigurationStart = source.indexOf("async function loadConfiguration");
