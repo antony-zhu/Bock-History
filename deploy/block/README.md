@@ -196,8 +196,9 @@ HMI 静态资源必须返回 `Cache-Control: no-store`。保留原始响应头�
 HMI=http://127.0.0.1:8080
 ROOT_HEADERS="$BACKUP/after-root.headers"
 
-curl --fail --silent --show-error --dump-header "$ROOT_HEADERS" \
-  --output /dev/null "$HMI/"
+ROOT_STATUS=$(curl --fail --silent --show-error --dump-header "$ROOT_HEADERS" \
+  --output /dev/null --write-out '%{http_code}' "$HMI/")
+test "$ROOT_STATUS" = "200"
 
 CACHE_CONTROL=$(awk '
   /^[^:]+:/ {
@@ -230,9 +231,10 @@ curl --silent --show-error --dump-header "$BACKUP/after-index.headers" \
 curl --fail --location --silent --show-error \
   --dump-header "$BACKUP/after-index-follow.headers" \
   --output /dev/null "$HMI/index.html"
-curl --fail --silent --show-error \
+HMI_MODULE_STATUS=$(curl --fail --silent --show-error \
   --dump-header "$BACKUP/after-hmi-module.headers" \
-  --output /dev/null "$HMI/assets/hmi.mjs"
+  --output /dev/null --write-out '%{http_code}' "$HMI/assets/hmi.mjs")
+test "$HMI_MODULE_STATUS" = "200"
 ```
 
 ### Kiosk 与真实屏幕
