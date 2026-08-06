@@ -114,6 +114,9 @@ assert.match(source, /private moveLocalAdministrationToMaintenance\(\): void/);
 assert.match(source, /private bindPasswordVisibilityToggles\(\): void/);
 assert.match(source, /toggle\.addEventListener\("pointerdown", \(event\) => event\.preventDefault\(\)\)/);
 assert.match(source, /input\.type = input\.type === "password" \? "text" : "password";/);
+assert.match(source, /window\.addEventListener\("hmi-soft-keyboard-ready", \(\) => this\.openFocusedAuthenticationKeyboard\(\), \{ once: true \}\)/);
+assert.match(source, /private openFocusedAuthenticationKeyboard\(\): void \{[\s\S]*?document\.activeElement === input[\s\S]*?this\.openAuthenticationKeyboardInput\(input\)/);
+assert.match(source, /private openAuthenticationKeyboardInput\(input: HTMLInputElement\): void \{[\s\S]*?keyboard\.open\(input\)/);
 assert.match(source, /private requirePermission\(permission: "operate" \| "maintenance"\): boolean/);
 const becomeGuest = source.match(/private becomeGuest\(\): void \{[\s\S]*?\n  \}\n\n  private openSocket/);
 assert.notEqual(becomeGuest, null);
@@ -150,6 +153,8 @@ assert.match(index, /class="password-visibility-toggle" type="button"[^>]*aria-l
 assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] \{[\s\S]*?--auth-sheet-top-gap:[\s\S]*?padding-bottom: calc\(100vh - var\(--auth-keyboard-top/);
 assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] \.auth-sheet \{[\s\S]*?max-height: calc\(var\(--auth-keyboard-top[\s\S]*?overflow-y: auto;/);
 assert.match(keyboardSource, /dock\.addEventListener\("transitionend", function \(event\) \{[\s\S]*?syncAuthKeyboardLayout\(\);/);
+assert.match(keyboardSource, /function notifyReady\(\) \{[\s\S]*?window\.dispatchEvent\(new window\.Event\("hmi-soft-keyboard-ready"\)\)/);
+assert.match(keyboardSource, /document\.addEventListener\("keydown", handlePhysicalKeyboard, true\);[\s\S]*?notifyReady\(\);/);
 assert.match(source, /const maintenance = document\.querySelector<HTMLElement>\("#accountSettingsPanel"\)!;/);
 assert.match(source, /private renderPLCReadOnly\(\): void/);
 assert.equal(existsSync(new URL("./machine-bin.png", import.meta.url)), true);

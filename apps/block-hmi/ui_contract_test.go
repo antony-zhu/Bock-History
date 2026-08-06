@@ -101,6 +101,9 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`#accountSettingsPanel`,
 		`private renderPLCReadOnly(): void`,
 		`private bindPasswordVisibilityToggles(): void`,
+		`window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true })`,
+		`private openFocusedAuthenticationKeyboard(): void`,
+		`private openAuthenticationKeyboardInput(input: HTMLInputElement): void`,
 		`private requirePermission(permission: "operate" | "maintenance"): boolean`,
 		`this.openSocket();`,
 		`buildRuntimeConfigure(this.config.points)`,
@@ -133,6 +136,13 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	}
 	if !strings.Contains(source, `toggle.addEventListener("pointerdown", (event) => event.preventDefault())`) || !strings.Contains(source, `input.type = input.type === "password" ? "text" : "password";`) {
 		t.Fatal("password visibility toggle does not preserve the current input target")
+	}
+	keyboardSource, err := os.ReadFile("assets/soft-keyboard.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(keyboardSource), `window.dispatchEvent(new window.Event("hmi-soft-keyboard-ready"))`) {
+		t.Fatal("soft keyboard does not announce initialization completion")
 	}
 	for _, asset := range []string{
 		"assets/hmi.mjs",

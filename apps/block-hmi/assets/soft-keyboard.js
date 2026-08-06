@@ -31,6 +31,7 @@
   var inputSequence = 0;
   var initializing = true;
   var initialized = false;
+  var readyNotified = false;
   var handlingSoftKey = false;
   var pinned = false;
 
@@ -86,6 +87,12 @@
       event.initCustomEvent(name, true, false, detail || {});
     }
     return event;
+  }
+
+  function notifyReady() {
+    if (readyNotified) return;
+    readyNotified = true;
+    window.dispatchEvent(new window.Event("hmi-soft-keyboard-ready"));
   }
 
   function dispatchFieldEvent(input, name) {
@@ -805,6 +812,7 @@
 
     if (!dock || !host) {
       root.setAttribute("data-keyboard-mode", "native");
+      notifyReady();
       return false;
     }
 
@@ -838,6 +846,7 @@
       if (isOpen) syncAuthKeyboardLayout();
     });
     document.addEventListener("keydown", handlePhysicalKeyboard, true);
+    notifyReady();
     return available;
   }
 

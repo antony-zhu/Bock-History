@@ -639,6 +639,7 @@ class AppleBridge {
         maintenance: this.hasPermission("maintenance")
       })
     };
+    window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true });
     this.moveLocalAdministrationToMaintenance();
     this.bindAuthForms();
     this.bindPasswordVisibilityToggles();
@@ -744,21 +745,39 @@ class AppleBridge {
   private openAuthenticationKeyboard(screen: AuthScreen): void {
     const form = document.querySelector<HTMLFormElement>(screen === "bootstrap" ? "#initial-admin-form" : "#login-form")!;
     const input = form.querySelector<HTMLInputElement>("[data-soft-keyboard]")!;
-    const keyboard = window.HMISoftKeyboard;
-    if (keyboard !== undefined) {
-      if (this.authKeyboardOriginalMode === null) {
-        this.authKeyboardOriginalMode = keyboard.getMode();
-      }
-      keyboard.setMode("soft", false);
-      keyboard.setPinned(true);
-    }
     window.requestAnimationFrame(() => {
       if (this.authPanel().hidden || this.authPanel().getAttribute("data-auth-mode") !== screen) {
         return;
       }
       input.focus();
-      keyboard?.open(input);
+      this.openAuthenticationKeyboardInput(input);
     });
+  }
+
+  private openFocusedAuthenticationKeyboard(): void {
+    const panel = this.authPanel();
+    const screen = panel.getAttribute("data-auth-mode");
+    if (panel.hidden || (screen !== "login" && screen !== "bootstrap")) {
+      return;
+    }
+    const form = document.querySelector<HTMLFormElement>(screen === "bootstrap" ? "#initial-admin-form" : "#login-form")!;
+    const input = form.querySelector<HTMLInputElement>("[data-soft-keyboard]")!;
+    if (document.activeElement === input) {
+      this.openAuthenticationKeyboardInput(input);
+    }
+  }
+
+  private openAuthenticationKeyboardInput(input: HTMLInputElement): void {
+    const keyboard = window.HMISoftKeyboard;
+    if (keyboard === undefined) {
+      return;
+    }
+    if (this.authKeyboardOriginalMode === null) {
+      this.authKeyboardOriginalMode = keyboard.getMode();
+    }
+    keyboard.setMode("soft", false);
+    keyboard.setPinned(true);
+    keyboard.open(input);
   }
 
   private endAuthenticationKeyboard(): void {
