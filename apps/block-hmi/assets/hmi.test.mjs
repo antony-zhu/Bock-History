@@ -100,6 +100,20 @@ const pending = receipt.waitFor("start");
 assert.equal(receipt.receive({ type: "point.result", requestId: "other", success: true }), false);
 assert.equal(receipt.receive({ type: "point.result", requestId: "start", success: true }), true);
 await pending;
+const dispatchReceipt = new PointCommandReceipt(100);
+const sentPointCommands = [];
+const firstDispatch = dispatchReceipt.dispatch("start", () => sentPointCommands.push("start"));
+assert.throws(
+  () => dispatchReceipt.dispatch("mode", () => sentPointCommands.push("mode")),
+  { code: "command_pending", status: 409 }
+);
+assert.deepEqual(sentPointCommands, ["start"]);
+assert.equal(dispatchReceipt.receive({ type: "point.result", requestId: "start", success: true }), true);
+await firstDispatch;
+const nextDispatch = dispatchReceipt.dispatch("mode", () => sentPointCommands.push("mode"));
+assert.deepEqual(sentPointCommands, ["start", "mode"]);
+assert.equal(dispatchReceipt.receive({ type: "point.result", requestId: "mode", success: true }), true);
+await nextDispatch;
 const failedReceipt = new PointCommandReceipt(100);
 const failed = failedReceipt.waitFor("mode-failed");
 assert.equal(failedReceipt.receive({
@@ -176,7 +190,8 @@ assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?requirePermission\
 assert.match(source, /private sendCommand\([\s\S]*?requirePermission\("operate"\)/);
 const pointCommand = source.match(/private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{[\s\S]*?\n  \}\n\n  private acknowledgeAlarm/);
 assert.notEqual(pointCommand, null);
-assert.match(pointCommand[0], /command === "set_mode"[\s\S]*?displayPath: "home\.machine\.enabled", action: "toggle"[\s\S]*?buildPointCommand\(binding\.writePoint, operation\.action, requestId\)/);
+assert.match(pointCommand[0], /command === "set_mode"[\s\S]*?displayPath: "home\.machine\.enabled", action: "toggle"[\s\S]*?buildPointCommand\(pointID, operation\.action, requestId\)/);
+assert.match(pointCommand[0], /pendingPointCommand\.dispatch\(requestId, \(\) => \{[\s\S]*?this\.socket!\.send/);
 assert.match(source, /const enabled = this\.valueFor\("home\.machine\.enabled"\);[\s\S]*?state\.mode = enabled === true \? "auto" : "manual";/);
 const productionPolicy = source.match(/private deferProductionPolicy\(\): void \{[\s\S]*?\n  \}\n\}/);
 assert.notEqual(productionPolicy, null);

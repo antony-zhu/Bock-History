@@ -205,7 +205,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if modeCommand == "" ||
 		!strings.Contains(modeCommand, `command === "set_mode"`) ||
 		!strings.Contains(modeCommand, `displayPath: "home.machine.enabled", action: "toggle"`) ||
-		!strings.Contains(modeCommand, `buildPointCommand(binding.writePoint, operation.action, requestId)`) {
+		!strings.Contains(modeCommand, `buildPointCommand(pointID, operation.action, requestId)`) {
 		t.Fatal("mode switching does not use the configured PLC toggle point")
 	}
 	if !regexp.MustCompile(`(?s)const enabled = this\.valueFor\("home\.machine\.enabled"\);.*?state\.mode = enabled === true \? "auto" : "manual";`).MatchString(source) {

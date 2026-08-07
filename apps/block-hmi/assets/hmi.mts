@@ -528,7 +528,7 @@ export class PointCommandReceipt {
 
   waitFor(requestID: string): Promise<void> {
     if (this.pending !== null) {
-      return Promise.reject(new HMIAPIError("现场操作仍在等待 PLC 结果", 409, "command_pending"));
+      throw new HMIAPIError("现场操作仍在等待 PLC 结果", 409, "command_pending");
     }
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -538,6 +538,16 @@ export class PointCommandReceipt {
       }, this.timeoutMilliseconds);
       this.pending = { requestID, timeout, resolve, reject };
     });
+  }
+
+  dispatch(requestID: string, send: () => void): Promise<void> {
+    const confirmation = this.waitFor(requestID);
+    try {
+      send();
+    } catch {
+      this.cancel("现场操作未发送，结果未知", 503, "network_error");
+    }
+    return confirmation;
   }
 
   receive(message: PointResultMessage): boolean {
@@ -1394,13 +1404,11 @@ class AppleBridge {
     if (!this.canSendRuntime()) {
       return Promise.reject(new HMIAPIError("PLC 尚未连接", 503, "plc_not_connected"));
     }
+    const pointID = binding.writePoint;
     const requestId = requestID();
-    const confirmation = this.pendingPointCommand.waitFor(requestId);
-    try {
-      this.socket!.send(JSON.stringify(buildPointCommand(binding.writePoint, operation.action, requestId)));
-    } catch {
-      this.pendingPointCommand.cancel("现场操作未发送，结果未知", 503, "network_error");
-    }
+    const confirmation = this.pendingPointCommand.dispatch(requestId, () => {
+      this.socket!.send(JSON.stringify(buildPointCommand(pointID, operation.action, requestId)));
+    });
     return confirmation.then(() => ({ state: cloneState(this.currentState()) }));
   }
 
