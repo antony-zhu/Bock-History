@@ -1,5 +1,5 @@
 :root {
-  --keyboard-panel: rgba(248, 250, 252, 0.94);
+  --keyboard-panel: #f8fafc;
   --keyboard-panel-border: rgba(255, 255, 255, 0.92);
   --keyboard-key: rgba(255, 255, 255, 0.96);
   --keyboard-key-border: rgba(29, 29, 31, 0.1);
@@ -184,8 +184,6 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   transform: translateY(-50%) scale(0.98);
   transform-origin: right center;
   transition: opacity 150ms ease, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
 }
 
 .soft-keyboard-dock[hidden] {
@@ -265,8 +263,6 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 
 #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
   background: #f8fafc;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 #auth-panel[data-auth-mode] ~ #hmi #softKeyboardClose {
@@ -700,8 +696,6 @@ html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button:foc
 @media (prefers-reduced-transparency: reduce) {
   .soft-keyboard-dock {
     background: #f7f7f9;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 
   html[data-theme="graphite"] .soft-keyboard-dock {
