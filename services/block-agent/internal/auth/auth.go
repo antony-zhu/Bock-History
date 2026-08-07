@@ -1,4 +1,4 @@
-// Package auth owns local HMI accounts and the in-memory login session.
+// Package auth owns local HMI accounts and their persisted idle setting.
 package auth
 
 import (
@@ -29,8 +29,6 @@ var (
 	ErrInvalidRole        = errors.New("invalid account role")
 	ErrAccountExists      = errors.New("account already exists")
 	ErrAccountNotFound    = errors.New("account does not exist")
-	ErrUnauthenticated    = errors.New("login session is missing or expired")
-	ErrForbidden          = errors.New("permission denied")
 	ErrInvalidIdleTimeout = errors.New("idle timeout must be between 60 and 3600 seconds")
 )
 
@@ -40,8 +38,7 @@ type Account struct {
 	Role         Role
 }
 
-// Store persists accounts and the one system-wide idle timeout. Login session
-// data intentionally does not belong here.
+// Store persists accounts and the one system-wide idle timeout.
 type Store interface {
 	HasAdmin(context.Context) (bool, error)
 	FindAccount(context.Context, string) (Account, bool, error)
@@ -51,29 +48,24 @@ type Store interface {
 	SetIdleTimeout(context.Context, time.Duration) error
 }
 
-type Session struct {
-	Username     string
-	Role         Role
-	LastActivity time.Time
-	ExpiresAt    time.Time
+// Identity is returned after credentials have been validated. It deliberately
+// contains no token or backend session data.
+type Identity struct {
+	Username string
+	Role     Role
 }
 
-type LoginResult struct {
-	Token string
-	Session
+type Permissions struct {
+	Operate     bool `json:"operate"`
+	Maintenance bool `json:"maintenance"`
 }
 
 type Service struct {
-	store    Store
-	now      func() time.Time
-	sessions *sessions
-	setupMu  sync.Mutex
+	store   Store
+	setupMu sync.Mutex
 }
 
-func NewService(store Store, now func() time.Time, onExpired func(Session)) (*Service, error) {
-	if now == nil {
-		now = time.Now
-	}
+func NewService(store Store) (*Service, error) {
 	timeout, err := store.IdleTimeout(context.Background())
 	if err != nil {
 		return nil, err
@@ -81,83 +73,62 @@ func NewService(store Store, now func() time.Time, onExpired func(Session)) (*Se
 	if !validIdleTimeout(timeout) {
 		return nil, ErrInvalidIdleTimeout
 	}
-	return &Service{store: store, now: now, sessions: newSessions(timeout, now, onExpired)}, nil
+	return &Service{store: store}, nil
 }
-
-func (s *Service) Close() { s.sessions.close() }
 
 // HasAdmin reports whether initial administrator setup is complete.
 func (s *Service) HasAdmin(ctx context.Context) (bool, error) {
 	return s.store.HasAdmin(ctx)
 }
 
-func (s *Service) FirstSetup(ctx context.Context, username, password, confirmPassword string) (LoginResult, error) {
+func (s *Service) FirstSetup(ctx context.Context, username, password, confirmPassword string) (Identity, error) {
 	if err := validateCredentials(username, password, confirmPassword); err != nil {
-		return LoginResult{}, err
+		return Identity{}, err
 	}
 	s.setupMu.Lock()
 	defer s.setupMu.Unlock()
 	hasAdmin, err := s.store.HasAdmin(ctx)
 	if err != nil {
-		return LoginResult{}, err
+		return Identity{}, err
 	}
 	if hasAdmin {
-		return LoginResult{}, ErrSetupCompleted
+		return Identity{}, ErrSetupCompleted
 	}
 	hash, err := HashPassword(password)
 	if err != nil {
-		return LoginResult{}, err
+		return Identity{}, err
 	}
 	if err := s.store.CreateAccount(ctx, Account{Username: username, PasswordHash: hash, Role: RoleAdmin}); err != nil {
-		return LoginResult{}, err
+		return Identity{}, err
 	}
-	return s.newLogin(username, RoleAdmin)
+	return Identity{Username: username, Role: RoleAdmin}, nil
 }
 
-func (s *Service) Login(ctx context.Context, username, password string) (LoginResult, error) {
+func (s *Service) Login(ctx context.Context, username, password string) (Identity, error) {
 	if username == "" || password == "" {
-		return LoginResult{}, ErrInvalidCredentials
+		return Identity{}, ErrInvalidCredentials
 	}
 	account, found, err := s.store.FindAccount(ctx, username)
 	if err != nil {
-		return LoginResult{}, err
+		return Identity{}, err
 	}
 	if !found || !VerifyPassword(account.PasswordHash, password) {
-		return LoginResult{}, ErrInvalidCredentials
+		return Identity{}, ErrInvalidCredentials
 	}
-	return s.newLogin(account.Username, account.Role)
+	return Identity{Username: account.Username, Role: account.Role}, nil
 }
 
-// Session only reads session state. It never extends the idle deadline.
-func (s *Service) Session(token string) (Session, error) {
-	session, ok := s.sessions.lookup(token, false)
-	if !ok {
-		return Session{}, ErrUnauthenticated
+func (s *Service) ChangePassword(ctx context.Context, username, currentPassword, newPassword string) error {
+	if username == "" {
+		return ErrInvalidUsername
 	}
-	return session, nil
-}
-
-// Activity is called only for an explicit user action. Transport keepalives,
-// polling and server pushes must use Session instead.
-func (s *Service) Activity(token string) (Session, error) {
-	session, ok := s.sessions.lookup(token, true)
-	if !ok {
-		return Session{}, ErrUnauthenticated
+	if currentPassword == "" {
+		return ErrInvalidCredentials
 	}
-	return session, nil
-}
-
-func (s *Service) Logout(token string) { s.sessions.delete(token) }
-
-func (s *Service) ChangePassword(ctx context.Context, token, currentPassword, newPassword, confirmPassword string) error {
-	session, err := s.Activity(token)
-	if err != nil {
-		return err
+	if newPassword == "" {
+		return ErrInvalidPassword
 	}
-	if err := validateCredentials(session.Username, newPassword, confirmPassword); err != nil {
-		return err
-	}
-	account, found, err := s.store.FindAccount(ctx, session.Username)
+	account, found, err := s.store.FindAccount(ctx, username)
 	if err != nil {
 		return err
 	}
@@ -168,79 +139,33 @@ func (s *Service) ChangePassword(ctx context.Context, token, currentPassword, ne
 	if err != nil {
 		return err
 	}
-	return s.store.SetPassword(ctx, session.Username, hash)
+	return s.store.SetPassword(ctx, account.Username, hash)
 }
 
-func (s *Service) SetAccountPassword(ctx context.Context, token, username, newPassword, confirmPassword string) error {
-	if _, err := s.requireAdmin(token); err != nil {
-		return err
-	}
-	if err := validateCredentials(username, newPassword, confirmPassword); err != nil {
-		return err
-	}
-	hash, err := HashPassword(newPassword)
-	if err != nil {
-		return err
-	}
-	return s.store.SetPassword(ctx, username, hash)
+func (s *Service) IdleTimeout(ctx context.Context) (time.Duration, error) {
+	return s.store.IdleTimeout(ctx)
 }
 
-func (s *Service) CreateAccount(ctx context.Context, token, username, password, confirmPassword string, role Role) error {
-	if _, err := s.requireAdmin(token); err != nil {
-		return err
-	}
-	if err := validateCredentials(username, password, confirmPassword); err != nil {
-		return err
-	}
-	if !role.Valid() {
-		return ErrInvalidRole
-	}
-	hash, err := HashPassword(password)
-	if err != nil {
-		return err
-	}
-	return s.store.CreateAccount(ctx, Account{Username: username, PasswordHash: hash, Role: role})
-}
-
-func (s *Service) IdleTimeout() time.Duration { return s.sessions.idleTimeout() }
-
-func (s *Service) SetIdleTimeout(ctx context.Context, token string, timeout time.Duration) error {
-	if _, err := s.requireAdmin(token); err != nil {
-		return err
-	}
+func (s *Service) SetIdleTimeout(ctx context.Context, timeout time.Duration) error {
 	if !validIdleTimeout(timeout) {
 		return ErrInvalidIdleTimeout
 	}
-	if err := s.store.SetIdleTimeout(ctx, timeout); err != nil {
-		return err
-	}
-	s.sessions.setIdleTimeout(timeout)
-	return nil
-}
-
-func (s *Service) ExpireSessions() { s.sessions.expireDue() }
-
-func (s *Service) newLogin(username string, role Role) (LoginResult, error) {
-	token, session, err := s.sessions.create(username, role)
-	if err != nil {
-		return LoginResult{}, err
-	}
-	return LoginResult{Token: token, Session: session}, nil
-}
-
-func (s *Service) requireAdmin(token string) (Session, error) {
-	session, err := s.Activity(token)
-	if err != nil {
-		return Session{}, err
-	}
-	if session.Role != RoleAdmin {
-		return Session{}, ErrForbidden
-	}
-	return session, nil
+	return s.store.SetIdleTimeout(ctx, timeout)
 }
 
 func (r Role) Valid() bool {
 	return r == RoleViewer || r == RoleOperator || r == RoleAdmin
+}
+
+func (i Identity) Permissions() Permissions {
+	switch i.Role {
+	case RoleAdmin:
+		return Permissions{Operate: true, Maintenance: true}
+	case RoleOperator:
+		return Permissions{Operate: true}
+	default:
+		return Permissions{}
+	}
 }
 
 func validIdleTimeout(timeout time.Duration) bool {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -21,7 +20,6 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 	var mu sync.Mutex
 	var initialAdmin map[string]string
 	var login map[string]string
-	var logout bool
 	var messages []map[string]json.RawMessage
 	wsDone := make(chan struct{})
 
@@ -38,23 +36,11 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&login); err != nil {
 			t.Error(err)
 		}
-		http.SetCookie(writer, &http.Cookie{Name: "block_session", Value: "test-session", Path: "/"})
 		writer.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/api/v2/auth/logout", func(writer http.ResponseWriter, request *http.Request) {
-		if _, err := request.Cookie("block_session"); err != nil {
-			t.Error("logout did not include the session cookie")
-		}
-		logout = true
-		writer.WriteHeader(http.StatusNoContent)
 	})
 	mux.Handle("/ws", websocket.Server{Handler: websocket.Handler(func(connection *websocket.Conn) {
 		defer close(wsDone)
 		defer connection.Close()
-		if _, err := connection.Request().Cookie("block_session"); err != nil {
-			t.Error("WebSocket did not include the session cookie")
-			return
-		}
 		for {
 			var message map[string]json.RawMessage
 			if err := websocket.JSON.Receive(connection, &message); err != nil {
@@ -118,9 +104,6 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 	if login["username"] != "admin" || login["password"] != "do-not-print-this-password" || len(login) != 2 {
 		t.Fatalf("login request was wrong: %#v", login)
 	}
-	if !logout {
-		t.Fatal("logout was not called")
-	}
 	if strings.Contains(output.String(), "do-not-print-this-password") {
 		t.Fatal("JSONL output exposed the password")
 	}
@@ -170,7 +153,6 @@ func TestAuthenticateCreatesInitialAdmin(t *testing.T) {
 	var loginCalled bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/auth/initial-admin", func(writer http.ResponseWriter, request *http.Request) {
-		http.SetCookie(writer, &http.Cookie{Name: "block_session", Value: "created-session", Path: "/"})
 		writer.WriteHeader(http.StatusCreated)
 	})
 	mux.HandleFunc("/api/v2/auth/login", func(http.ResponseWriter, *http.Request) { loginCalled = true })
@@ -180,12 +162,8 @@ func TestAuthenticateCreatesInitialAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var output bytes.Buffer
-	workflow := &workflow{base: base, client: &http.Client{Jar: jar, Timeout: time.Second}, output: json.NewEncoder(&output)}
+	workflow := &workflow{base: base, client: &http.Client{Timeout: time.Second}, output: json.NewEncoder(&output)}
 	if err := workflow.authenticate(context.Background(), "admin", "secret"); err != nil {
 		t.Fatal(err)
 	}

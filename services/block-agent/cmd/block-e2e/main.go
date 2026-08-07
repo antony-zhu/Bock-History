@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"strings"
@@ -139,13 +138,9 @@ func run(ctx context.Context, options options) error {
 	if err != nil {
 		return atStage("points.load", err)
 	}
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return atStage("startup", err)
-	}
 	workflow := &workflow{
 		base:   base,
-		client: &http.Client{Jar: jar, Timeout: requestTimeout},
+		client: &http.Client{Timeout: requestTimeout},
 		output: json.NewEncoder(options.output),
 	}
 	if err := workflow.authenticate(ctx, options.username, options.password); err != nil {
@@ -178,7 +173,7 @@ func run(ctx context.Context, options options) error {
 	if err := workflow.disconnect(); err != nil {
 		return atStage("plc.disconnect", err)
 	}
-	return atStage("auth.logout", workflow.logout(ctx))
+	return nil
 }
 
 func (w *workflow) observe(ctx context.Context, duration time.Duration) error {
@@ -252,16 +247,6 @@ func (w *workflow) authenticate(ctx context.Context, username, password string) 
 }
 
 func (w *workflow) openWebSocket() error {
-	cookie := ""
-	for _, value := range w.client.Jar.Cookies(w.base) {
-		if value.Name == "block_session" && value.Value != "" {
-			cookie = value.Name + "=" + value.Value
-			break
-		}
-	}
-	if cookie == "" {
-		return errors.New("login did not return a local session cookie")
-	}
 	location := *w.base
 	location.Scheme = "ws"
 	location.Path = strings.TrimRight(location.Path, "/") + "/ws"
@@ -270,7 +255,6 @@ func (w *workflow) openWebSocket() error {
 	if err != nil {
 		return err
 	}
-	config.Header.Set("Cookie", cookie)
 	connection, err := websocket.DialConfig(config)
 	if err != nil {
 		return err
@@ -440,23 +424,6 @@ func (w *workflow) disconnect() error {
 		return err
 	}
 	return w.report("plc.disconnect", "disconnected", nil)
-}
-
-func (w *workflow) logout(ctx context.Context) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint("/api/v2/auth/logout"), nil)
-	if err != nil {
-		return err
-	}
-	response, err := w.client.Do(request)
-	if err != nil {
-		return err
-	}
-	status := response.StatusCode
-	_ = response.Body.Close()
-	if status != http.StatusNoContent {
-		return httpStatusError{status: status}
-	}
-	return w.report("auth.logout", "logged_out", nil)
 }
 
 func (w *workflow) postJSON(ctx context.Context, path string, body any) (*http.Response, error) {

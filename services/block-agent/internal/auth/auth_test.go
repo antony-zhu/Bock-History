@@ -8,13 +8,12 @@ import (
 	"time"
 )
 
-func TestFirstSetupLoginAndPasswordConfirmation(t *testing.T) {
+func TestFirstSetupAndLoginReturnStatelessIdentity(t *testing.T) {
 	store := newMemoryStore()
-	service, err := NewService(store, time.Now, nil)
+	service, err := NewService(store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Close()
 
 	if _, err := service.FirstSetup(context.Background(), "admin", "one", "different"); !errors.Is(err, ErrPasswordMismatch) {
 		t.Fatalf("mismatched setup error = %v", err)
@@ -23,8 +22,11 @@ func TestFirstSetupLoginAndPasswordConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Role != RoleAdmin || created.Token == "" {
-		t.Fatalf("first setup result = %+v", created)
+	if created != (Identity{Username: "admin", Role: RoleAdmin}) {
+		t.Fatalf("first setup identity = %+v", created)
+	}
+	if permissions := created.Permissions(); !permissions.Operate || !permissions.Maintenance {
+		t.Fatalf("admin permissions = %+v", permissions)
 	}
 	if _, err := service.FirstSetup(context.Background(), "other", "one", "one"); !errors.Is(err, ErrSetupCompleted) {
 		t.Fatalf("repeat setup error = %v", err)
@@ -32,85 +34,55 @@ func TestFirstSetupLoginAndPasswordConfirmation(t *testing.T) {
 	if _, err := service.Login(context.Background(), "admin", "bad"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("bad login error = %v", err)
 	}
-	if _, err := service.Login(context.Background(), "admin", "one"); err != nil {
+	identity, err := service.Login(context.Background(), "admin", "one")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if identity != created {
+		t.Fatalf("login identity = %+v, want %+v", identity, created)
 	}
 }
 
-func TestOnlyExplicitActivityExtendsSessionAndExpiryCallsBack(t *testing.T) {
+func TestPasswordChangeRequiresCurrentPasswordAndIdleTimeoutPersists(t *testing.T) {
 	store := newMemoryStore()
-	now := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
-	var expired []Session
-	service, err := NewService(store, func() time.Time { return now }, func(session Session) { expired = append(expired, session) })
+	service, err := NewService(store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer service.Close()
-	result, err := service.FirstSetup(context.Background(), "admin", "one", "one")
-	if err != nil {
+	if _, err := service.FirstSetup(context.Background(), "admin", "one", "one"); err != nil {
 		t.Fatal(err)
 	}
-	originalExpiry := result.ExpiresAt
-	now = now.Add(299 * time.Second)
-	lookup, err := service.Session(result.Token)
-	if err != nil {
+	if err := service.ChangePassword(context.Background(), "admin", "wrong", "two"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong current password error = %v", err)
+	}
+	if err := service.ChangePassword(context.Background(), "admin", "one", "two"); err != nil {
 		t.Fatal(err)
 	}
-	if !lookup.ExpiresAt.Equal(originalExpiry) {
-		t.Fatalf("non-activity lookup extended session to %s", lookup.ExpiresAt)
+	if _, err := service.Login(context.Background(), "admin", "one"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old password login error = %v", err)
 	}
-	active, err := service.Activity(result.Token)
-	if err != nil {
+	if _, err := service.Login(context.Background(), "admin", "two"); err != nil {
 		t.Fatal(err)
 	}
-	if !active.ExpiresAt.Equal(now.Add(DefaultIdleTimeout)) {
-		t.Fatalf("activity expiry = %s", active.ExpiresAt)
+
+	if err := service.SetIdleTimeout(context.Background(), 59*time.Second); !errors.Is(err, ErrInvalidIdleTimeout) {
+		t.Fatalf("short timeout error = %v", err)
 	}
-	now = active.ExpiresAt
-	service.ExpireSessions()
-	if _, err := service.Session(result.Token); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("expired session error = %v", err)
+	if err := service.SetIdleTimeout(context.Background(), 120*time.Second); err != nil {
+		t.Fatal(err)
 	}
-	if len(expired) != 1 || expired[0].Username != "admin" {
-		t.Fatalf("expiry callback = %#v", expired)
+	timeout, err := service.IdleTimeout(context.Background())
+	if err != nil || timeout != 120*time.Second {
+		t.Fatalf("idle timeout = %s, error = %v", timeout, err)
 	}
 }
 
-func TestAdminCanPersistIdleTimeoutAndManageAccountPasswords(t *testing.T) {
-	store := newMemoryStore()
-	service, err := NewService(store, time.Now, nil)
-	if err != nil {
-		t.Fatal(err)
+func TestRolePermissions(t *testing.T) {
+	if got := (Identity{Role: RoleViewer}).Permissions(); got.Operate || got.Maintenance {
+		t.Fatalf("viewer permissions = %+v", got)
 	}
-	defer service.Close()
-	admin, err := service.FirstSetup(context.Background(), "admin", "one", "one")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.CreateAccount(context.Background(), admin.Token, "viewer", "two", "two", RoleViewer); err != nil {
-		t.Fatal(err)
-	}
-	viewer, err := service.Login(context.Background(), "viewer", "two")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := service.SetIdleTimeout(context.Background(), viewer.Token, 120*time.Second); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("viewer idle configuration error = %v", err)
-	}
-	if err := service.SetIdleTimeout(context.Background(), admin.Token, 120*time.Second); err != nil {
-		t.Fatal(err)
-	}
-	if store.timeout != 120*time.Second || service.IdleTimeout() != 120*time.Second {
-		t.Fatalf("idle timeout was not persisted: store=%s service=%s", store.timeout, service.IdleTimeout())
-	}
-	if err := service.SetAccountPassword(context.Background(), admin.Token, "viewer", "three", "different"); !errors.Is(err, ErrPasswordMismatch) {
-		t.Fatalf("admin confirmation error = %v", err)
-	}
-	if err := service.SetAccountPassword(context.Background(), admin.Token, "viewer", "three", "three"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.Login(context.Background(), "viewer", "three"); err != nil {
-		t.Fatal(err)
+	if got := (Identity{Role: RoleOperator}).Permissions(); !got.Operate || got.Maintenance {
+		t.Fatalf("operator permissions = %+v", got)
 	}
 }
 

@@ -60,11 +60,10 @@ func main() {
 		log.Fatalf("open Block local database: %v", err)
 	}
 	defer store.Close()
-	authService, err := auth.NewService(store, time.Now, nil)
+	authService, err := auth.NewService(store)
 	if err != nil {
 		log.Fatalf("initialize Block authentication: %v", err)
 	}
-	defer authService.Close()
 	dataDirectory := filepath.Dir(*stateDatabase)
 	runtime, err := agentapp.NewLocalRuntimeWithOptions(*localHTTPAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
 		AlarmStore:      store,
