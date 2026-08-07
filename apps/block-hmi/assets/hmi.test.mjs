@@ -160,6 +160,12 @@ assert.match(demoShell, /<iframe[\s\S]*?id="demoFrame"[\s\S]*?width="1920"[\s\S]
 assert.match(demoShell, /import \{ demoDisplayScale, demoFrameURL, demoVisibleURL \} from "\.\/assets\/demo-shell\.mjs"/);
 assert.match(demoShell, /frame\.src = demoFrameURL\(window\.location\.href\)\.href/);
 assert.match(demoShell, /window\.history\.replaceState\(null, "", demoVisibleURL\(window\.location\.href\)\.href\)/);
+assert.match(demoShell, /id="demoInputBridge"/);
+assert.match(demoShell, /frame\.contentWindow\?\.postMessage\(\{ type: "block-hmi-demo-input", \.\.\.point \}, window\.location\.origin\)/);
+assert.match(index, /get\("__demoFrame"\) !== "1"/);
+assert.match(index, /event\.source !== window\.parent/);
+assert.match(index, /document\.elementFromPoint\(x, y\)/);
+assert.match(index, /target\.matches\("\.hg-button"\)/);
 assert.match(index, /function requireFrontendPermission\(permission\)/);
 assert.match(index, /name === "maintenance" && !requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S]*?overflow: hidden;/);

@@ -177,12 +177,32 @@ func TestDemoShellUsesFixedIndustrialViewport(t *testing.T) {
 		`width: 1920px;`,
 		`height: 1080px;`,
 		`transform: scale(var(--demo-scale, 1));`,
+		`id="demoInputBridge"`,
+		`frame.contentWindow?.postMessage({ type: "block-hmi-demo-input", ...point }, window.location.origin)`,
 		`demoFrameURL(window.location.href)`,
 		`demoDisplayScale(window.innerWidth, window.innerHeight)`,
 		`window.history.replaceState(null, "", demoVisibleURL(window.location.href).href)`,
 	} {
 		if !strings.Contains(shell, required) {
 			t.Fatalf("demo shell is missing %q", required)
+		}
+	}
+}
+
+func TestDemoInputBridgeOnlyRunsInDemoFrame(t *testing.T) {
+	contents, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(contents)
+	for _, required := range []string{
+		`get("__demoFrame") !== "1"`,
+		`event.source !== window.parent`,
+		`document.elementFromPoint(x, y)`,
+		`target.matches(".hg-button")`,
+	} {
+		if !strings.Contains(page, required) {
+			t.Fatalf("demo input bridge is missing %q", required)
 		}
 	}
 }

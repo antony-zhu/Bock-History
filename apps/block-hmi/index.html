@@ -5537,5 +5537,27 @@
       });
     })();
   </script>
+  <script>
+    (() => {
+      if (new URLSearchParams(window.location.search).get("__demoFrame") !== "1") return;
+
+      window.addEventListener("message", (event) => {
+        if (event.origin !== window.location.origin || event.source !== window.parent || event.data?.type !== "block-hmi-demo-input") return;
+        const { x, y } = event.data;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        const element = document.elementFromPoint(x, y);
+        if (!(element instanceof Element)) return;
+        const target = element.closest("input, textarea, button, a, .hg-button, [role=button], [data-nav], [data-action], [data-theme-option]");
+        if (!(target instanceof HTMLElement) || target.matches(":disabled")) return;
+        if (target.matches("input, textarea")) target.focus();
+        if (target.matches(".hg-button")) {
+          target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+          target.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, buttons: 0, clientX: x, clientY: y, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+          return;
+        }
+        target.click();
+      });
+    })();
+  </script>
 </body>
 </html>

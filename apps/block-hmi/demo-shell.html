@@ -24,33 +24,78 @@
       background: #10151b;
     }
 
-    .demo-frame {
+    .demo-frame-viewport {
+      position: relative;
       width: 1920px;
       height: 1080px;
-      border: 0;
       transform: scale(var(--demo-scale, 1));
       transform-origin: center;
+    }
+
+    .demo-frame {
+      position: relative;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+
+    .demo-frame.is-input-proxied {
+      pointer-events: none;
+    }
+
+    .demo-input-bridge {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background: transparent;
+      touch-action: none;
     }
   </style>
 </head>
 <body>
   <main class="demo-shell" aria-label="1920×1080 工控机演示画布">
-    <iframe
-      class="demo-frame"
-      id="demoFrame"
-      title="料仓控制台演示"
-      width="1920"
-      height="1080"
-    ></iframe>
+    <div class="demo-frame-viewport">
+      <iframe
+        class="demo-frame"
+        id="demoFrame"
+        title="料仓控制台演示"
+        width="1920"
+        height="1080"
+      ></iframe>
+      <div class="demo-input-bridge" id="demoInputBridge" aria-hidden="true" hidden></div>
+    </div>
   </main>
   <script type="module">
     import { demoDisplayScale, demoFrameURL, demoVisibleURL } from "./assets/demo-shell.mjs";
 
     const frame = document.querySelector("#demoFrame");
+    const viewport = document.querySelector(".demo-frame-viewport");
+    const inputBridge = document.querySelector("#demoInputBridge");
     frame.src = demoFrameURL(window.location.href).href;
 
+    function bridgePoint(event) {
+      const rect = frame.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return null;
+      return {
+        x: (event.clientX - rect.left) * frame.clientWidth / rect.width,
+        y: (event.clientY - rect.top) * frame.clientHeight / rect.height
+      };
+    }
+
+    inputBridge.addEventListener("click", (event) => {
+      const point = bridgePoint(event);
+      if (point === null) return;
+      frame.contentWindow?.postMessage({ type: "block-hmi-demo-input", ...point }, window.location.origin);
+      event.preventDefault();
+    });
+
     function fitDemoFrame() {
-      frame.style.setProperty("--demo-scale", String(demoDisplayScale(window.innerWidth, window.innerHeight)));
+      const scale = demoDisplayScale(window.innerWidth, window.innerHeight);
+      viewport.style.setProperty("--demo-scale", String(scale));
+      inputBridge.hidden = scale === 1;
+      frame.classList.toggle("is-input-proxied", scale < 1);
     }
 
     window.history.replaceState(null, "", demoVisibleURL(window.location.href).href);
