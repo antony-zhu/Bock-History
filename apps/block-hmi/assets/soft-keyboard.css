@@ -220,7 +220,7 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 #auth-panel[data-keyboard-open="true"] .auth-sheet {
   max-height: calc(var(--auth-keyboard-top, 50vh) - var(--auth-sheet-top-gap) - var(--auth-sheet-bottom-gap));
   min-height: 0;
-  padding: 26px 38px;
+  padding: 30px 24px 34px;
   border-radius: 22px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -232,16 +232,16 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 }
 
 #auth-panel[data-keyboard-open="true"] .auth-notice {
-  margin: 12px 0 0;
+  display: none;
 }
 
 #auth-panel[data-keyboard-open="true"] .auth-form {
-  gap: 12px;
+  gap: 16px;
 }
 
 #auth-panel[data-keyboard-open="true"] .auth-form .auth-field {
-  column-gap: 16px;
-  grid-template-columns: 112px minmax(0, 1fr);
+  column-gap: 12px;
+  grid-template-columns: 90px minmax(0, 1fr);
   font-size: 16px;
 }
 
@@ -252,6 +252,13 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 
 #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
   background: #f8fafc;
+}
+
+#auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-foot,
+#auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-foot.is-error {
+  display: none;
+  min-height: 0;
+  margin: 0;
 }
 
 .hmi-simple-keyboard.hg-theme-default {
@@ -298,6 +305,32 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   color: #3a3a3c;
   background: rgba(120, 120, 128, 0.13);
   font-size: 14px;
+}
+
+.hmi-simple-keyboard .hg-button[data-skbtn="{shift}"],
+.hmi-simple-keyboard .hg-button[data-skbtn="{bksp}"] {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.hmi-simple-keyboard .hg-button[data-skbtn="{shift}"] > span,
+.hmi-simple-keyboard .hg-button[data-skbtn="{bksp}"] > span {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.hmi-key-icon {
+  display: block;
+  height: 28px;
+  width: 32px;
+}
+
+.hmi-simple-keyboard .hg-button[data-skbtn="{shift}"].is-shift-active {
+  color: #fff;
+  background: var(--blue);
+  box-shadow: inset 0 2px 5px rgba(29, 29, 31, 0.16);
 }
 
 .hmi-simple-keyboard .hg-button.hg-button-done {

@@ -40,17 +40,17 @@
       "{cancel} 0 00 {done}"
     ],
     "default": [
-      "1 2 3 4 5 6 7 8 9 0 - = {bksp}",
+      "1 2 3 4 5 6 7 8 9 0 - = .",
       "q w e r t y u i o p",
       "a s d f g h j k l @",
-      "{shift} z x c v b n m . - {shift}",
+      "{shift} z x c v b n m . - {bksp}",
       "{symbols} {cancel} _ {space} {next} {done}"
     ],
     shift: [
-      "1 2 3 4 5 6 7 8 9 0 - = {bksp}",
+      "1 2 3 4 5 6 7 8 9 0 - = .",
       "Q W E R T Y U I O P",
       "A S D F G H J K L @",
-      "{shift} Z X C V B N M . - {shift}",
+      "{shift} Z X C V B N M . - {bksp}",
       "{symbols} {cancel} _ {space} {next} {done}"
     ],
     symbols: [
@@ -61,13 +61,16 @@
     ]
   };
 
+  var shiftIcon = '<svg class="hmi-key-icon hmi-key-icon-shift" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 5 5 16h6v10h10V16h6L16 5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="2.4"/></svg>';
+  var backspaceIcon = '<svg class="hmi-key-icon hmi-key-icon-backspace" viewBox="0 0 36 32" aria-hidden="true" focusable="false"><path d="M4 16 11 8h19a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H11L4 16Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="2.4"/><path d="m15 13 7 7m0-7-7 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.4"/></svg>';
+
   var baseDisplay = {
-    "{bksp}": "退格",
+    "{bksp}": backspaceIcon,
     "{clear}": "清空",
     "{next}": "下一项",
     "{cancel}": "取消",
     "{done}": "完成",
-    "{shift}": "大写",
+    "{shift}": shiftIcon,
     "{symbols}": "123#+=",
     "{abc}": "ABC",
     "{space}": "空格"
@@ -143,6 +146,11 @@
     toArray(host.querySelectorAll("button")).forEach(function (button) {
       button.setAttribute("type", "button");
     });
+    var shiftActive = Boolean(keyboard && keyboard.options && keyboard.options.layoutName === "shift");
+    toArray(host.querySelectorAll('[data-skBtn="{shift}"]')).forEach(function (button) {
+      button.classList.toggle("is-shift-active", shiftActive);
+      button.setAttribute("aria-pressed", shiftActive ? "true" : "false");
+    });
   }
 
   function ensureKeyboard() {
@@ -163,6 +171,10 @@
         onChange: handleKeyboardChange,
         onKeyPress: handleKeyPress,
         onRender: prepareRenderedButtons,
+        buttonAttributes: [
+          { attribute: "aria-label", value: "切换大小写", buttons: "{shift}" },
+          { attribute: "aria-label", value: "退格", buttons: "{bksp}" }
+        ],
         buttonTheme: [
           {
             class: "hg-function-key",
@@ -228,6 +240,10 @@
     updateFoot(message, true);
   }
 
+  function isAuthenticationInput(input) {
+    return Boolean(input && input.form && input.form.getAttribute("data-soft-submit") === "authentication");
+  }
+
   function validationMessage(input) {
     var label = getFieldLabel(input);
     var value = String(input.value || "").trim();
@@ -253,6 +269,10 @@
   }
 
   function validateInput(input, focusOnError) {
+    if (isAuthenticationInput(input)) {
+      clearError(input);
+      return true;
+    }
     var message = validationMessage(input);
     if (!message) {
       clearError(input);

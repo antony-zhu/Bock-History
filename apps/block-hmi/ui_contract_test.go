@@ -40,7 +40,7 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`/api/v2/maintenance/connectivity`,
 		`/api/v2/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`import("./assets/hmi.mjs?v=20260807.1")`,
+		`import("./assets/hmi.mjs?v=20260807.2")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -53,6 +53,23 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	}
 	if strings.Contains(page, "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
+	}
+	for _, forbidden := range []string{
+		`<span class="nav-en">`,
+		`<div class="meta-en">Operator</div>`,
+		`id="modeEn"`,
+		`id="modeState"`,
+		`远程联机`,
+	} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("footer still contains removed secondary copy %q", forbidden)
+		}
+	}
+	if !strings.Contains(page, `id="operatorName">登录</div>`) {
+		t.Fatal("guest identity is not reduced to one Chinese login label")
+	}
+	if !regexp.MustCompile(`(?s)\.auth-sheet \{.*?padding: 60px 32px;.*?width: min\(744px, 100%\);`).MatchString(page) {
+		t.Fatal("authentication sheet is not using the compact, taller layout")
 	}
 	if !strings.Contains(page, `query.get("demo") !== "1" || query.get("__demoFrame") === "1"`) ||
 		!strings.Contains(page, `new URL("demo-shell.html", window.location.href)`) {
@@ -147,6 +164,23 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	}
 	if !strings.Contains(string(keyboardSource), `window.dispatchEvent(new window.Event("hmi-soft-keyboard-ready"))`) {
 		t.Fatal("soft keyboard does not announce initialization completion")
+	}
+	keyboard := string(keyboardSource)
+	for _, required := range []string{
+		`"1 2 3 4 5 6 7 8 9 0 - = ."`,
+		`"{shift} z x c v b n m . - {bksp}"`,
+		`var shiftIcon = '<svg`,
+		`var backspaceIcon = '<svg`,
+		`value: "切换大小写"`,
+		`value: "退格"`,
+		`function isAuthenticationInput(input)`,
+	} {
+		if !strings.Contains(keyboard, required) {
+			t.Fatalf("soft keyboard is missing %q", required)
+		}
+	}
+	if !regexp.MustCompile(`function validateInput\(input, focusOnError\) \{[\s\S]*?isAuthenticationInput\(input\)`).MatchString(keyboard) {
+		t.Fatal("authentication validation can still reserve keyboard error space")
 	}
 	for _, asset := range []string{
 		"assets/demo-shell.mjs",

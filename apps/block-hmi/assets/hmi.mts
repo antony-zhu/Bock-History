@@ -706,10 +706,14 @@ class AppleBridge {
   }
 
   private setAuthNotice(message: string): void {
-    this.authNotice().textContent = message;
+    const authenticationVisible = !this.authPanel().hidden && this.authPanel().hasAttribute("data-auth-mode");
+    this.authNotice().textContent = authenticationVisible ? "" : message;
     const maintenanceNotice = document.querySelector<HTMLElement>("#local-admin-notice");
     if (maintenanceNotice !== null) {
       maintenanceNotice.textContent = message;
+    }
+    if (authenticationVisible && message !== "") {
+      this.emitPageNotice(message, "danger");
     }
   }
 
