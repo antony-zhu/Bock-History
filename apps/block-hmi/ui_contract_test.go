@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
+func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	index, err := os.ReadFile("index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -133,10 +133,6 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	}
 	source := string(bridge)
 	for _, required := range []string{
-		`export const localAdminStorageKey = "block-hmi-local-admin-v1"`,
-		`export const localSessionStorageKey = "block-hmi-local-session-v1"`,
-		`export const localSettingsStorageKey = "block-hmi-local-settings-v1"`,
-		`crypto.subtle.digest("SHA-256"`,
 		`private prepareGuestHMI(): void`,
 		`private moveLocalAdministrationToMaintenance(): void`,
 		`#accountSettingsPanel`,
@@ -149,9 +145,14 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`private requirePermission(permission: "operate" | "maintenance"): boolean`,
 		`this.openSocket();`,
 		`buildRuntimeConfigure(this.config.points)`,
-		`this.refreshLocalSession();`,
-		`window.sessionStorage.setItem(localSessionStorageKey`,
-		`window.sessionStorage.removeItem(localSessionStorageKey)`,
+		`private async authRequest(path: string, method: "GET" | "POST" | "PUT"`,
+		`authRequest("/api/v2/auth/initial-admin", "GET")`,
+		`authRequest("/api/v2/config/session", "GET")`,
+		`authRequest("/api/v2/auth/login", "POST"`,
+		`authRequest("/api/v2/auth/password", "POST"`,
+		`authRequest("/api/v2/config/session", "PUT"`,
+		`await this.loadAuthenticationState();`,
+		`this.refreshFrontendSession();`,
 		`new Event("block-hmi-guest")`,
 	} {
 		if !strings.Contains(source, required) {
@@ -160,10 +161,13 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		`/api/v2/auth/status`,
-		`/api/v2/auth/login`,
 		`/api/v2/auth/activity`,
 		`/api/v2/auth/logout`,
-		`jsonRequest(`,
+		`localStorage`,
+		`sessionStorage`,
+		`crypto.subtle`,
+		`passwordDigest`,
+		`block-hmi-local-`,
 		`event.code === 4401`,
 	} {
 		if strings.Contains(source, forbidden) {

@@ -380,24 +380,18 @@ function isDemoMode(): boolean {
 
 type DemoAuthPreview = "login" | "bootstrap" | null;
 type AuthScreen = Exclude<DemoAuthPreview, null>;
-type StorageReader = () => Pick<Storage, "getItem" | "setItem" | "removeItem"> | null | undefined;
 type FrontendPermissions = { operate: boolean; maintenance: boolean };
-type LocalAdministrator = {
+type BackendIdentity = {
   username: string;
-  passwordHash: string;
+  role: "VIEWER" | "OPERATOR" | "ADMIN";
   permissions: FrontendPermissions;
 };
-type LocalSession = {
+type FrontendSession = {
   username: string;
+  role: BackendIdentity["role"];
   permissions: FrontendPermissions;
-  lastActivity: number;
   expiresAt: number;
 };
-type LocalSettings = { idleTimeoutSeconds: number };
-
-export const localAdminStorageKey = "block-hmi-local-admin-v1";
-export const localSessionStorageKey = "block-hmi-local-session-v1";
-export const localSettingsStorageKey = "block-hmi-local-settings-v1";
 export const defaultIdleTimeoutSeconds = 300;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -408,62 +402,30 @@ function validPermissions(value: unknown): value is FrontendPermissions {
   return isRecord(value) && typeof value.operate === "boolean" && typeof value.maintenance === "boolean";
 }
 
-export function localAdministratorFrom(value: unknown): LocalAdministrator | null {
+function backendIdentityFrom(value: unknown): BackendIdentity | null {
   if (!isRecord(value) ||
     typeof value.username !== "string" || value.username.trim() === "" ||
-    !/^[a-f0-9]{64}$/.test(String(value.passwordHash)) ||
+    (value.role !== "VIEWER" && value.role !== "OPERATOR" && value.role !== "ADMIN") ||
     !validPermissions(value.permissions)) {
     return null;
   }
   return {
     username: value.username,
-    passwordHash: String(value.passwordHash),
+    role: value.role,
     permissions: { ...value.permissions }
   };
 }
 
-export function localSessionFrom(value: unknown): LocalSession | null {
-  if (!isRecord(value) || typeof value.username !== "string" || !validPermissions(value.permissions) ||
-    !Number.isFinite(value.lastActivity) || !Number.isFinite(value.expiresAt)) {
+function idleTimeoutFrom(value: unknown): number | null {
+  if (!isRecord(value) || !Number.isInteger(value.idleTimeoutSeconds)) {
     return null;
   }
-  return {
-    username: value.username,
-    permissions: { ...value.permissions },
-    lastActivity: Number(value.lastActivity),
-    expiresAt: Number(value.expiresAt)
-  };
+  const timeout = Number(value.idleTimeoutSeconds);
+  return timeout >= 60 && timeout <= 3600 ? timeout : null;
 }
 
-export function readLocalAdministrator(storage: StorageReader): LocalAdministrator | null {
-  try {
-    const raw = storage()?.getItem(localAdminStorageKey);
-    return raw === null || raw === undefined ? null : localAdministratorFrom(JSON.parse(raw));
-  } catch {
-    return null;
-  }
-}
-
-export function readLocalSettings(storage: StorageReader): LocalSettings {
-  try {
-    const raw = storage()?.getItem(localSettingsStorageKey);
-    const value = raw === null || raw === undefined ? null : JSON.parse(raw);
-    if (isRecord(value) && Number.isInteger(value.idleTimeoutSeconds) && Number(value.idleTimeoutSeconds) >= 60) {
-      return { idleTimeoutSeconds: Number(value.idleTimeoutSeconds) };
-    }
-  } catch {
-    // Browser storage can be unavailable in hardened kiosk profiles.
-  }
-  return { idleTimeoutSeconds: defaultIdleTimeoutSeconds };
-}
-
-export function localSessionIsActive(session: LocalSession | null, now = Date.now()): boolean {
+export function frontendSessionIsActive(session: FrontendSession | null, now = Date.now()): boolean {
   return session !== null && session.expiresAt > now;
-}
-
-export async function passwordDigest(password: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password));
-  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
@@ -475,18 +437,8 @@ export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
   return auth === "login" || auth === "bootstrap" ? auth : null;
 }
 
-export function demoAuthScreenForPreview(preview: DemoAuthPreview, storage: StorageReader): DemoAuthPreview {
-  if (preview !== "login") {
-    return preview;
-  }
-  return readLocalAdministrator(storage) === null ? "bootstrap" : "login";
-}
-
 function demoAuthPreviewMode(): DemoAuthPreview {
-  return demoAuthScreenForPreview(
-    demoAuthPreviewFromSearch(window.location.search),
-    () => window.localStorage
-  );
+  return demoAuthPreviewFromSearch(window.location.search);
 }
 
 function cloneState(state: LegacyState): LegacyState {
@@ -609,12 +561,13 @@ export class StartCommandReceipt {
 class AppleBridge {
   private socket: WebSocket | null = null;
   private signedIn = false;
-  private session: LocalSession | null = null;
+  private session: FrontendSession | null = null;
+  private bootstrapRequired = false;
+  private idleTimeoutSeconds = defaultIdleTimeoutSeconds;
   private configured = false;
   private reconnectDelay = 1000;
   private reconnectTimer: number | null = null;
   private sessionExpiryTimer: number | null = null;
-  private lastActivityAt = Number.NEGATIVE_INFINITY;
   private revision = 0;
   private plcState: PLCDevice["state"] = "disconnected";
   private lastPLCSampleAt: string | null = null;
@@ -631,7 +584,7 @@ class AppleBridge {
     private readonly authPreview: DemoAuthPreview
   ) {}
 
-  start(): void {
+  async start(): Promise<void> {
     window.HMIFrontendAuth = {
       hasPermission: (permission) => this.hasPermission(permission),
       requirePermission: (permission) => this.requirePermission(permission),
@@ -652,7 +605,7 @@ class AppleBridge {
     this.bindPLCControls();
     this.bindActivityReporting();
     this.prepareGuestHMI();
-    this.restoreLocalSession();
+    await this.loadAuthenticationState();
     if (this.demo) {
       this.configured = true;
       this.setPLCStatus("演示模式（未连接 PLC）");
@@ -664,7 +617,7 @@ class AppleBridge {
       this.openSocket();
     }
     if (this.authPreview !== null) {
-      this.openAuthWithKeyboard(this.authPreview);
+      this.openAuthWithKeyboard(this.authPreview === "bootstrap" ? "bootstrap" : this.authenticationScreen());
     }
   }
 
@@ -692,6 +645,49 @@ class AppleBridge {
 
   private bootstrapSection(): HTMLElement {
     return document.querySelector<HTMLElement>("#authBootstrap")!;
+  }
+
+  private authenticationScreen(): AuthScreen {
+    return this.bootstrapRequired ? "bootstrap" : "login";
+  }
+
+  private async authRequest(path: string, method: "GET" | "POST" | "PUT", body?: Record<string, unknown>): Promise<{ response: Response; value: unknown }> {
+    const response = await fetch(path, {
+      method,
+      cache: "no-store",
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const value = response.status === 204 ? null : await response.json().catch(() => null);
+    return { response, value };
+  }
+
+  private async loadAuthenticationState(): Promise<void> {
+    try {
+      const [bootstrap, policy] = await Promise.all([
+        this.authRequest("/api/v2/auth/initial-admin", "GET"),
+        this.authRequest("/api/v2/config/session", "GET")
+      ]);
+      const idleTimeoutSeconds = idleTimeoutFrom(policy.value);
+      if (!bootstrap.response.ok || !policy.response.ok || !isRecord(bootstrap.value) ||
+        typeof bootstrap.value.bootstrapRequired !== "boolean" || idleTimeoutSeconds === null) {
+        throw new Error("invalid local authentication response");
+      }
+      this.bootstrapRequired = bootstrap.value.bootstrapRequired;
+      this.idleTimeoutSeconds = idleTimeoutSeconds;
+    } catch {
+      this.bootstrapRequired = false;
+      this.idleTimeoutSeconds = defaultIdleTimeoutSeconds;
+      this.emitPageNotice("无法读取本机登录配置", "danger");
+    }
+    this.updateIdleTimeoutInput();
+  }
+
+  private updateIdleTimeoutInput(): void {
+    const input = document.querySelector<HTMLInputElement>("#authAccount [name=\"idleTimeoutSeconds\"]");
+    if (input !== null) {
+      input.value = String(this.idleTimeoutSeconds);
+    }
   }
 
   private setHMIInteractive(interactive: boolean): void {
@@ -865,7 +861,7 @@ class AppleBridge {
     account.prepend(notice);
     const idleTimeout = account.querySelector<HTMLInputElement>("[name=\"idleTimeoutSeconds\"]");
     if (idleTimeout !== null) {
-      idleTimeout.value = String(readLocalSettings(() => window.localStorage).idleTimeoutSeconds);
+      idleTimeout.value = String(this.idleTimeoutSeconds);
     }
     account.hidden = false;
     if (account.parentElement !== maintenance) {
@@ -890,12 +886,7 @@ class AppleBridge {
       if (!this.signedIn || this.session === null) {
         return;
       }
-      const now = performance.now();
-      if (now - this.lastActivityAt < 500) {
-        return;
-      }
-      this.lastActivityAt = now;
-      this.refreshLocalSession();
+      this.refreshFrontendSession();
     };
     document.addEventListener("pointerdown", report, { passive: true });
     document.addEventListener("touchstart", report, { passive: true });
@@ -907,13 +898,24 @@ class AppleBridge {
       this.finishLoginAttempt("登录失败");
       return;
     }
-    const account = readLocalAdministrator(() => window.localStorage);
-    if (account === null || account.username !== username.trim() || account.passwordHash !== await passwordDigest(password)) {
-      this.finishLoginAttempt("用户名或密码错误");
-      return;
+    try {
+      const { response, value } = await this.authRequest("/api/v2/auth/login", "POST", {
+        username: username.trim(), password
+      });
+      const identity = backendIdentityFrom(value);
+      if (response.status === 401) {
+        this.finishLoginAttempt("用户名或密码错误");
+        return;
+      }
+      if (!response.ok || identity === null) {
+        this.finishLoginAttempt("登录失败");
+        return;
+      }
+      this.beginSession(identity);
+      this.emitPageNotice("登录成功");
+    } catch {
+      this.finishLoginAttempt("无法连接本机登录服务");
     }
-    this.beginSession(account);
-    this.emitPageNotice("登录成功");
   }
 
   private finishLoginAttempt(message: string): void {
@@ -936,20 +938,23 @@ class AppleBridge {
       return;
     }
     try {
-      const existing = readLocalAdministrator(() => window.localStorage);
-      if (existing !== null && this.authPreview !== "bootstrap") {
+      const { response, value } = await this.authRequest("/api/v2/auth/initial-admin", "POST", {
+        username: normalizedUsername, password, confirmPassword
+      });
+      if (response.status === 409) {
+        this.bootstrapRequired = false;
         this.showLogin("本机管理员已存在，请登录。");
         return;
       }
-      const account: LocalAdministrator = {
-        username: normalizedUsername,
-        passwordHash: await passwordDigest(password),
-        permissions: { operate: true, maintenance: true }
-      };
-      window.localStorage.setItem(localAdminStorageKey, JSON.stringify(account));
-      this.beginSession(account);
+      const identity = backendIdentityFrom(value);
+      if (!response.ok || identity === null) {
+        this.setAuthNotice("无法创建本机管理员");
+        return;
+      }
+      this.bootstrapRequired = false;
+      this.beginSession(identity);
     } catch {
-      this.setAuthNotice("无法保存本机管理员");
+      this.setAuthNotice("无法连接本机登录服务");
     }
   }
 
@@ -965,17 +970,24 @@ class AppleBridge {
       this.setAuthNotice("新密码不能为空");
       return;
     }
-    const account = readLocalAdministrator(() => window.localStorage);
-    if (account === null || !this.signedIn || account.passwordHash !== await passwordDigest(currentPassword)) {
-      this.setAuthNotice("当前密码不正确");
-      return;
-    }
     try {
-      account.passwordHash = await passwordDigest(newPassword);
-      window.localStorage.setItem(localAdminStorageKey, JSON.stringify(account));
+      if (this.session === null) {
+        return;
+      }
+      const { response } = await this.authRequest("/api/v2/auth/password", "POST", {
+        username: this.session.username, currentPassword, newPassword
+      });
+      if (response.status === 401) {
+        this.setAuthNotice("当前密码不正确");
+        return;
+      }
+      if (!response.ok) {
+        this.setAuthNotice("无法修改密码");
+        return;
+      }
       this.setAuthNotice("密码已修改");
     } catch {
-      this.setAuthNotice("无法保存本地密码");
+      this.setAuthNotice("无法连接本机登录服务");
     }
   }
 
@@ -983,26 +995,36 @@ class AppleBridge {
     if (!this.requirePermission("maintenance")) {
       return;
     }
-    if (!Number.isInteger(idleTimeoutSeconds) || idleTimeoutSeconds < 60) {
-      this.setAuthNotice("不活动退出时长至少为 60 秒");
+    if (!Number.isInteger(idleTimeoutSeconds) || idleTimeoutSeconds < 60 || idleTimeoutSeconds > 3600) {
+      this.setAuthNotice("不活动退出时长必须在 60 到 3600 秒之间");
       return;
     }
     try {
-      window.localStorage.setItem(localSettingsStorageKey, JSON.stringify({ idleTimeoutSeconds }));
-      this.refreshLocalSession();
+      const { response, value } = await this.authRequest("/api/v2/config/session", "PUT", { idleTimeoutSeconds });
+      const savedTimeout = idleTimeoutFrom(value);
+      if (!response.ok || savedTimeout === null) {
+        this.setAuthNotice("无法保存会话时长");
+        return;
+      }
+      this.idleTimeoutSeconds = savedTimeout;
+      this.updateIdleTimeoutInput();
+      this.refreshFrontendSession();
       this.setAuthNotice("会话时长已保存");
     } catch {
-      this.setAuthNotice("无法保存会话时长");
+      this.setAuthNotice("无法连接本机登录服务");
     }
   }
 
-  private beginSession(account: LocalAdministrator): void {
+  private beginSession(identity: BackendIdentity): void {
     this.endAuthenticationKeyboard();
     this.signedIn = true;
     const now = Date.now();
-    const timeoutMilliseconds = readLocalSettings(() => window.localStorage).idleTimeoutSeconds * 1000;
-    this.session = { username: account.username, permissions: { ...account.permissions }, lastActivity: now, expiresAt: now + timeoutMilliseconds };
-    this.writeSession();
+    this.session = {
+      username: identity.username,
+      role: identity.role,
+      permissions: { ...identity.permissions },
+      expiresAt: now + this.idleTimeoutSeconds * 1000
+    };
     this.scheduleSessionExpiry();
     this.authPanel().hidden = true;
     this.setAuthNotice("");
@@ -1025,11 +1047,6 @@ class AppleBridge {
     if (this.sessionExpiryTimer !== null) {
       window.clearTimeout(this.sessionExpiryTimer);
       this.sessionExpiryTimer = null;
-    }
-    try {
-      window.sessionStorage.removeItem(localSessionStorageKey);
-    } catch {
-      // Session storage is optional for the frontend gate.
     }
     this.authPanel().hidden = true;
     if (document.querySelector<HTMLElement>("[data-page=\"maintenance\"]")?.hidden === false) {
@@ -1102,46 +1119,11 @@ class AppleBridge {
     }, delay);
   }
 
-  private restoreLocalSession(): void {
-    let session: LocalSession | null = null;
-    try {
-      const raw = window.sessionStorage.getItem(localSessionStorageKey);
-      session = raw === null ? null : localSessionFrom(JSON.parse(raw));
-    } catch {
-      session = null;
-    }
-    const account = readLocalAdministrator(() => window.localStorage);
-    if (account === null || session === null || !localSessionIsActive(session) || session.username !== account.username ||
-      session.permissions.operate !== account.permissions.operate || session.permissions.maintenance !== account.permissions.maintenance) {
-      this.becomeGuest();
-      return;
-    }
-    this.signedIn = true;
-    this.session = session;
-    this.scheduleSessionExpiry();
-    this.updateAccountControl();
-    this.emitPermissionChange();
-  }
-
-  private writeSession(): void {
+  private refreshFrontendSession(): void {
     if (this.session === null) {
       return;
     }
-    try {
-      window.sessionStorage.setItem(localSessionStorageKey, JSON.stringify(this.session));
-    } catch {
-      // A kiosk without session storage still has the current in-memory session.
-    }
-  }
-
-  private refreshLocalSession(): void {
-    if (this.session === null) {
-      return;
-    }
-    const now = Date.now();
-    this.session.lastActivity = now;
-    this.session.expiresAt = now + readLocalSettings(() => window.localStorage).idleTimeoutSeconds * 1000;
-    this.writeSession();
+    this.session.expiresAt = Date.now() + this.idleTimeoutSeconds * 1000;
     this.scheduleSessionExpiry();
   }
 
@@ -1155,7 +1137,7 @@ class AppleBridge {
     }
     const delay = Math.max(0, this.session.expiresAt - Date.now());
     this.sessionExpiryTimer = window.setTimeout(() => {
-      if (!localSessionIsActive(this.session)) {
+      if (!frontendSessionIsActive(this.session)) {
         this.becomeGuest();
         return;
       }
@@ -1168,7 +1150,7 @@ class AppleBridge {
       this.logout();
       return;
     }
-    this.openAuthWithKeyboard(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+    this.openAuthWithKeyboard(this.authenticationScreen());
   }
 
   private hasPermission(permission: "operate" | "maintenance"): boolean {
@@ -1179,7 +1161,7 @@ class AppleBridge {
     if (this.hasPermission(permission)) {
       return true;
     }
-    this.openAuthWithKeyboard(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+    this.openAuthWithKeyboard(this.authenticationScreen());
     return false;
   }
 
@@ -1187,7 +1169,7 @@ class AppleBridge {
     const operator = document.querySelector<HTMLElement>("#operatorName")!;
     const label = operator.parentElement?.querySelector<HTMLElement>(".meta-cn") ?? null;
     operator.textContent = this.signedIn && this.session !== null ? this.session.username : "登录";
-    operator.setAttribute("aria-label", this.signedIn ? "点击退出本机管理员" : "点击登录本机管理员");
+    operator.setAttribute("aria-label", this.signedIn ? "点击退出本机登录" : "点击登录本机管理员");
     if (label !== null) {
       label.textContent = this.signedIn ? "管理员" : "登录";
     }
@@ -1585,7 +1567,7 @@ function errorText(code: string | undefined): string {
 export async function installHMIBackend(): Promise<LegacyBackend> {
   const demo = isDemoMode();
   const bridge = new AppleBridge(await loadConfiguration(demo), demo, demoAuthPreviewMode());
-  bridge.start();
+  await bridge.start();
   const backend = bridge.backend();
   window.HMIBackend = backend;
   return backend;

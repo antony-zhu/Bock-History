@@ -20,58 +20,25 @@ import {
   clearTransientRuntime,
   defaultIdleTimeoutSeconds,
   demoAuthPreviewFromSearch,
-  demoAuthScreenForPreview,
+  frontendSessionIsActive,
   isDisplayPath,
-  localAdminStorageKey,
-  localAdministratorFrom,
-  localSessionFrom,
-  localSessionIsActive,
-  localSettingsStorageKey,
-  passwordDigest,
-  readLocalAdministrator,
-  readLocalSettings,
   StartCommandReceipt
 } from "./hmi.mjs";
 
 assert.equal(isDisplayPath("home.machine.start"), true);
 assert.equal(isDisplayPath("Home.machine.start"), false);
 
-const storageValues = new Map();
-const storage = () => ({
-  getItem(key) { return storageValues.get(key) ?? null; },
-  setItem(key, value) { storageValues.set(key, value); },
-  removeItem(key) { storageValues.delete(key); }
-});
-const passwordHash = await passwordDigest("admin-password");
-assert.equal(passwordHash.length, 64);
-assert.match(passwordHash, /^[a-f0-9]{64}$/);
-assert.equal(localAdministratorFrom({ username: "admin", password: "plain" }), null);
-assert.equal(readLocalAdministrator(storage), null);
-storageValues.set(localAdminStorageKey, JSON.stringify({
-  username: "admin", passwordHash, permissions: { operate: true, maintenance: true }
-}));
-assert.deepEqual(readLocalAdministrator(storage), {
-  username: "admin", passwordHash, permissions: { operate: true, maintenance: true }
-});
-assert.deepEqual(readLocalSettings(storage), { idleTimeoutSeconds: defaultIdleTimeoutSeconds });
-storageValues.set(localSettingsStorageKey, JSON.stringify({ idleTimeoutSeconds: 600 }));
-assert.deepEqual(readLocalSettings(storage), { idleTimeoutSeconds: 600 });
-assert.deepEqual(localSessionFrom({
-  username: "admin", permissions: { operate: true, maintenance: true }, lastActivity: 100, expiresAt: 200
-}), { username: "admin", permissions: { operate: true, maintenance: true }, lastActivity: 100, expiresAt: 200 });
-assert.equal(localSessionIsActive({
-  username: "admin", permissions: { operate: true, maintenance: true }, lastActivity: 100, expiresAt: 200
+assert.equal(defaultIdleTimeoutSeconds, 300);
+assert.equal(frontendSessionIsActive({
+  username: "admin", role: "ADMIN", permissions: { operate: true, maintenance: true }, expiresAt: 200
 }, 199), true);
-assert.equal(localSessionIsActive({
-  username: "admin", permissions: { operate: true, maintenance: true }, lastActivity: 100, expiresAt: 200
+assert.equal(frontendSessionIsActive({
+  username: "admin", role: "ADMIN", permissions: { operate: true, maintenance: true }, expiresAt: 200
 }, 200), false);
 
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=bootstrap"), "bootstrap");
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=login"), "login");
 assert.equal(demoAuthPreviewFromSearch("?demo=1"), null);
-assert.equal(demoAuthScreenForPreview("login", () => ({ getItem: () => null })), "bootstrap");
-assert.equal(demoAuthScreenForPreview("login", storage), "login");
-assert.equal(demoAuthScreenForPreview("bootstrap", storage), "bootstrap");
 
 assert.deepEqual(demoViewport, { width: 1920, height: 1080 });
 assert.equal(demoDisplayScale(1920, 1080), 1);
@@ -130,11 +97,13 @@ const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
-assert.match(source, /crypto\.subtle\.digest\("SHA-256"/);
-assert.match(source, /localAdminStorageKey = "block-hmi-local-admin-v1"/);
-assert.match(source, /localSessionStorageKey = "block-hmi-local-session-v1"/);
-assert.match(source, /localSettingsStorageKey = "block-hmi-local-settings-v1"/);
-assert.match(source, /this\.prepareGuestHMI\(\);[\s\S]*?this\.openSocket\(\);/);
+assert.doesNotMatch(source, /localStorage|sessionStorage|crypto\.subtle|passwordDigest|block-hmi-local-/);
+assert.match(source, /this\.prepareGuestHMI\(\);[\s\S]*?await this\.loadAuthenticationState\(\);[\s\S]*?this\.openSocket\(\);/);
+assert.match(source, /authRequest\("\/api\/v2\/auth\/initial-admin", "GET"\)/);
+assert.match(source, /authRequest\("\/api\/v2\/config\/session", "GET"\)/);
+assert.match(source, /authRequest\("\/api\/v2\/auth\/login", "POST"/);
+assert.match(source, /authRequest\("\/api\/v2\/auth\/password", "POST"/);
+assert.match(source, /authRequest\("\/api\/v2\/config\/session", "PUT"/);
 assert.match(source, /private moveLocalAdministrationToMaintenance\(\): void/);
 assert.match(source, /private bindPasswordVisibilityToggles\(\): void/);
 assert.match(source, /toggle\.addEventListener\("pointerdown", \(event\) => event\.preventDefault\(\)\)/);
@@ -150,10 +119,10 @@ assert.doesNotMatch(source, /private openAuthenticationKeyboard\(/);
 assert.doesNotMatch(source, /private openFocusedAuthenticationKeyboard\(/);
 const accountAuthToggle = source.match(/private toggleAccountSession\(\): void \{[\s\S]*?\n  \}\n\n  private hasPermission/);
 assert.notEqual(accountAuthToggle, null);
-assert.match(accountAuthToggle[0], /this\.openAuthWithKeyboard\(readLocalAdministrator/);
+assert.match(accountAuthToggle[0], /this\.openAuthWithKeyboard\(this\.authenticationScreen\(\)\)/);
 const protectedAuthGate = source.match(/private requirePermission\(permission: "operate" \| "maintenance"\): boolean \{[\s\S]*?\n  \}\n\n  private updateAccountControl/);
 assert.notEqual(protectedAuthGate, null);
-assert.match(protectedAuthGate[0], /this\.openAuthWithKeyboard\(readLocalAdministrator/);
+assert.match(protectedAuthGate[0], /this\.openAuthWithKeyboard\(this\.authenticationScreen\(\)\)/);
 assert.match(source, /private requirePermission\(permission: "operate" \| "maintenance"\): boolean/);
 assert.match(source, /private setAuthNotice\(message: string\): void \{[\s\S]*?authenticationVisible[\s\S]*?this\.emitPageNotice\(message, "danger"\)/);
 const becomeGuest = source.match(/private becomeGuest\(\): void \{[\s\S]*?\n  \}\n\n  private openSocket/);
@@ -167,7 +136,11 @@ assert.doesNotMatch(publicNavigationCancellation[0], /else/);
 assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?requirePermission\("maintenance"\)/);
 assert.match(source, /private sendCommand\([\s\S]*?requirePermission\("operate"\)/);
 assert.doesNotMatch(source, /\/api\/v2\/auth\/status/);
-assert.doesNotMatch(source, /jsonRequest\(/);
+assert.doesNotMatch(source, /\/api\/v2\/auth\/(activity|logout)/);
+assert.match(source, /private refreshFrontendSession\(\): void/);
+assert.match(source, /document\.addEventListener\("pointerdown", report/);
+assert.match(source, /document\.addEventListener\("touchstart", report/);
+assert.match(source, /document\.addEventListener\("keydown", report\)/);
 assert.doesNotMatch(source, /event\.code === 4401/);
 assert.match(source, /new WebSocket\(websocketURL\(\)\)/);
 assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
