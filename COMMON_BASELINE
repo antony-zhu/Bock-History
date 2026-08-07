@@ -1,5 +1,5 @@
 repository: Block-BDM-Common
-commit: c0492de25c04d96129ce5428ae162df12a9e1e35
-recordedAt: 2026-07-30
+commit: d1073038277db0b954c021cb2cc377012ec8a78c
+recordedAt: 2026-08-07
 source: D:/codex/Block-DMP/repos/Common
 policy: Common is the sole source for shared architecture and cross-component contracts.

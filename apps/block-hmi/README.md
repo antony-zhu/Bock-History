@@ -54,6 +54,27 @@ PLC 连接状态及安全校验，并对同机 HMI 返回相同的运行时数�
 手动断开会清除保存地址。该生命周期属于 Agent，HMI 不使用 `localStorage`
 保存或恢复 PLC 地址。
 
+## 本机真实演示（开发）
+
+在 Block 工作树根目录执行：
+
+```powershell
+.\tools\start-block-hmi-auth-demo.ps1
+```
+
+该工具构建并启动实际的 `services/block-agent/cmd/block-agent`，以
+`127.0.0.1:4173` 提供此目录的 HMI 静态文件。默认复用
+`.cache/block-hmi-auth-demo/state/block-hmi-auth-demo.db`，因此可验证账户和
+idle 配置的重启持久化；只有显式传入 `-FreshAuth` 才会删除这个精确的开发演示状态目录。使用
+`-Stop` 仅会停止 PID 记录和命令行都匹配的本工作树 Agent。
+
+```powershell
+.\tools\test-block-hmi-auth-persistence.ps1
+```
+
+第二个脚本使用独立的 `.cache/block-hmi-auth-persistence-test` 数据库和随机回环端口，覆盖首次
+管理员、登录、idle 配置、无 Cookie、已退役认证端点及同库重启持久化；结束时清理其测试目录。
+
 ## 本地验证
 
 有 TypeScript 编译器时更新浏览器产物：
