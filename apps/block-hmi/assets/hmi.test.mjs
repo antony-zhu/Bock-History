@@ -146,6 +146,10 @@ const becomeGuest = source.match(/private becomeGuest\(\): void \{[\s\S]*?\n  \}
 assert.notEqual(becomeGuest, null);
 assert.match(becomeGuest[0], /new Event\("block-hmi-guest"\)/);
 assert.doesNotMatch(becomeGuest[0], /socket\.close\(/);
+const publicNavigationCancellation = source.match(/window\.addEventListener\("block-hmi-public-navigation", \(\) => \{[\s\S]*?\n    \}\);/);
+assert.notEqual(publicNavigationCancellation, null);
+assert.match(publicNavigationCancellation[0], /if \(!this\.authPanel\(\)\.hidden\) \{\s*this\.becomeGuest\(\);\s*\}/);
+assert.doesNotMatch(publicNavigationCancellation[0], /else/);
 assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?requirePermission\("maintenance"\)/);
 assert.match(source, /private sendCommand\([\s\S]*?requirePermission\("operate"\)/);
 assert.doesNotMatch(source, /\/api\/v2\/auth\/status/);

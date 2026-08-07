@@ -423,7 +423,7 @@ class AppleBridge {
         window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true });
         window.addEventListener("block-hmi-public-navigation", () => {
             if (!this.authPanel().hidden) {
-                this.prepareGuestHMI();
+                this.becomeGuest();
             }
         });
         this.moveLocalAdministrationToMaintenance();
