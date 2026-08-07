@@ -40,7 +40,9 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`/api/v2/maintenance/connectivity`,
 		`/api/v2/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`import("./assets/hmi.mjs?v=20260807.4")`,
+		`assets/soft-keyboard.css?v=20260807.5`,
+		`assets/soft-keyboard.js?v=20260807.5`,
+		`import("./assets/hmi.mjs?v=20260807.5")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -68,17 +70,22 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	if !strings.Contains(page, `id="operatorName">登录</div>`) {
 		t.Fatal("guest identity is not reduced to one Chinese login label")
 	}
-	if !regexp.MustCompile(`(?s)#hmi-footer \{.*?grid-template-columns: 220px minmax\(0, 1fr\) 220px;`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)#hmi-footer #operatorName,.*?#hmi-footer \.mode \{.*?height: 58px;.*?width: 168px;.*?border-radius: 18px;`).MatchString(page) {
-		t.Fatal("footer end controls are not symmetric lightweight status chips")
+	if !regexp.MustCompile(`(?s)#hmi-footer \{.*?--footer-control-height: 102px;.*?grid-template-columns: 220px minmax\(0, 1fr\) 220px;`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)#hmi-footer \.nav-button,.*?#hmi-footer #operatorName,.*?#hmi-footer \.mode \{.*?height: var\(--footer-control-height\);.*?min-height: var\(--footer-control-height\);`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)#hmi-footer \.operator \{.*?height: var\(--footer-control-height\);`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)#hmi-footer #operatorName,.*?#hmi-footer \.mode \{.*?width: 168px;.*?border-radius: 18px;`).MatchString(page) {
+		t.Fatal("footer end controls do not share the navigation visible height")
 	}
 	if !regexp.MustCompile(`(?s)#hmi-footer #operatorName::before \{.*?data:image/svg\+xml`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)#hmi-footer \.mode\.is-auto \{.*?color: #176b38;.*?background: #e8f7ec;`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)#hmi-footer \.mode\.is-manual \{.*?color: #8a6200;.*?background: #fff5d7;`).MatchString(page) {
 		t.Fatal("footer identity and mode state visuals are incomplete")
 	}
-	if !regexp.MustCompile(`(?s)\.auth-sheet \{.*?padding: 60px 32px;.*?width: min\(744px, 100%\);`).MatchString(page) {
-		t.Fatal("authentication sheet is not using the compact, taller layout")
+	if !regexp.MustCompile(`(?s)\.auth-sheet \{.*?max-height: min\(800px, calc\(100vh - 48px\)\);.*?padding: 60px 32px;.*?width: min\(500px, 100%\);`).MatchString(page) {
+		t.Fatal("authentication sheet is not using the narrow, bounded layout")
+	}
+	if !regexp.MustCompile(`(?s)<div class="auth-sheet">.*?id="authLogin".*?id="authBootstrap"`).MatchString(page) {
+		t.Fatal("login and bootstrap do not share the same authentication sheet")
 	}
 	if !strings.Contains(page, `query.get("demo") !== "1" || query.get("__demoFrame") === "1"`) ||
 		!strings.Contains(page, `new URL("demo-shell.html", window.location.href)`) {

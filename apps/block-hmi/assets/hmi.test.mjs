@@ -184,19 +184,28 @@ assert.match(index, /get\("__demoFrame"\) !== "1"/);
 assert.match(index, /event\.source !== window\.parent/);
 assert.match(index, /document\.elementFromPoint\(x, y\)/);
 assert.match(index, /target\.matches\("\.hg-button"\)/);
-assert.match(index, /\.auth-sheet \{[\s\S]*?padding: 60px 32px;[\s\S]*?width: min\(744px, 100%\);/);
+assert.match(index, /\.auth-sheet \{[\s\S]*?max-height: min\(800px, calc\(100vh - 48px\)\);[\s\S]*?padding: 60px 32px;[\s\S]*?width: min\(500px, 100%\);/);
+assert.match(index, /<div class="auth-sheet">[\s\S]*?id="authLogin"[\s\S]*?id="authBootstrap"/);
 assert.match(index, /#auth-panel \.auth-form \{[\s\S]*?gap: 22px;/);
 assert.match(index, /id="operatorName">登录<\/div>/);
 assert.doesNotMatch(index, /<span class="nav-en">/);
 assert.doesNotMatch(index, /<div class="meta-en">Operator<\/div>/);
 assert.doesNotMatch(index, /id="modeEn"|id="modeState"|远程联机/);
-assert.match(index, /#hmi-footer \{[\s\S]*?grid-template-columns: 220px minmax\(0, 1fr\) 220px;/);
-assert.match(index, /#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\S]*?height: 58px;[\s\S]*?width: 168px;[\s\S]*?border-radius: 18px;/);
+assert.match(index, /#hmi-footer \{[\s\S]*?--footer-control-height: 102px;[\s\S]*?grid-template-columns: 220px minmax\(0, 1fr\) 220px;/);
+assert.match(index, /#hmi-footer \.nav-button,[\s\S]*?#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\S]*?height: var\(--footer-control-height\);[\s\S]*?min-height: var\(--footer-control-height\);/);
+assert.match(index, /#hmi-footer \.operator \{[\s\S]*?height: var\(--footer-control-height\);/);
+assert.match(index, /#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\S]*?width: 168px;[\s\S]*?border-radius: 18px;/);
 assert.match(index, /#hmi-footer #operatorName::before \{[\s\S]*?data:image\/svg\+xml/);
 assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]*?background: #e8f7ec;/);
 assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
 assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", state\.mode === "manual"\);/);
-assert.match(index, /import\("\.\/assets\/hmi\.mjs\?v=20260807\.4"\)/);
+for (const asset of [
+  'assets/soft-keyboard.css?v=20260807.5',
+  'assets/soft-keyboard.js?v=20260807.5',
+  './assets/hmi.mjs?v=20260807.5'
+]) {
+  assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
+}
 assert.match(index, /function requireFrontendPermission\(permission\)/);
 assert.match(index, /name === "maintenance" && !requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S]*?overflow: hidden;/);

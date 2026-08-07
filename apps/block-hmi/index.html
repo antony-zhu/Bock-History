@@ -3383,7 +3383,7 @@
       overflow: auto;
       padding: 60px 32px;
       pointer-events: auto;
-      width: min(744px, 100%);
+      width: min(500px, 100%);
     }
 
     #hmi-topbar[inert],
@@ -3948,16 +3948,24 @@
     }
 
     #hmi-footer {
+      --footer-control-height: 102px;
       grid-template-columns: 220px minmax(0, 1fr) 220px;
     }
 
     #hmi-footer .operator {
       align-items: center;
       align-self: center;
-      height: 58px;
+      height: var(--footer-control-height);
       justify-content: center;
       padding: 0;
       border: 0;
+    }
+
+    #hmi-footer .nav-button,
+    #hmi-footer #operatorName,
+    #hmi-footer .mode {
+      height: var(--footer-control-height);
+      min-height: var(--footer-control-height);
     }
 
     #hmi-footer #operatorName,
@@ -3968,10 +3976,8 @@
       display: inline-flex;
       flex-direction: row;
       gap: 10px;
-      height: 58px;
       justify-content: center;
       margin: 0;
-      min-height: 58px;
       padding: 0 18px;
       width: 168px;
       border-radius: 18px;
@@ -4056,7 +4062,7 @@
     }
   </style>
   <link rel="stylesheet" href="assets/vendor/simple-keyboard/index.css">
-  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260807.4">
+  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260807.5">
 </head>
 <body>
   <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" hidden>
@@ -4538,9 +4544,9 @@
   </aside>
 
   <script src="assets/vendor/simple-keyboard/index.js"></script>
-  <script src="assets/soft-keyboard.js?v=20260807.4"></script>
+  <script src="assets/soft-keyboard.js?v=20260807.5"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260807.4").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260807.5").then(function (module) {
       return module.installHMIBackend();
     });
       window.HMIBackend = {
