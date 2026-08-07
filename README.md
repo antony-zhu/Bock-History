@@ -34,6 +34,10 @@ archive/prototypes/web-hmi/     # 旧静态 HMI 原型，只读参考
 - 同机通信使用 Unix socket 或 TLS；
 - 不部署明文 `8080/8081`。
 
+## 持续变更记录
+
+- [Block V2 变更记录](docs/development/Block-V2变更记录.md)：当前源码、真机版本、验证结论与下一步。
+
 ## 安全
 
 - 真实 `wifi.toml`、`.env`、密码、私钥、证书私钥和现场配置不得进入仓库。
