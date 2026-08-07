@@ -23,7 +23,7 @@ import {
   frontendSessionIsActive,
   isDisplayPath,
   renewFrontendSession,
-  StartCommandReceipt
+  PointCommandReceipt
 } from "./hmi.mjs";
 
 assert.equal(isDisplayPath("home.machine.start"), true);
@@ -86,12 +86,31 @@ assert.equal(buildPLCConnect("easy521://127.0.0.1:1502?unitId=1", "connect", tim
 assert.equal(buildPLCDisconnect("disconnect", timestamp).type, "plc.disconnect");
 assert.equal(buildPointsSnapshotGet("snapshot", timestamp).type, "points.snapshot.get");
 assert.equal(buildPointCommand("machine.startCommand", "pulse", "start", timestamp).type, "point.command");
+assert.deepEqual(buildPointCommand("machine.enabled", "toggle", "mode", timestamp), {
+  protocolVersion: "1.0",
+  type: "point.command",
+  requestId: "mode",
+  timestamp,
+  pointId: "machine.enabled",
+  action: "toggle"
+});
 
-const receipt = new StartCommandReceipt(100);
+const receipt = new PointCommandReceipt(100);
 const pending = receipt.waitFor("start");
 assert.equal(receipt.receive({ type: "point.result", requestId: "other", success: true }), false);
 assert.equal(receipt.receive({ type: "point.result", requestId: "start", success: true }), true);
 await pending;
+const failedReceipt = new PointCommandReceipt(100);
+const failed = failedReceipt.waitFor("mode-failed");
+assert.equal(failedReceipt.receive({
+  type: "point.result",
+  requestId: "mode-failed",
+  success: false,
+  error: { code: "plc_write_failed", message: "PLC 写入失败" }
+}), true);
+await assert.rejects(failed, { code: "plc_write_failed", status: 502 });
+const timeoutReceipt = new PointCommandReceipt(0);
+await assert.rejects(timeoutReceipt.waitFor("mode-timeout"), { code: "timeout", status: 504 });
 
 const values = new Map();
 applyAbsoluteValues(values, {
@@ -107,6 +126,8 @@ const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
+const userVisibleCopy = (source + index).replace(/\/api\/v2(?:\/[a-z-]+)+/gi, "");
+assert.doesNotMatch(userVisibleCopy, /\bv2\b/i);
 assert.doesNotMatch(source, /localStorage|sessionStorage|crypto\.subtle|passwordDigest|block-hmi-local-/);
 assert.match(source, /this\.prepareGuestHMI\(\);[\s\S]*?await this\.loadAuthenticationState\(\);[\s\S]*?this\.openSocket\(\);/);
 assert.match(source, /authRequest\("\/api\/v2\/auth\/initial-admin", "GET"\)/);
@@ -153,6 +174,15 @@ assert.match(publicNavigationCancellation[0], /if \(!this\.authPanel\(\)\.hidden
 assert.doesNotMatch(publicNavigationCancellation[0], /else/);
 assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?requirePermission\("maintenance"\)/);
 assert.match(source, /private sendCommand\([\s\S]*?requirePermission\("operate"\)/);
+const pointCommand = source.match(/private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{[\s\S]*?\n  \}\n\n  private acknowledgeAlarm/);
+assert.notEqual(pointCommand, null);
+assert.match(pointCommand[0], /command === "set_mode"[\s\S]*?displayPath: "home\.machine\.enabled", action: "toggle"[\s\S]*?buildPointCommand\(binding\.writePoint, operation\.action, requestId\)/);
+assert.match(source, /const enabled = this\.valueFor\("home\.machine\.enabled"\);[\s\S]*?state\.mode = enabled === true \? "auto" : "manual";/);
+const productionPolicy = source.match(/private deferProductionPolicy\(\): void \{[\s\S]*?\n  \}\n\}/);
+assert.notEqual(productionPolicy, null);
+assert.match(productionPolicy[0], /const available = runtimeEnabled && \(button === start \|\| button\.dataset\.action === "custom"\);/);
+assert.match(productionPolicy[0], /mode\.dataset\.backendUnavailable = runtimeEnabled \? "false" : "true";/);
+assert.doesNotMatch(productionPolicy[0], /mode\.dataset\.backendUnavailable = "true"/);
 assert.doesNotMatch(source, /\/api\/v2\/auth\/status/);
 assert.doesNotMatch(source, /\/api\/v2\/auth\/(activity|logout)/);
 assert.match(source, /private refreshFrontendSession\(\): boolean \{[\s\S]*?renewFrontendSession\(this\.session, this\.idleTimeoutSeconds\)[\s\S]*?this\.becomeGuest\(\)/);
@@ -196,7 +226,7 @@ assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "
 for (const asset of [
   'assets/soft-keyboard.css?v=20260807.6',
   'assets/soft-keyboard.js?v=20260807.6',
-  './assets/hmi.mjs?v=20260807.6'
+  './assets/hmi.mjs?v=20260808.1'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
 }
@@ -206,6 +236,13 @@ assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S
 assert.match(index, /\.maintenance-panel \{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
 assert.match(index, /window\.addEventListener\("block-hmi-guest", \(\) => \{[\s\S]*?switchPage\("home"\)/);
 assert.match(index, /if \(!requireFrontendPermission\("operate"\)\) return false;/);
+const modeChange = index.match(/async function requestModeChange\(\) \{[\s\S]*?\n      \}\n\n      async function handleAction/);
+assert.notEqual(modeChange, null);
+assert.match(modeChange[0], /if \(!requireFrontendPermission\("operate"\)\) return false;/);
+assert.match(modeChange[0], /state\.mode === "auto" \? "manual" : "auto"/);
+assert.match(modeChange[0], /backend\.sendCommand\("set_mode"/);
+assert.match(modeChange[0], /runBackendMutation\(/);
+assert.match(index, /async function runBackendMutation\(factory, options = \{\}\) \{[\s\S]*?mutationError[\s\S]*?showToast\(\s*backendErrorMessage\(mutationError\)/);
 assert.match(index, /async function saveProductionSettings\(manual = false\) \{[\s\S]*?requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /data-maintenance-tab="production"[\s\S]*?data-maintenance-tab="wifi"[\s\S]*?data-maintenance-tab="plc"[\s\S]*?data-maintenance-tab="accounts"/);
 assert.match(index, /data-maintenance-panel="production"[\s\S]*?data-maintenance-panel="wifi"[\s\S]*?data-maintenance-panel="plc"[\s\S]*?data-maintenance-panel="accounts"/);

@@ -511,25 +511,24 @@ type PointResultMessage = {
   error?: { code?: string; message?: string };
 };
 
-type PendingStartCommand = {
+type PendingPointCommand = {
   requestID: string;
   timeout: ReturnType<typeof setTimeout>;
   resolve: () => void;
   reject: (error: HMIAPIError) => void;
 };
 
-export const startCommandResultTimeoutMilliseconds = 5000;
+export const pointCommandResultTimeoutMilliseconds = 5000;
 
-// The V2 HMI currently exposes exactly one real operation: the Start pulse.
-// This keeps its one request/result pair explicit rather than introducing a command queue.
-export class StartCommandReceipt {
-  private pending: PendingStartCommand | null = null;
+// Keep one point command/result pair explicit instead of introducing a command queue.
+export class PointCommandReceipt {
+  private pending: PendingPointCommand | null = null;
 
-  constructor(private readonly timeoutMilliseconds = startCommandResultTimeoutMilliseconds) {}
+  constructor(private readonly timeoutMilliseconds = pointCommandResultTimeoutMilliseconds) {}
 
   waitFor(requestID: string): Promise<void> {
     if (this.pending !== null) {
-      return Promise.reject(new HMIAPIError("启动命令仍在等待 PLC 结果", 409, "command_pending"));
+      return Promise.reject(new HMIAPIError("现场操作仍在等待 PLC 结果", 409, "command_pending"));
     }
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -587,7 +586,7 @@ class AppleBridge {
   private deferredLiveState = false;
   private readonly values = new Map<string, PointValue>();
   private readonly plcDevices: PLCDevice[] = [];
-  private readonly pendingStartCommand = new StartCommandReceipt();
+  private readonly pendingPointCommand = new PointCommandReceipt();
   private demoState = initialDemoState();
   private authKeyboardOriginalMode: SoftKeyboardMode | null = null;
 
@@ -1086,7 +1085,7 @@ class AppleBridge {
 
   private logout(): void {
     this.endAuthenticationKeyboard();
-    this.pendingStartCommand.cancel("已退出登录，启动结果未知", 401, "unauthenticated");
+    this.pendingPointCommand.cancel("已退出登录，现场操作结果未知", 401, "unauthenticated");
     this.becomeGuest();
   }
 
@@ -1136,7 +1135,7 @@ class AppleBridge {
       if (this.socket !== socket) {
         return;
       }
-      this.pendingStartCommand.cancel("本机服务连接中断，启动结果未知", 503, "network_error");
+      this.pendingPointCommand.cancel("本机服务连接中断，现场操作结果未知", 503, "network_error");
       this.socket = null;
       this.configured = false;
       clearTransientRuntime(this.values, this.plcDevices);
@@ -1153,7 +1152,7 @@ class AppleBridge {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.pendingStartCommand.cancel("本机服务连接已关闭，启动结果未知", 503, "network_error");
+    this.pendingPointCommand.cancel("本机服务连接已关闭，现场操作结果未知", 503, "network_error");
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -1260,7 +1259,7 @@ class AppleBridge {
       this.setAuthNotice("收到无法识别的本机服务消息");
       return;
     }
-    if (this.pendingStartCommand.receive(message)) {
+    if (this.pendingPointCommand.receive(message)) {
       return;
     }
     if (message.type === "runtime.configured") {
@@ -1357,10 +1356,10 @@ class AppleBridge {
       { type: "empty", label: "暂无数据" }
     ];
     state.alarms = [
-      { id: 1, level: "info", code: "V2", text: "当前 v2 未提供报警历史", time: "--", acknowledged: true }
+      { id: 1, level: "info", code: "提示", text: "当前未提供报警历史", time: "--", acknowledged: true }
     ];
     state.history = [
-      { id: 1, level: "info", code: "V2", text: "当前 v2 未提供历史记录", time: "--" }
+      { id: 1, level: "info", code: "提示", text: "当前未提供历史记录", time: "--" }
     ];
     return state;
   }
@@ -1380,22 +1379,27 @@ class AppleBridge {
     if (this.demo) {
       return Promise.resolve({ state: this.applyDemoCommand(command, payload) });
     }
-    if (command !== "start") {
-      return Promise.reject(new HMIAPIError("当前 v2 未提供此操作", 501, "not_supported"));
+    const operation = command === "start"
+      ? { displayPath: "home.machine.start", action: "pulse" as const, name: "启动" }
+      : command === "set_mode"
+        ? { displayPath: "home.machine.enabled", action: "toggle" as const, name: "模式切换" }
+        : null;
+    if (operation === null) {
+      return Promise.reject(new HMIAPIError("当前界面未提供此操作", 501, "not_supported"));
     }
-    const binding = this.config.bindings.find((item) => item.displayPath === "home.machine.start");
-    if (binding?.writePoint === undefined || binding.writePoint === null || binding.action !== "pulse") {
-      return Promise.reject(new HMIAPIError("points.json 未配置启动点位", 500, "point_not_configured"));
+    const binding = this.config.bindings.find((item) => item.displayPath === operation.displayPath);
+    if (binding?.writePoint === undefined || binding.writePoint === null || binding.action !== operation.action) {
+      return Promise.reject(new HMIAPIError(`points.json 未配置${operation.name}点位`, 500, "point_not_configured"));
     }
     if (!this.canSendRuntime()) {
       return Promise.reject(new HMIAPIError("PLC 尚未连接", 503, "plc_not_connected"));
     }
     const requestId = requestID();
-    const confirmation = this.pendingStartCommand.waitFor(requestId);
+    const confirmation = this.pendingPointCommand.waitFor(requestId);
     try {
-      this.socket!.send(JSON.stringify(buildPointCommand(binding.writePoint, binding.action, requestId)));
+      this.socket!.send(JSON.stringify(buildPointCommand(binding.writePoint, operation.action, requestId)));
     } catch {
-      this.pendingStartCommand.cancel("启动命令未发送，结果未知", 503, "network_error");
+      this.pendingPointCommand.cancel("现场操作未发送，结果未知", 503, "network_error");
     }
     return confirmation.then(() => ({ state: cloneState(this.currentState()) }));
   }
@@ -1405,7 +1409,7 @@ class AppleBridge {
       return Promise.reject(new HMIAPIError("请登录管理员后确认报警", 403, "permission_denied"));
     }
     if (!this.demo) {
-      return Promise.reject(new HMIAPIError("当前 v2 不支持报警确认", 501, "not_supported"));
+      return Promise.reject(new HMIAPIError("当前界面不支持报警确认", 501, "not_supported"));
     }
     const state = cloneState(this.demoState);
     const alarm = state.alarms.find((item) => item.id === alarmID);
@@ -1608,21 +1612,18 @@ class AppleBridge {
     }
     window.setTimeout(() => {
       const start = document.querySelector<HTMLButtonElement>('[data-action="start"]');
-      const startEnabled = this.canSendRuntime();
+      const runtimeEnabled = this.canSendRuntime();
       document.querySelectorAll<HTMLButtonElement>(".control-button").forEach((button) => {
-        button.dataset.backendUnavailable = button !== start || !startEnabled ? "true" : "false";
+        const available = runtimeEnabled && (button === start || button.dataset.action === "custom");
+        button.dataset.backendUnavailable = available ? "false" : "true";
       });
       const mode = document.querySelector<HTMLButtonElement>("#modeToggle");
       if (mode !== null) {
-        mode.dataset.backendUnavailable = "true";
+        mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";
       }
       document.querySelectorAll<HTMLButtonElement>(".ack-button").forEach((button) => {
         button.dataset.backendUnavailable = "true";
       });
-      const gap = document.querySelector<HTMLElement>("#v2-data-gap");
-      if (gap !== null) {
-        gap.hidden = false;
-      }
     }, 0);
   }
 }

@@ -109,3 +109,13 @@ go test ./...
 
 `assets/points.json` 是页面、点位和显示绑定的唯一来源。`runtime.configure`
 只发送运行时点位；显示路径和中文说明只在浏览器使用。
+
+## 2026-08-08 模式切换与显示文案
+
+- 页面不再向现场用户展示 `V2` 或 `v2` 标识；`/api/v2` 仍是内部认证和维护 API
+  的技术路由，不作为界面文案。
+- 访客点击自动/手动模式会打开本地登录。ADMIN、OPERATOR 登录且 PLC 已连接后，HMI
+  通过 `home.machine.enabled` 绑定的 `machine.enabled` toggle 发送既有 WSS
+  `point.command`；不新增后端命令或 PLC 写入路径。
+- 自动/手动显示始终由 PLC 点位回传的当前状态决定：自动为绿色，手动为黄色。命令
+  成功、失败、超时和断线均通过页面 toast 反馈，不使用浏览器原生对话框。

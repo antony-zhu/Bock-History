@@ -3620,10 +3620,6 @@
       cursor: pointer;
     }
 
-    #v2-data-gap {
-      color: var(--amber);
-    }
-
     .page[data-page="maintenance"] .settings-layout {
       align-items: stretch;
       display: grid;
@@ -4341,7 +4337,6 @@
               <span id="progressText">目标完成度 100%</span>
               <div class="progress-track" aria-hidden="true"><span id="progressFill"></span></div>
               <span id="dataFreshness">数据刷新：正在连接</span>
-              <span id="v2-data-gap" hidden>生产统计暂无数据（当前 v2 未提供）</span>
             </div>
           </div>
         </section>
@@ -4546,7 +4541,7 @@
   <script src="assets/vendor/simple-keyboard/index.js"></script>
   <script src="assets/soft-keyboard.js?v=20260807.6"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260807.6").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.1").then(function (module) {
       return module.installHMIBackend();
     });
       window.HMIBackend = {

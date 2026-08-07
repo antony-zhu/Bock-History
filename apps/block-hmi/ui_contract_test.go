@@ -42,7 +42,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`id="operatorName"`,
 		`assets/soft-keyboard.css?v=20260807.6`,
 		`assets/soft-keyboard.js?v=20260807.6`,
-		`import("./assets/hmi.mjs?v=20260807.6")`,
+		`import("./assets/hmi.mjs?v=20260808.1")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -200,6 +200,36 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if !regexp.MustCompile(`private sendCommand[\s\S]*?requirePermission\("operate"\)`).MatchString(source) {
 		t.Fatal("HMI point commands are not protected by the frontend permission gate")
+	}
+	modeCommand := regexp.MustCompile(`(?s)private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{.*?\n  \}\n\n  private acknowledgeAlarm`).FindString(source)
+	if modeCommand == "" ||
+		!strings.Contains(modeCommand, `command === "set_mode"`) ||
+		!strings.Contains(modeCommand, `displayPath: "home.machine.enabled", action: "toggle"`) ||
+		!strings.Contains(modeCommand, `buildPointCommand(binding.writePoint, operation.action, requestId)`) {
+		t.Fatal("mode switching does not use the configured PLC toggle point")
+	}
+	if !regexp.MustCompile(`(?s)const enabled = this\.valueFor\("home\.machine\.enabled"\);.*?state\.mode = enabled === true \? "auto" : "manual";`).MatchString(source) {
+		t.Fatal("mode display is not derived from the PLC enabled point")
+	}
+	if !strings.Contains(source, `const available = runtimeEnabled && (button === start || button.dataset.action === "custom");`) ||
+		!strings.Contains(source, `mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";`) ||
+		strings.Contains(source, `mode.dataset.backendUnavailable = "true";`) {
+		t.Fatal("production mode controls are not enabled only while the runtime is writable")
+	}
+	modeChange := regexp.MustCompile(`(?s)async function requestModeChange\(\) \{.*?\n      \}\n\n      async function handleAction`).FindString(page)
+	if modeChange == "" ||
+		!strings.Contains(modeChange, `if (!requireFrontendPermission("operate")) return false;`) ||
+		!strings.Contains(modeChange, `state.mode === "auto" ? "manual" : "auto"`) ||
+		!strings.Contains(modeChange, `backend.sendCommand("set_mode"`) ||
+		!strings.Contains(modeChange, `runBackendMutation(`) {
+		t.Fatal("mode toggle does not preserve the guest gate and both manual/auto directions")
+	}
+	if !regexp.MustCompile(`(?s)async function runBackendMutation\(factory, options = \{\}\) \{.*?showToast\(\s*backendErrorMessage\(mutationError\)`).MatchString(page) {
+		t.Fatal("mode command failures are not surfaced through the HMI toast")
+	}
+	visibleCopy := regexp.MustCompile(`/api/v2(?:/[a-z-]+)+`).ReplaceAllString(page+source, "")
+	if regexp.MustCompile(`(?i)\bv2\b`).MatchString(visibleCopy) {
+		t.Fatal("user-visible HMI copy still exposes a v2 label")
 	}
 	if !regexp.MustCompile(`private sendPLCScan[\s\S]*?requirePermission\("maintenance"\)`).MatchString(source) {
 		t.Fatal("HMI PLC actions are not protected by the frontend maintenance gate")

@@ -537,3 +537,19 @@ HMI 不再请求浏览器全屏、右键菜单或 `alert`/`confirm`/`prompt` 原
 权限或浏览器错误提示；首个管理员提交后一次进入会话；连续软键盘输入无明显卡顿，关闭键盘后页面数据保持最新。
 候选制品仍按第 2 节生成并校验 `$CACHE_ROOT/artifact.sha256`，发布报告同时记录版本、该 manifest 的 SHA-256 与
 `artifact/bin/block-agent` 的 SHA-256；不得记录密码、私钥或真实 Wi-Fi 配置。
+
+## 11. 2026-08-08 HMI 模式切换与现场显示验收
+
+本次仅更新 Block HMI：移除了页面中对现场用户可见的 `V2`/`v2` 文案；`/api/v2`、
+MQTTS v2 和其他协议标识仍保留在技术接口、配置和契约中。
+
+模式切换继续使用既有本地 WSS 点位链路。访客点击自动/手动模式时只打开登录，不发送
+运行时命令；ADMIN 或 OPERATOR 登录且 PLC 已连接后，HMI 将
+`home.machine.enabled` 映射为 `machine.enabled` 的 `point.command` `toggle`。Agent
+和 PLC 的既有 mask-write/toggle 语义保持不变，HMI 不创建本地模拟状态：自动/手动及其
+绿色/黄色外观均由后续 PLC 当前点位回显确定。
+
+开发验收至少覆盖：游客门禁、自动→手动与手动→自动的 `point.command`/`point.result`
+成功路径、PLC 写入失败、结果超时和连接中断。失败必须显示 HMI 页面 toast，不能显示
+浏览器原生对话框。该前端改动不含真实设备写入；按开发阶段策略完成源代码测试、制品
+构建、版本和哈希记录即可，不以程序回滚为发布门禁。
