@@ -1,8 +1,9 @@
 # Block v2 真机发布与回滚
 
-本文件是 Block 的唯一正式真机发布流程。发布管理员应从当前已验证的
-`/opt/block/current/deploy/` 运行脚本；安装完成后，同一份流程也会随 release
-复制到该目录。不要另建手工发布流程、第二个 systemd 服务或临时发布工具。
+本文件是 Block 的唯一正式真机发布流程。每次安装（包括首次迁移）必须从受控暂存的
+候选制品执行 `artifact/deploy/install.sh`；绝不调用 `/opt/block/current/deploy/install.sh`
+升级。安装成功后，该候选的同一份流程会随 release 复制到 `current/deploy/`，仅用于
+验收或后续手工回滚。不要另建手工发布流程、第二个 systemd 服务或临时发布工具。
 
 本流程只发布 Block runtime 和本地 HMI，不配置 Wi-Fi、BDM、PLC 点位或 PLC
 控制逻辑。整个发布过程不得向 PLC 写入任何值。
@@ -73,6 +74,7 @@ deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
 bin/block-agent
 web/index.html
 web/assets/points.json
+deploy/install.sh、rollback.sh、health-check.sh、systemd unit、配置示例及其引用的 helper/test
 VERSION
 ```
 
@@ -167,6 +169,12 @@ sudo sh -c "cd '$STAGE/artifact' && sha256sum -c ../artifact.sha256"
 sudo test -x "$STAGE/artifact/bin/block-agent"
 sudo test -f "$STAGE/artifact/web/index.html"
 sudo test -f "$STAGE/artifact/web/assets/points.json"
+sudo test -x "$STAGE/artifact/deploy/install.sh"
+sudo test -x "$STAGE/artifact/deploy/rollback.sh"
+sudo test -x "$STAGE/artifact/deploy/health-check.sh"
+sudo test -f "$STAGE/artifact/deploy/systemd/block.service"
+sudo test -f "$STAGE/artifact/deploy/systemd/block-kiosk.service"
+sudo test -f "$STAGE/artifact/deploy/config/block.env.example"
 test "$(sudo cat "$STAGE/artifact/VERSION")" = "$VERSION"
 ```
 
@@ -174,10 +182,10 @@ test "$(sudo cat "$STAGE/artifact/VERSION")" = "$VERSION"
 设置。制品哈希、布局或版本任何一项不符时立即 STOP；不要覆盖原 release，也
 不要手工修改当前链接。
 
-使用现有安装器执行一次正式安装：
+直接使用暂存候选制品内的安装器执行一次正式安装；这也是首次迁移入口：
 
 ```bash
-sudo /opt/block/current/deploy/install.sh --execute \
+sudo "$STAGE/artifact/deploy/install.sh" --execute \
   --artifact-dir "$STAGE/artifact" \
   --config "$STAGE/block.env" \
   --version "$VERSION"

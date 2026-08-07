@@ -16,6 +16,7 @@ SYSTEMD_ROOT=/etc/systemd/system
 SNAPSHOTS_ROOT=/var/lib/block-release/unit-snapshots
 ROLLBACK_ARMED=false
 INSTALL_SNAPSHOT=
+CANDIDATE_DEPLOY_DIR=
 
 rollback_install() {
   STATUS=$?
@@ -31,12 +32,14 @@ trap rollback_install ERR
 usage() {
   cat <<'EOF'
 Usage:
-  sudo deploy/block/install.sh --execute --artifact-dir <artifact-dir>
+  sudo <artifact-dir>/deploy/install.sh --execute --artifact-dir <artifact-dir>
       --config <block.env> --version <version>
 
 The artifact must contain bin/block-agent, web/index.html,
-web/assets/points.json, and VERSION.  This script changes only local release
-paths and systemd units.  It does not configure Wi-Fi, BDM, or PLC points.
+web/assets/points.json, deploy/, and VERSION. Run only the candidate artifact's
+deploy/install.sh; do not use an installer from /opt/block/current. This script
+changes only local release paths and systemd units. It does not configure Wi-Fi,
+BDM, or PLC points.
 EOF
 }
 
@@ -121,6 +124,19 @@ validate_local_tls_material() {
   key_public=$(openssl pkey -in "$key" -pubout -outform DER | sha256sum | awk '{print $1}')
   [ -n "$cert_public" ] && [ "$cert_public" = "$key_public" ] ||
     fail "local TLS certificate and private key do not match"
+}
+
+validate_candidate_deploy() {
+  local tool
+
+  [ "$SCRIPT_DIR" = "$CANDIDATE_DEPLOY_DIR" ] ||
+    fail "run the candidate artifact's deploy/install.sh, not an installer from /opt/block/current"
+  for tool in build.sh install.sh rollback.sh health-check.sh install-users.sh version.sh verify-install.sh verify-static.sh tests/deploy-regression.sh tests/install-rollback-regression.sh; do
+    [ -x "$CANDIDATE_DEPLOY_DIR/$tool" ] || fail "missing executable candidate deploy tool: $tool"
+  done
+  for tool in README.md config/block.env.example systemd/block.service systemd/block-kiosk.service; do
+    [ -f "$CANDIDATE_DEPLOY_DIR/$tool" ] || fail "missing candidate deploy file: $tool"
+  done
 }
 
 snapshot_state_file() {
@@ -218,6 +234,11 @@ case "$VERSION" in
   *[!A-Za-z0-9._-]*|'') fail "version may contain only letters, digits, dot, underscore, and dash" ;;
 esac
 
+[ -d "$ARTIFACT_DIR" ] || fail "artifact directory does not exist: $ARTIFACT_DIR"
+ARTIFACT_DIR=$(CDPATH= cd -- "$ARTIFACT_DIR" && pwd -P)
+CANDIDATE_DEPLOY_DIR=$ARTIFACT_DIR/deploy
+validate_candidate_deploy
+
 [ -x "$ARTIFACT_DIR/bin/block-agent" ] || fail "missing artifact binary"
 [ -f "$ARTIFACT_DIR/web/index.html" ] || fail "missing artifact index.html"
 [ -f "$ARTIFACT_DIR/web/assets/points.json" ] || fail "missing artifact points.json"
@@ -272,17 +293,18 @@ chown -R block:block "$RELEASE_DIR/web"
 
 install -d -o root -g root -m 0755 "$RELEASE_DIR/deploy/config" "$RELEASE_DIR/deploy/systemd" "$RELEASE_DIR/deploy/tests"
 for TOOL in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh; do
-  install -m 0755 -o root -g root "$SCRIPT_DIR/$TOOL" "$RELEASE_DIR/deploy/$TOOL"
+  install -m 0755 -o root -g root "$CANDIDATE_DEPLOY_DIR/$TOOL" "$RELEASE_DIR/deploy/$TOOL"
 done
-install -m 0644 -o root -g root "$SCRIPT_DIR/README.md" "$RELEASE_DIR/deploy/README.md"
-install -m 0644 -o root -g root "$SCRIPT_DIR/config/block.env.example" "$RELEASE_DIR/deploy/config/block.env.example"
-install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block.service" "$RELEASE_DIR/deploy/systemd/block.service"
-install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block-kiosk.service" "$RELEASE_DIR/deploy/systemd/block-kiosk.service"
-install -m 0755 -o root -g root "$SCRIPT_DIR/tests/deploy-regression.sh" "$RELEASE_DIR/deploy/tests/deploy-regression.sh"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/README.md" "$RELEASE_DIR/deploy/README.md"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/config/block.env.example" "$RELEASE_DIR/deploy/config/block.env.example"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block.service" "$RELEASE_DIR/deploy/systemd/block.service"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block-kiosk.service" "$RELEASE_DIR/deploy/systemd/block-kiosk.service"
+install -m 0755 -o root -g root "$CANDIDATE_DEPLOY_DIR/tests/deploy-regression.sh" "$RELEASE_DIR/deploy/tests/deploy-regression.sh"
+install -m 0755 -o root -g root "$CANDIDATE_DEPLOY_DIR/tests/install-rollback-regression.sh" "$RELEASE_DIR/deploy/tests/install-rollback-regression.sh"
 
 install -m 0640 -o root -g block "$CONFIG_FILE" "$CONFIG_ROOT/block.env"
-install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block.service" "$SYSTEMD_ROOT/block.service"
-install -m 0644 -o root -g root "$SCRIPT_DIR/systemd/block-kiosk.service" "$SYSTEMD_ROOT/block-kiosk.service"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block.service" "$SYSTEMD_ROOT/block.service"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block-kiosk.service" "$SYSTEMD_ROOT/block-kiosk.service"
 
 if [ -n "$PREVIOUS_RELEASE" ]; then
   printf '%s\n' "$PREVIOUS_RELEASE" > "$STATE_ROOT/previous-release"

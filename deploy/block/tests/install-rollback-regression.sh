@@ -124,8 +124,8 @@ rewrite_fixture_paths() {
   chmod 0755 "$TEST_ROOT/source-deploy/install-users.sh"
 }
 
-write_release() {
-  local name=$1 health=$2 release
+write_legacy_http_release() {
+  local name=$1 health_marker=$2 release
   release=$TEST_ROOT/opt/block/releases/$name
   mkdir -p "$release/bin" "$release/deploy/systemd"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$release/bin/block-agent"
@@ -133,8 +133,10 @@ write_release() {
   printf '%s\n' "$name" > "$release/VERSION"
   printf '%s\n' "$name block unit" > "$release/deploy/systemd/block.service"
   printf '%s\n' "$name kiosk unit" > "$release/deploy/systemd/block-kiosk.service"
-  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' '[ "$#" -eq 0 ]' "printf '%s\\n' $health > '$TEST_ROOT/$health-health'" > "$release/deploy/health-check.sh"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' '[ "$#" -eq 0 ]' "printf '%s\\n' $health_marker > '$TEST_ROOT/$health_marker-health'" > "$release/deploy/health-check.sh"
   chmod 0755 "$release/deploy/health-check.sh"
+  printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' legacy-installer > '$TEST_ROOT/legacy-installer-used'" 'exit 93' > "$release/deploy/install.sh"
+  chmod 0755 "$release/deploy/install.sh"
 }
 
 make_tls_material() {
@@ -152,13 +154,17 @@ make_tls_material() {
 }
 
 write_candidate_artifact() {
-  local artifact=$TEST_ROOT/artifact
+  local version=$1 artifact
+  artifact=$TEST_ROOT/artifact-$version
   mkdir -p "$artifact/bin" "$artifact/web/assets"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$artifact/bin/block-agent"
   chmod 0755 "$artifact/bin/block-agent"
   : > "$artifact/web/index.html"
   : > "$artifact/web/assets/points.json"
-  printf '%s\n' new > "$artifact/VERSION"
+  printf '%s\n' "$version" > "$artifact/VERSION"
+  cp -a "$TEST_ROOT/source-deploy/." "$artifact/deploy"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'if [ "${1:-}" = "--help" ]; then printf "%s\\n" --ca-file; fi' 'exit 0' > "$artifact/deploy/health-check.sh"
+  chmod 0755 "$artifact/deploy/health-check.sh"
 }
 
 write_candidate_config() {
@@ -179,10 +185,9 @@ cp -a "$ROOT/." "$TEST_ROOT/source-deploy"
 rewrite_fixture_paths
 make_mock_commands "$TEST_ROOT/mock-bin"
 make_tls_material
-write_candidate_artifact
 
 mkdir -p "$TEST_ROOT/opt/block/releases" "$TEST_ROOT/etc/systemd/system" "$TEST_ROOT/etc/block" "$TEST_ROOT/var/lib/block-release"
-write_release old old
+write_legacy_http_release old old
 ln -s "$TEST_ROOT/opt/block/releases/old" "$TEST_ROOT/opt/block/current"
 printf '%s\n' old-unit > "$TEST_ROOT/etc/systemd/system/block.service"
 printf '%s\n' old-kiosk-unit > "$TEST_ROOT/etc/systemd/system/block-kiosk.service"
@@ -194,9 +199,16 @@ write_candidate_config "$TEST_ROOT/candidate.env"
 export TEST_ROOT MOCK_SYSTEMCTL_LOG="$TEST_ROOT/systemctl.log"
 export PATH="$TEST_ROOT/mock-bin:$PATH"
 
+write_candidate_artifact new
+if "$TEST_ROOT/source-deploy/install.sh" --execute --artifact-dir "$TEST_ROOT/artifact-new" --config "$TEST_ROOT/candidate.env" --version new >"$TEST_ROOT/non-candidate-entry.log" 2>&1; then
+  fail "installer outside the candidate artifact unexpectedly ran"
+fi
+grep -Fq "run the candidate artifact's deploy/install.sh" "$TEST_ROOT/non-candidate-entry.log" ||
+  fail "installer outside the candidate artifact did not explain the required entrypoint"
+
 cp -a "$TEST_ROOT/candidate.env" "$TEST_ROOT/missing-cert.env"
 sed -i "s|$TEST_ROOT/tls/block-hmi.crt|$TEST_ROOT/tls/missing.crt|" "$TEST_ROOT/missing-cert.env"
-if "$TEST_ROOT/source-deploy/install.sh" --execute --artifact-dir "$TEST_ROOT/artifact" --config "$TEST_ROOT/missing-cert.env" --version new >/dev/null 2>&1; then
+if "$TEST_ROOT/artifact-new/deploy/install.sh" --execute --artifact-dir "$TEST_ROOT/artifact-new" --config "$TEST_ROOT/missing-cert.env" --version new >/dev/null 2>&1; then
   fail "install accepted missing TLS certificate"
 fi
 [ "$(readlink -f "$TEST_ROOT/opt/block/current")" = "$TEST_ROOT/opt/block/releases/old" ] || fail "missing certificate changed current release"
@@ -204,7 +216,7 @@ fi
 [ ! -e "$TEST_ROOT/var/lib/block-release/unit-snapshots" ] || fail "missing certificate created a rollback snapshot"
 
 INSTALL_FAILURE_LOG=$TEST_ROOT/install-failure.log
-if MOCK_FAIL_NEW_RESTART=1 "$TEST_ROOT/source-deploy/install.sh" --execute --artifact-dir "$TEST_ROOT/artifact" --config "$TEST_ROOT/candidate.env" --version new >"$INSTALL_FAILURE_LOG" 2>&1; then
+if MOCK_FAIL_NEW_RESTART=1 "$TEST_ROOT/artifact-new/deploy/install.sh" --execute --artifact-dir "$TEST_ROOT/artifact-new" --config "$TEST_ROOT/candidate.env" --version new >"$INSTALL_FAILURE_LOG" 2>&1; then
   fail "candidate install unexpectedly succeeded"
 fi
 [ "$(readlink -f "$TEST_ROOT/opt/block/current")" = "$TEST_ROOT/opt/block/releases/old" ] || fail "automatic rollback did not restore current release"
@@ -217,15 +229,37 @@ if [ ! -f "$TEST_ROOT/old-health" ]; then
   fail "automatic rollback did not use the old health check"
 fi
 grep -Fqx 'daemon-reload' "$TEST_ROOT/systemctl.log" || fail "automatic rollback did not reload restored units"
+[ ! -e "$TEST_ROOT/legacy-installer-used" ] || fail "candidate install invoked the legacy current installer"
 
-printf '%s\n' new-unit > "$TEST_ROOT/etc/systemd/system/block.service"
-printf '%s\n' new-kiosk-unit > "$TEST_ROOT/etc/systemd/system/block-kiosk.service"
-cp -a "$TEST_ROOT/candidate.env" "$TEST_ROOT/etc/block/block.env"
+write_candidate_artifact new-success
+"$TEST_ROOT/artifact-new-success/deploy/install.sh" --execute --artifact-dir "$TEST_ROOT/artifact-new-success" --config "$TEST_ROOT/candidate.env" --version new-success >/dev/null
+[ "$(readlink -f "$TEST_ROOT/opt/block/current")" = "$TEST_ROOT/opt/block/releases/new-success" ] || fail "candidate success install did not activate the new release"
+for tool in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh tests/deploy-regression.sh tests/install-rollback-regression.sh; do
+  [ -x "$TEST_ROOT/opt/block/releases/new-success/deploy/$tool" ] || fail "successful release is missing deploy tool: $tool"
+done
+for file in README.md config/block.env.example systemd/block.service systemd/block-kiosk.service; do
+  [ -f "$TEST_ROOT/opt/block/releases/new-success/deploy/$file" ] || fail "successful release is missing deploy file: $file"
+done
+[ ! -e "$TEST_ROOT/legacy-installer-used" ] || fail "successful candidate install invoked the legacy current installer"
+
+write_legacy_http_release no-snapshot no-snapshot
+cp -a "$TEST_ROOT/etc/systemd/system/block.service" "$TEST_ROOT/block-unit-before-no-snapshot"
+cp -a "$TEST_ROOT/etc/systemd/system/block-kiosk.service" "$TEST_ROOT/kiosk-unit-before-no-snapshot"
+cp -a "$TEST_ROOT/etc/block/block.env" "$TEST_ROOT/config-before-no-snapshot"
+cp -a "$TEST_ROOT/systemctl.log" "$TEST_ROOT/systemctl-before-no-snapshot"
+if "$TEST_ROOT/opt/block/current/deploy/rollback.sh" --execute --version no-snapshot >"$TEST_ROOT/no-snapshot.log" 2>&1; then
+  fail "cross-topology rollback without a snapshot unexpectedly succeeded"
+fi
+grep -Fq 'crosses local HTTP/TLS topology but has no recorded config/unit snapshot' "$TEST_ROOT/no-snapshot.log" ||
+  fail "cross-topology rollback without a snapshot did not explain the refusal"
+[ "$(readlink -f "$TEST_ROOT/opt/block/current")" = "$TEST_ROOT/opt/block/releases/new-success" ] || fail "no-snapshot rollback changed current release"
+cmp -s "$TEST_ROOT/etc/systemd/system/block.service" "$TEST_ROOT/block-unit-before-no-snapshot" || fail "no-snapshot rollback changed Block unit"
+cmp -s "$TEST_ROOT/etc/systemd/system/block-kiosk.service" "$TEST_ROOT/kiosk-unit-before-no-snapshot" || fail "no-snapshot rollback changed kiosk unit"
+cmp -s "$TEST_ROOT/etc/block/block.env" "$TEST_ROOT/config-before-no-snapshot" || fail "no-snapshot rollback changed config"
+cmp -s "$TEST_ROOT/systemctl.log" "$TEST_ROOT/systemctl-before-no-snapshot" || fail "no-snapshot rollback changed service state"
+
 rm -f "$TEST_ROOT/old-health"
-ln -sfn "$TEST_ROOT/opt/block/releases/new" "$TEST_ROOT/opt/block/current"
-printf '%s\n' "$TEST_ROOT/opt/block/releases/old" > "$TEST_ROOT/var/lib/block-release/previous-release"
-printf '%s\n' "$TEST_ROOT/var/lib/block-release/unit-snapshots/pre-new" > "$TEST_ROOT/var/lib/block-release/current-unit-snapshot"
-"$TEST_ROOT/opt/block/releases/new/deploy/rollback.sh" --execute --version old >/dev/null
+"$TEST_ROOT/opt/block/current/deploy/rollback.sh" --execute --version old >/dev/null
 
 [ "$(readlink -f "$TEST_ROOT/opt/block/current")" = "$TEST_ROOT/opt/block/releases/old" ] || fail "manual rollback did not restore current release"
 [ "$(cat "$TEST_ROOT/etc/systemd/system/block.service")" = 'old block unit' ] || fail "manual rollback did not install target Block unit"

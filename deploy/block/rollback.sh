@@ -72,6 +72,7 @@ install_target_units() {
 }
 
 validate_snapshot() {
+  local unit
   case "$SNAPSHOT" in
     "$SNAPSHOTS_ROOT"/pre-*) ;;
     *) fail "snapshot is outside $SNAPSHOTS_ROOT" ;;
@@ -79,6 +80,21 @@ validate_snapshot() {
   [ -d "$SNAPSHOT" ] || fail "snapshot does not exist: $SNAPSHOT"
   [ -f "$SNAPSHOT/units.state" ] || fail "snapshot has no unit state"
   [ -f "$SNAPSHOT/current-link.state" ] || fail "snapshot has no current-link state"
+  [ -f "$SNAPSHOT/state/block.env.state" ] || fail "snapshot has no config state"
+  case "$(cat "$SNAPSHOT/state/block.env.state")" in
+    present) [ -f "$SNAPSHOT/state/block.env" ] || fail "snapshot is missing block.env" ;;
+    absent) ;;
+    *) fail "snapshot has invalid config state" ;;
+  esac
+  for unit in block.service block-kiosk.service; do
+    if grep -Fqx "$unit"$'\t'present "$SNAPSHOT/units.state"; then
+      [ -f "$SNAPSHOT/units/$unit" ] || fail "snapshot is missing $unit"
+    elif grep -Fqx "$unit"$'\t'absent "$SNAPSHOT/units.state"; then
+      :
+    else
+      fail "snapshot has no state for $unit"
+    fi
+  done
 }
 
 restore_snapshot_units() {
@@ -129,12 +145,19 @@ restore_snapshot_current_link() {
   esac
 }
 
+release_health_supports_ca() {
+  local release=$1 health_check
+  health_check=$release/deploy/health-check.sh
+  [ -x "$health_check" ] || return 1
+  "$health_check" --help 2>&1 | grep -F -- '--ca-file' >/dev/null
+}
+
 release_health_check() {
   local release=$1 health_check ca
   health_check=$release/deploy/health-check.sh
   [ -x "$health_check" ] || fail "release has no executable health check: $health_check"
 
-  if "$health_check" --help 2>&1 | grep -F -- '--ca-file' >/dev/null; then
+  if release_health_supports_ca "$release"; then
     ca=$(config_value BLOCK_LOCAL_TLS_CA) || fail "missing BLOCK_LOCAL_TLS_CA for TLS health check"
     [ -n "$ca" ] || fail "BLOCK_LOCAL_TLS_CA must not be empty"
     "$health_check" --ca-file "$ca"
@@ -249,6 +272,22 @@ TARGET_SNAPSHOT=$(snapshot_for_release "$TARGET_RELEASE" || true)
 if [ -n "$TARGET_SNAPSHOT" ]; then
   SNAPSHOT=$TARGET_SNAPSHOT
   validate_snapshot
+fi
+
+if [ -n "$CURRENT_RELEASE" ] && [ "$TARGET_RELEASE" != "$CURRENT_RELEASE" ]; then
+  if release_health_supports_ca "$TARGET_RELEASE"; then
+    TARGET_LOCAL_TLS=true
+  else
+    TARGET_LOCAL_TLS=false
+  fi
+  if release_health_supports_ca "$CURRENT_RELEASE"; then
+    CURRENT_LOCAL_TLS=true
+  else
+    CURRENT_LOCAL_TLS=false
+  fi
+  if [ "$TARGET_LOCAL_TLS" != "$CURRENT_LOCAL_TLS" ] && [ -z "$TARGET_SNAPSHOT" ]; then
+    fail "target release crosses local HTTP/TLS topology but has no recorded config/unit snapshot; refusing to change services or current release"
+  fi
 fi
 
 systemctl stop block-kiosk.service >/dev/null 2>&1 || true

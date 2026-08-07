@@ -44,6 +44,7 @@ touch "$ARTIFACT_DIR/web/index.html" "$ARTIFACT_DIR/web/assets/points.json"
 printf '%s\n' test > "$ARTIFACT_DIR/VERSION"
 printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$ARTIFACT_DIR/bin/block-agent"
 chmod +x "$ARTIFACT_DIR/bin/block-agent"
+cp -a "$DEPLOY_DIR" "$ARTIFACT_DIR/deploy"
 
 BASH_BIN=$(command -v bash)
 CAT_BIN=$(command -v cat)
@@ -59,7 +60,7 @@ export BASH_BIN CAT_BIN GREP_BIN DIRNAME_BIN SED_BIN
 export -f id cat grep dirname sed
 
 preflight_config() {
-  PATH=/nonexistent "$BASH_BIN" "$DEPLOY_DIR/install.sh" --execute --artifact-dir "$ARTIFACT_DIR" --config "$1" --version test 2>&1
+  PATH=/nonexistent "$BASH_BIN" "$ARTIFACT_DIR/deploy/install.sh" --execute --artifact-dir "$ARTIFACT_DIR" --config "$1" --version test 2>&1
 }
 
 ALLOWED_CONFIG=$TEST_ROOT/allowed.env

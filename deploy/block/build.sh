@@ -15,6 +15,7 @@ Creates one immutable release artifact:
   bin/block-agent
   web/index.html
   web/assets/points.json and other HMI assets
+  deploy/install.sh, rollback.sh, health-check.sh, units, and release helpers
   VERSION
 EOF
 }
@@ -22,6 +23,21 @@ EOF
 fail() {
   printf 'build: %s\n' "$*" >&2
   exit 1
+}
+
+copy_deploy_bundle() {
+  local tool
+
+  install -d -m 0755 "$OUTPUT_DIR/deploy/config" "$OUTPUT_DIR/deploy/systemd" "$OUTPUT_DIR/deploy/tests"
+  for tool in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh; do
+    install -m 0755 "$SCRIPT_DIR/$tool" "$OUTPUT_DIR/deploy/$tool"
+  done
+  install -m 0644 "$SCRIPT_DIR/README.md" "$OUTPUT_DIR/deploy/README.md"
+  install -m 0644 "$SCRIPT_DIR/config/block.env.example" "$OUTPUT_DIR/deploy/config/block.env.example"
+  install -m 0644 "$SCRIPT_DIR/systemd/block.service" "$OUTPUT_DIR/deploy/systemd/block.service"
+  install -m 0644 "$SCRIPT_DIR/systemd/block-kiosk.service" "$OUTPUT_DIR/deploy/systemd/block-kiosk.service"
+  install -m 0755 "$SCRIPT_DIR/tests/deploy-regression.sh" "$OUTPUT_DIR/deploy/tests/deploy-regression.sh"
+  install -m 0755 "$SCRIPT_DIR/tests/install-rollback-regression.sh" "$OUTPUT_DIR/deploy/tests/install-rollback-regression.sh"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -66,6 +82,7 @@ install -d -m 0755 "$OUTPUT_DIR/bin" "$OUTPUT_DIR/web"
 go -C "$REPO_ROOT/services/block-agent" build -trimpath -o "$OUTPUT_DIR/bin/block-agent" ./cmd/block-agent
 install -m 0644 "$HMI_DIR/index.html" "$OUTPUT_DIR/web/index.html"
 cp -a "$HMI_DIR/assets" "$OUTPUT_DIR/web/assets"
+copy_deploy_bundle
 printf '%s\n' "$VERSION" > "$OUTPUT_DIR/VERSION"
 
 printf 'built Block release artifact: %s\n' "$OUTPUT_DIR"

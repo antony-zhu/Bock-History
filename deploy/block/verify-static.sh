@@ -76,6 +76,15 @@ python3 - "$SCRIPT_DIR/install.sh" <<'PY'
 import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
+for required in (
+    'CANDIDATE_DEPLOY_DIR=$ARTIFACT_DIR/deploy',
+    'validate_candidate_deploy',
+    'run the candidate artifact\'s deploy/install.sh, not an installer from /opt/block/current',
+    '"$CANDIDATE_DEPLOY_DIR/$TOOL" "$RELEASE_DIR/deploy/$TOOL"',
+    '"$CANDIDATE_DEPLOY_DIR/tests/install-rollback-regression.sh" "$RELEASE_DIR/deploy/tests/install-rollback-regression.sh"',
+):
+    if required not in source:
+        raise SystemExit(f"install is missing candidate deploy behavior: {required}")
 steps = (
     'ROLLBACK_ARMED=true',
     'install -m 0640 -o root -g block "$CONFIG_FILE" "$CONFIG_ROOT/block.env"',
@@ -109,6 +118,24 @@ if snapshot >= source.index('install -m 0640 -o root -g block "$CONFIG_FILE"'):
     raise SystemExit("install must snapshot the old state before writing the new config")
 PY
 
+python3 - "$SCRIPT_DIR/build.sh" <<'PY'
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+for required in (
+    'copy_deploy_bundle()',
+    '"$OUTPUT_DIR/deploy/config" "$OUTPUT_DIR/deploy/systemd" "$OUTPUT_DIR/deploy/tests"',
+    'for tool in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh; do',
+    '"$SCRIPT_DIR/config/block.env.example" "$OUTPUT_DIR/deploy/config/block.env.example"',
+    '"$SCRIPT_DIR/systemd/block.service" "$OUTPUT_DIR/deploy/systemd/block.service"',
+    '"$SCRIPT_DIR/systemd/block-kiosk.service" "$OUTPUT_DIR/deploy/systemd/block-kiosk.service"',
+    '"$SCRIPT_DIR/tests/install-rollback-regression.sh" "$OUTPUT_DIR/deploy/tests/install-rollback-regression.sh"',
+    'copy_deploy_bundle',
+):
+    if required not in source:
+        raise SystemExit(f"build is missing candidate deploy bundle content: {required}")
+PY
+
 python3 - "$SCRIPT_DIR/rollback.sh" <<'PY'
 import sys
 
@@ -125,6 +152,10 @@ for required in (
         raise SystemExit(f"rollback is missing required compatibility behavior: {required}")
 if '"$CURRENT_LINK/deploy/health-check.sh" --ca-file' in source:
     raise SystemExit("rollback must not impose TLS health arguments on a target release")
+gate = source.index('target release crosses local HTTP/TLS topology but has no recorded config/unit snapshot')
+manual_stop = source.rindex('systemctl stop block-kiosk.service')
+if gate >= manual_stop:
+    raise SystemExit("cross-topology rollback must reject before stopping services")
 PY
 
 UNIT_COUNT=$(find "$SCRIPT_DIR/systemd" -maxdepth 1 -type f -name '*.service' | wc -l)

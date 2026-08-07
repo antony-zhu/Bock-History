@@ -319,7 +319,7 @@
 #### 本机 HMI HTTPS/WSS 收口（本地候选）
 
 - **用户目标/决策**：消除本机 HMI 的明文 HTTP/WS 例外；业务页面、健康检查、API 和 WebSocket 只允许 loopback TLS，同时保留既有 `8443` 维护 HTTPS 边界。
-- **实现结果**：`9657e1b` 将业务 mux 固定为 `127.0.0.1:8444`，启动必须加载证书/私钥，TLS 最低为 1.2；明文探测不返回 HTTP 兼容响应，8080/8081 不监听。`c47115b` 使 HMI 只计算同源 WSS URL。发布候选的本机 leaf/私钥分别为 `/etc/block/certs/block-hmi.crt` 与 `/etc/block/certs/block-hmi.key`，kiosk 与健康检查使用可由 `block`、`block-ui` 读取的公开 CA `/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt`，不使用不可读的 `/etc/block/certs/ca.crt`。安装器在写入状态前严格验证 TLS 材料并保存 transaction 快照；失败自动恢复配置、两个 unit 和 release 状态，手工回滚安装目标 release 自身的 unit 并调用其兼容健康检查。发布文档仅在严格检查通过、Chromium 单独缺少信任时提供受控 NSS 公开 CA 导入步骤，不允许 `-k`、`--insecure` 或忽略证书错误。
+- **实现结果**：`9657e1b` 将业务 mux 固定为 `127.0.0.1:8444`，启动必须加载证书/私钥，TLS 最低为 1.2；明文探测不返回 HTTP 兼容响应，8080/8081 不监听。`c47115b` 使 HMI 只计算同源 WSS URL。发布候选的本机 leaf/私钥分别为 `/etc/block/certs/block-hmi.crt` 与 `/etc/block/certs/block-hmi.key`，kiosk 与健康检查使用可由 `block`、`block-ui` 读取的公开 CA `/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt`，不使用不可读的 `/etc/block/certs/ca.crt`。候选制品自带完整 `deploy/`，首次和每次安装都只执行受控 staging 中的 `artifact/deploy/install.sh`，不调用旧 current installer。安装器在写入状态前严格验证 TLS 材料并保存 transaction 快照；失败自动恢复配置、两个 unit 和 release 状态，手工回滚安装目标 release 自身的 unit 并调用其兼容健康检查；跨 HTTP/TLS 拓扑而没有对应 config/unit 快照时，在变更服务或 current 前拒绝。发布文档仅在严格检查通过、Chromium 单独缺少信任时提供受控 NSS 公开 CA 导入步骤，不允许 `-k`、`--insecure` 或忽略证书错误。
 - **验证/真机结果**：Agent TLS 单元测试覆盖正确 CA、错误 CA、错误主机名、过期证书、TLS 1.1 和明文 HTTP 拒绝；HMI 静态测试覆盖 WSS；真实 Agent 持久化脚本以随机 loopback TLS 端口、严格 CA 校验验证认证和重启持久化，并检查 8080/8081 没有业务监听。未连接设备、未部署或烧写，尚无真机证据。
 - **遗留事项**：Release 授权后按发布流程先做设备只读预检；真实设备必须验证 `127.0.0.1` SAN、严格健康检查、Chromium HTTPS/WSS 页面和屏幕证据。若 Chromium 需要本机 CA 信任，只能由设备管理员按文档备份并导入公开 CA。
 
