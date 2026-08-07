@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type Role string
@@ -18,6 +19,8 @@ const (
 	DefaultIdleTimeout = 300 * time.Second
 	MinIdleTimeout     = 60 * time.Second
 	MaxIdleTimeout     = 3600 * time.Second
+	MaxUsernameLength  = 128
+	MaxPasswordLength  = 4096
 )
 
 var (
@@ -105,8 +108,11 @@ func (s *Service) FirstSetup(ctx context.Context, username, password, confirmPas
 }
 
 func (s *Service) Login(ctx context.Context, username, password string) (Identity, error) {
-	if username == "" || password == "" {
-		return Identity{}, ErrInvalidCredentials
+	if err := validateUsername(username); err != nil {
+		return Identity{}, err
+	}
+	if err := validatePassword(password); err != nil {
+		return Identity{}, err
 	}
 	account, found, err := s.store.FindAccount(ctx, username)
 	if err != nil {
@@ -119,14 +125,14 @@ func (s *Service) Login(ctx context.Context, username, password string) (Identit
 }
 
 func (s *Service) ChangePassword(ctx context.Context, username, currentPassword, newPassword string) error {
-	if username == "" {
-		return ErrInvalidUsername
+	if err := validateUsername(username); err != nil {
+		return err
 	}
-	if currentPassword == "" {
-		return ErrInvalidCredentials
+	if err := validatePassword(currentPassword); err != nil {
+		return err
 	}
-	if newPassword == "" {
-		return ErrInvalidPassword
+	if err := validatePassword(newPassword); err != nil {
+		return err
 	}
 	account, found, err := s.store.FindAccount(ctx, username)
 	if err != nil {
@@ -173,14 +179,31 @@ func validIdleTimeout(timeout time.Duration) bool {
 }
 
 func validateCredentials(username, password, confirmPassword string) error {
-	if username == "" {
-		return ErrInvalidUsername
+	if err := validateUsername(username); err != nil {
+		return err
 	}
-	if password == "" {
-		return ErrInvalidPassword
+	if err := validatePassword(password); err != nil {
+		return err
+	}
+	if err := validatePassword(confirmPassword); err != nil {
+		return err
 	}
 	if password != confirmPassword {
 		return ErrPasswordMismatch
+	}
+	return nil
+}
+
+func validateUsername(username string) error {
+	if username == "" || utf8.RuneCountInString(username) > MaxUsernameLength {
+		return ErrInvalidUsername
+	}
+	return nil
+}
+
+func validatePassword(password string) error {
+	if password == "" || utf8.RuneCountInString(password) > MaxPasswordLength {
+		return ErrInvalidPassword
 	}
 	return nil
 }

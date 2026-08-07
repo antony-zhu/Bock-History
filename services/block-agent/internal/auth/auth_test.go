@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,33 @@ func TestRolePermissions(t *testing.T) {
 	}
 	if got := (Identity{Role: RoleOperator}).Permissions(); !got.Operate || got.Maintenance {
 		t.Fatalf("operator permissions = %+v", got)
+	}
+}
+
+func TestCredentialsRejectOpenAPILengths(t *testing.T) {
+	service, err := NewService(newMemoryStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tooLongUsername := strings.Repeat("u", MaxUsernameLength+1)
+	tooLongPassword := strings.Repeat("p", MaxPasswordLength+1)
+	if _, err := service.FirstSetup(context.Background(), tooLongUsername, "one", "one"); !errors.Is(err, ErrInvalidUsername) {
+		t.Fatalf("long setup username error = %v", err)
+	}
+	if _, err := service.FirstSetup(context.Background(), "admin", tooLongPassword, tooLongPassword); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("long setup password error = %v", err)
+	}
+	if _, err := service.FirstSetup(context.Background(), "admin", "one", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Login(context.Background(), tooLongUsername, "one"); !errors.Is(err, ErrInvalidUsername) {
+		t.Fatalf("long login username error = %v", err)
+	}
+	if _, err := service.Login(context.Background(), "admin", tooLongPassword); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("long login password error = %v", err)
+	}
+	if err := service.ChangePassword(context.Background(), "admin", "one", tooLongPassword); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("long new password error = %v", err)
 	}
 }
 

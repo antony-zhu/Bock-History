@@ -59,6 +59,21 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 
 	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
+		"username": strings.Repeat("u", auth.MaxUsernameLength+1), "password": "one", "confirmPassword": "one",
+	})
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("long initial username status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
+		"username": "admin", "password": strings.Repeat("p", auth.MaxPasswordLength+1), "confirmPassword": "one",
+	})
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("long initial password status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+
+	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
 		"username": "admin", "password": "one",
 	})
 	if response.StatusCode != http.StatusBadRequest || response.Header.Get("Cache-Control") != "no-store" {
@@ -90,6 +105,13 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	payload = readHTTPBody(t, response)
 	assertStatelessAuthResponse(t, response, payload)
+	response.Body.Close()
+	response = postJSON(t, client, address+"/api/v2/auth/login", map[string]string{
+		"username": strings.Repeat("u", auth.MaxUsernameLength+1), "password": "one",
+	})
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("long login username status=%d", response.StatusCode)
+	}
 	response.Body.Close()
 
 	response = postJSON(t, client, address+"/api/v2/auth/login", map[string]string{"username": "admin", "password": "one"})
