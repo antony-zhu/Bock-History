@@ -27,7 +27,10 @@ for line in open(path, encoding="utf-8"):
     config[key] = value
 
 expected_keys = {
-    "BLOCK_LOCAL_HTTP_ADDRESS",
+    "BLOCK_LOCAL_HTTPS_ADDRESS",
+    "BLOCK_LOCAL_TLS_CERT",
+    "BLOCK_LOCAL_TLS_KEY",
+    "BLOCK_LOCAL_TLS_CA",
     "BLOCK_STATE_DB",
     "BLOCK_HMI_STATIC_DIR",
     "BLOCK_MAINTENANCE_HTTPS_ADDRESS",
@@ -51,8 +54,12 @@ if set(config) != expected_keys:
     raise SystemExit(f"unexpected environment keys: {set(config)}")
 if any(key == "POINT" or key == "POINTS" or key.startswith("POINT_") or key.startswith("POINTS_") or "_POINT_" in key or "_POINTS_" in key or "WIFI" in key for key in config):
     raise SystemExit("points and Wi-Fi must not be persisted in deployment configuration")
-if config["BLOCK_LOCAL_HTTP_ADDRESS"] != "127.0.0.1:8080":
-    raise SystemExit("local HTTP must bind only 127.0.0.1:8080")
+if config["BLOCK_LOCAL_HTTPS_ADDRESS"] != "127.0.0.1:8444":
+    raise SystemExit("local HTTPS must bind only 127.0.0.1:8444")
+if config["BLOCK_LOCAL_TLS_CERT"] != config["BLOCK_MAINTENANCE_TLS_CERT"] or config["BLOCK_LOCAL_TLS_KEY"] != config["BLOCK_MAINTENANCE_TLS_KEY"]:
+    raise SystemExit("local HMI must reuse the deployed maintenance certificate and private-key paths")
+if config["BLOCK_LOCAL_TLS_CA"] != "/etc/block/certs/maintenance-ca.crt":
+    raise SystemExit("local HMI health checks must use the deployed public CA path")
 if config["BLOCK_MAINTENANCE_HTTPS_ADDRESS"] != "0.0.0.0:8443":
     raise SystemExit("maintenance HTTPS must bind 0.0.0.0:8443")
 if config["BLOCK_HMI_STATIC_DIR"] != "/opt/block/current/web":
@@ -74,7 +81,7 @@ steps = (
     'systemctl enable block.service',
     'systemctl enable block-kiosk.service',
     'systemctl restart block.service',
-    '"$CURRENT_LINK/deploy/health-check.sh" --expected-version "$VERSION" --retries 30 --delay 1',
+    '"$CURRENT_LINK/deploy/health-check.sh" --ca-file "$BLOCK_LOCAL_TLS_CA" --expected-version "$VERSION" --retries 30 --delay 1',
     'systemctl restart block-kiosk.service',
 )
 positions = []
@@ -99,7 +106,9 @@ if [ "$UNIT_COUNT" -ne 2 ] || [ ! -f "$SCRIPT_DIR/systemd/block.service" ] || [ 
 fi
 
 grep -Fx 'EnvironmentFile=/etc/block/block.env' "$SCRIPT_DIR/systemd/block.service" >/dev/null
-grep -Fx '  -local-http-address $BLOCK_LOCAL_HTTP_ADDRESS \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -local-https-address $BLOCK_LOCAL_HTTPS_ADDRESS \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -local-tls-cert $BLOCK_LOCAL_TLS_CERT \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
+grep -Fx '  -local-tls-key $BLOCK_LOCAL_TLS_KEY \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -state-db $BLOCK_STATE_DB \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -hmi-static-dir $BLOCK_HMI_STATIC_DIR \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
 grep -Fx '  -maintenance-https-address $BLOCK_MAINTENANCE_HTTPS_ADDRESS \' "$SCRIPT_DIR/systemd/block.service" >/dev/null
@@ -115,11 +124,22 @@ if grep -Fx 'Environment=XAUTHORITY=/home/block-ui/.Xauthority' "$SCRIPT_DIR/sys
   fail "kiosk must not require the missing block-ui Xauthority file"
 fi
 grep -Fx 'ExecStartPre=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost +SI:localuser:block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
-grep -Fx 'ExecStartPre=/opt/block/current/deploy/health-check.sh --url http://127.0.0.1:8080/healthz --retries 30 --delay 1' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
-grep -Fx 'ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble http://127.0.0.1:8080/' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'ExecStartPre=/opt/block/current/deploy/health-check.sh --url https://127.0.0.1:8444/healthz --ca-file $BLOCK_LOCAL_TLS_CA --retries 30 --delay 1' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble https://127.0.0.1:8444/' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'ExecStopPost=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost -SI:localuser:block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 if grep -R -n -E 'network-online|block-hmi|block-plc-simulator' "$SCRIPT_DIR/systemd"; then
   fail "v2 units must not depend on network-online or legacy services"
+fi
+if grep -R -n -E 'local-http-address|http://127\.0\.0\.1|127\.0\.0\.1:8080|127\.0\.0\.1:8081' "$SCRIPT_DIR/systemd"; then
+  fail "business units must not retain plaintext local HTTP listeners or URLs"
+fi
+grep -Fx 'URL=https://127.0.0.1:8444/healthz' "$SCRIPT_DIR/health-check.sh" >/dev/null
+grep -Fx 'CA_FILE=/etc/block/certs/maintenance-ca.crt' "$SCRIPT_DIR/health-check.sh" >/dev/null
+grep -F -- "--proto '=https'" "$SCRIPT_DIR/health-check.sh" >/dev/null
+grep -F -- '--tlsv1.2' "$SCRIPT_DIR/health-check.sh" >/dev/null
+grep -F -- '--cacert "$CA_FILE"' "$SCRIPT_DIR/health-check.sh" >/dev/null
+if grep -n -E '(^|[[:space:]])(-k|--insecure)([[:space:]]|$)' "$SCRIPT_DIR/health-check.sh"; then
+  fail "health checks must not bypass certificate validation"
 fi
 
 printf 'Block deployment static verification passed\n'

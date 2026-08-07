@@ -2,17 +2,39 @@
 
 `block-agent` 是一台 Block 对应一台设备的本地运行核心。没有 Wi-Fi、路由器
 或 BDM 时，采集、状态、本地 HMI、报警、历史、审计和允许的现场操作仍须
-正常运行。实验开发闭环全部走 Unix socket：
+正常运行。PLC 模拟器与 Agent 的实验 I/O 闭环走 Unix socket：
 
 ```text
 plc-simulator -- /run/block-plc/io/io.sock -- block-agent
-block-agent   -- /run/block-agent/api/block-agent.sock -- block-hmi
 ```
 
 启用 `bdm.enabled=true` 后，Agent 另起后台上行分支，主动通过 MQTTS 把本地
 数据副本发送给 BDM。BDM 只是可选只读数据平台；证书错误、网络中断、Broker
-不可达或应用确认延迟都不会终止本地采样和 HMI。Agent、Simulator 都不监听
-业务 TCP 端口，也不读取 Wi-Fi 配置。
+不可达或应用确认延迟都不会终止本地采样和 HMI。Simulator 不监听业务 TCP；
+Agent 的 HMI 业务仅监听 loopback TLS，且不读取 Wi-Fi 配置。
+
+## 本机 HMI TLS 边界
+
+`block-agent` 的嵌入式 HMI、`/healthz`、`/api/v2/*` 和 `/ws` 只在
+`127.0.0.1:8444` 的 HTTPS/WSS listener 上提供。`/ws` 不接受 `ws://` 降级；
+前端必须使用同源 `wss://127.0.0.1:8444/ws`。8080、8081 与任何明文 HTTP 兼容
+监听均不存在，也不做重定向。
+
+维护 HTTPS 仍独立运行在 `0.0.0.0:8443`，只承担既有维护页面与 SSH 密钥下载；
+它不复用为 HMI 业务 mux。启动时必须提供本机 TLS 证书和私钥，缺失或无法加载
+即为致命错误。TLS 最低版本为 1.2，客户端必须校验证书链和 `127.0.0.1` 主机名；
+代码没有 `InsecureSkipVerify` 或明文降级。
+
+systemd 使用以下 flags（路径来自受保护的 `/etc/block/block.env`）：
+
+```text
+-local-https-address 127.0.0.1:8444
+-local-tls-cert /etc/block/certs/maintenance.crt
+-local-tls-key /etc/block/certs/maintenance.key
+```
+
+当前部署复用维护 HTTPS 的证书/私钥；公开 CA 另供 kiosk 和健康检查使用。证书
+必须带有 `127.0.0.1` 的 SAN。私钥、真实环境文件及证书内容均不得提交。
 
 ## 组件
 

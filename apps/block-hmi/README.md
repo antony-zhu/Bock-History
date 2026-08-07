@@ -4,6 +4,10 @@
 编译产物。页面只通过同机 `/ws` 获取点位快照和变化；它不直接访问 PLC、BDM
 或数据库。
 
+生产与真实演示均使用同源 `https://127.0.0.1:8444`。页面只建立
+`wss://127.0.0.1:8444/ws`，不会降级为 `ws://`；认证和维护 API 保持同源相对
+路径。8080/8081 没有 HMI 兼容监听、重定向或明文回退。
+
 ## 访客与本地管理员
 
 页面打开后立即进入访客 HMI，并从同机 Block Agent 读取初始管理员状态和空闲时长，
@@ -63,7 +67,19 @@ PLC 连接状态及安全校验，并对同机 HMI 返回相同的运行时数�
 ```
 
 该工具构建并启动实际的 `services/block-agent/cmd/block-agent`，以
-`127.0.0.1:4173` 提供此目录的 HMI 静态文件。默认复用
+`https://127.0.0.1:8444` 提供此目录的 HMI 静态文件，并以同源 WSS 提供
+`/ws`。未传入证书参数时，它只在工作区
+`.cache/block-hmi-auth-demo/tls/` 生成短期开发 CA、叶子证书和私钥；这些文件
+不会进入仓库，也不适用于真机。需要使用指定证书时，三个路径必须同时提供：
+
+```powershell
+.\tools\start-block-hmi-auth-demo.ps1 `
+  -TLSCertificatePath C:\path\local-hmi.crt `
+  -TLSPrivateKeyPath C:\path\local-hmi.key `
+  -TLSCAPath C:\path\local-hmi-ca.crt
+```
+
+默认复用
 `.cache/block-hmi-auth-demo/state/block-hmi-auth-demo.db`，因此可验证账户和
 idle 配置的重启持久化；只有显式传入 `-FreshAuth` 才会删除这个精确的开发演示状态目录。使用
 `-Stop` 仅会停止 PID 记录和命令行都匹配的本工作树 Agent。
@@ -72,8 +88,9 @@ idle 配置的重启持久化；只有显式传入 `-FreshAuth` 才会删除这�
 .\tools\test-block-hmi-auth-persistence.ps1
 ```
 
-第二个脚本使用独立的 `.cache/block-hmi-auth-persistence-test` 数据库和随机回环端口，覆盖首次
-管理员、登录、idle 配置、无 Cookie、已退役认证端点及同库重启持久化；结束时清理其测试目录。
+第二个脚本使用独立的 `.cache/block-hmi-auth-persistence-test` 数据库、随机回环
+HTTPS 端口和严格 CA 校验，覆盖首次管理员、登录、idle 配置、无 Cookie、已退役
+认证端点、同库重启持久化、WSS 地址及没有 8080/8081 明文业务监听；结束时清理其测试目录。
 
 ## 本地验证
 

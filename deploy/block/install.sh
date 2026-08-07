@@ -43,6 +43,24 @@ fail() {
   exit 1
 }
 
+config_value() {
+  local wanted=$1 key value
+  while IFS='=' read -r key value; do
+    if [ "$key" = "$wanted" ]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done < "$CONFIG_FILE"
+  return 1
+}
+
+required_config_value() {
+  local name=$1 value
+  value=$(config_value "$name") || fail "missing $name in config"
+  [ -n "$value" ] || fail "$name must not be empty"
+  printf '%s\n' "$value"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --artifact-dir)
@@ -100,6 +118,14 @@ esac
 if grep -Eq '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*_)?POINTS?(_[A-Za-z0-9_]+)?=' "$CONFIG_FILE"; then
   fail "Block configuration must not persist points"
 fi
+if config_value BLOCK_LOCAL_HTTP_ADDRESS >/dev/null; then
+  fail "plaintext BLOCK_LOCAL_HTTP_ADDRESS is retired; use BLOCK_LOCAL_HTTPS_ADDRESS"
+fi
+BLOCK_LOCAL_HTTPS_ADDRESS=$(required_config_value BLOCK_LOCAL_HTTPS_ADDRESS)
+[ "$BLOCK_LOCAL_HTTPS_ADDRESS" = "127.0.0.1:8444" ] || fail "BLOCK_LOCAL_HTTPS_ADDRESS must be 127.0.0.1:8444"
+BLOCK_LOCAL_TLS_CERT=$(required_config_value BLOCK_LOCAL_TLS_CERT)
+BLOCK_LOCAL_TLS_KEY=$(required_config_value BLOCK_LOCAL_TLS_KEY)
+BLOCK_LOCAL_TLS_CA=$(required_config_value BLOCK_LOCAL_TLS_CA)
 if grep -Fx 'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' "$CONFIG_FILE" >/dev/null; then
   sed -i 's/^BLOCK_MAINTENANCE_HTTPS_ADDRESS=127\.0\.0\.1:8443$/BLOCK_MAINTENANCE_HTTPS_ADDRESS=0.0.0.0:8443/' "$CONFIG_FILE"
 fi
@@ -160,7 +186,7 @@ systemctl daemon-reload
 systemctl enable block.service
 systemctl enable block-kiosk.service
 systemctl restart block.service
-"$CURRENT_LINK/deploy/health-check.sh" --expected-version "$VERSION" --retries 30 --delay 1
+"$CURRENT_LINK/deploy/health-check.sh" --ca-file "$BLOCK_LOCAL_TLS_CA" --expected-version "$VERSION" --retries 30 --delay 1
 systemctl restart block-kiosk.service
 printf '%s\n' "$VERSION" > "$STATE_ROOT/current-version"
 ROLLBACK_ARMED=false

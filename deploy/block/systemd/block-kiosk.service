@@ -10,8 +10,8 @@ Group=block-ui
 PermissionsStartOnly=true
 Environment=DISPLAY=:0
 ExecStartPre=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost +SI:localuser:block-ui
-ExecStartPre=/opt/block/current/deploy/health-check.sh --url http://127.0.0.1:8080/healthz --retries 30 --delay 1
-ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble http://127.0.0.1:8080/
+ExecStartPre=/opt/block/current/deploy/health-check.sh --url https://127.0.0.1:8444/healthz --ca-file $BLOCK_LOCAL_TLS_CA --retries 30 --delay 1
+ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble https://127.0.0.1:8444/
 ExecStopPost=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost -SI:localuser:block-ui
 Restart=on-failure
 RestartSec=2s

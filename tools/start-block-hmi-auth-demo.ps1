@@ -3,8 +3,11 @@ param(
     [switch]$FreshAuth,
     [switch]$Stop,
     [ValidateRange(1024, 65535)]
-    [int]$Port = 4173,
-    [string]$DataDirectory = ""
+    [int]$Port = 8444,
+    [string]$DataDirectory = "",
+    [string]$TLSCertificatePath = "",
+    [string]$TLSPrivateKeyPath = "",
+    [string]$TLSCAPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -30,6 +33,85 @@ function Assert-ChildPath([string]$Path, [string]$Parent, [string]$Description) 
         throw "$Description must remain inside $fullParent."
     }
     return $fullPath
+}
+
+function Invoke-QuietNativeCommand([string]$Executable, [string[]]$Arguments) {
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $Executable @Arguments 2>$null | Out-Null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
+
+function Resolve-DemoTLS([string]$DemoRoot, [string]$CertificatePath, [string]$PrivateKeyPath, [string]$CAPath) {
+    $provided = @(@($CertificatePath, $PrivateKeyPath, $CAPath) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($provided.Count -gt 0) {
+        if ($provided.Count -ne 3) {
+            throw "TLSCertificatePath, TLSPrivateKeyPath, and TLSCAPath must be provided together."
+        }
+        $resolvedCertificate = Get-NormalizedPath $CertificatePath
+        $resolvedPrivateKey = Get-NormalizedPath $PrivateKeyPath
+        $resolvedCA = Get-NormalizedPath $CAPath
+        foreach ($path in @($resolvedCertificate, $resolvedPrivateKey, $resolvedCA)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                throw "Required TLS test material is missing: $path"
+            }
+        }
+        return [pscustomobject]@{ CertificatePath = $resolvedCertificate; PrivateKeyPath = $resolvedPrivateKey; CAPath = $resolvedCA }
+    }
+
+    $tlsDirectory = Assert-ChildPath (Join-Path $DemoRoot "tls") $repoCacheRoot "TLS test material directory"
+    $certificate = Join-Path $tlsDirectory "local-hmi.crt"
+    $privateKey = Join-Path $tlsDirectory "local-hmi.key"
+    $ca = Join-Path $tlsDirectory "local-hmi-ca.crt"
+    $caKey = Join-Path $tlsDirectory "local-hmi-ca.key"
+    $config = Join-Path $tlsDirectory "openssl.cnf"
+    $csr = Join-Path $tlsDirectory "local-hmi.csr"
+    $serial = Join-Path $tlsDirectory "local-hmi-ca.srl"
+    $allPresent = @($certificate, $privateKey, $ca, $caKey) | ForEach-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    if ($allPresent -notcontains $false) {
+        return [pscustomobject]@{ CertificatePath = $certificate; PrivateKeyPath = $privateKey; CAPath = $ca }
+    }
+    if ($allPresent -contains $true) {
+        throw "TLS test material is incomplete under $tlsDirectory. Remove only that demo TLS directory before retrying."
+    }
+    $openssl = Get-Command openssl -ErrorAction SilentlyContinue
+    $opensslPath = if ($null -ne $openssl) { $openssl.Source } elseif (Test-Path -LiteralPath "C:\Program Files\Git\usr\bin\openssl.exe" -PathType Leaf) { "C:\Program Files\Git\usr\bin\openssl.exe" } else { "" }
+    if ([string]::IsNullOrWhiteSpace($opensslPath)) {
+        throw "OpenSSL is required to generate runtime-only demo TLS material, or pass explicit TLSCertificatePath/TLSPrivateKeyPath/TLSCAPath values."
+    }
+    New-Item -ItemType Directory -Force -Path $tlsDirectory | Out-Null
+    @"
+[req]
+distinguished_name = distinguished_name
+prompt = no
+[distinguished_name]
+CN = Block local HMI test CA
+[v3_ca]
+basicConstraints = critical, CA:true
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+"@ | Set-Content -LiteralPath $config -Encoding utf8
+    if ((Invoke-QuietNativeCommand $opensslPath @("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "2", "-keyout", $caKey, "-out", $ca, "-config", $config, "-extensions", "v3_ca")) -ne 0) { throw "OpenSSL failed to create the demo public CA." }
+    if ((Invoke-QuietNativeCommand $opensslPath @("req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", $privateKey, "-out", $csr, "-subj", "/CN=localhost")) -ne 0) { throw "OpenSSL failed to create the demo server certificate request." }
+    if ((Invoke-QuietNativeCommand $opensslPath @("x509", "-req", "-in", $csr, "-CA", $ca, "-CAkey", $caKey, "-CAcreateserial", "-out", $certificate, "-days", "2", "-sha256", "-extfile", $config, "-extensions", "server")) -ne 0) { throw "OpenSSL failed to sign the demo server certificate." }
+    Remove-Item -LiteralPath $csr, $serial -Force -ErrorAction SilentlyContinue
+    return [pscustomobject]@{ CertificatePath = $certificate; PrivateKeyPath = $privateKey; CAPath = $ca }
+}
+
+function Test-StrictHealth([string]$ClientPath, [int]$ListeningPort, [string]$CAPath) {
+    return (Invoke-QuietNativeCommand $ClientPath @("-url", "https://127.0.0.1:$ListeningPort/healthz", "-ca", $CAPath, "-method", "GET")) -eq 0
 }
 
 function Get-ProcessInfo([int]$ProcessId) {
@@ -113,43 +195,6 @@ function Wait-ForPortToClose([int]$ListeningPort) {
     throw "Port $ListeningPort is still listening after the recorded process stopped."
 }
 
-function Get-LegacyStaticDemo([int]$ListeningPort) {
-    if ($ListeningPort -ne 4173) {
-        return $null
-    }
-    foreach ($listener in (Get-Listeners $ListeningPort)) {
-        $process = Get-ProcessInfo ([int]$listener.OwningProcess)
-        if ($null -eq $process) {
-            continue
-        }
-        $commandLine = [string]$process.CommandLine
-        if ($process.Name -ne "python.exe" -or
-            $commandLine.IndexOf("-m http.server 4173 --bind 127.0.0.1", [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
-            continue
-        }
-        try {
-            $response = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$ListeningPort/" -TimeoutSec 3
-            if ($response.StatusCode -eq 200 -and $response.Content.Contains('id="hmi"') -and $response.Content.Contains("demo-shell.html")) {
-                return $process
-            }
-        } catch {
-            continue
-        }
-    }
-    return $null
-}
-
-function Stop-LegacyStaticDemo([int]$ListeningPort) {
-    $process = Get-LegacyStaticDemo $ListeningPort
-    if ($null -eq $process) {
-        return $false
-    }
-    Stop-Process -Id ([int]$process.ProcessId) -ErrorAction Stop
-    Wait-ForPortToClose $ListeningPort
-    Write-Host "Stopped the verified legacy static HMI demo PID $($process.ProcessId)."
-    return $true
-}
-
 if ([string]::IsNullOrWhiteSpace($DataDirectory)) {
     $DataDirectory = Join-Path $repoCacheRoot "block-hmi-auth-demo\state"
 }
@@ -158,12 +203,14 @@ $demoRoot = Assert-ChildPath (Split-Path $stateDirectory -Parent) $repoCacheRoot
 $databasePath = Join-Path $stateDirectory "block-hmi-auth-demo.db"
 $pidPath = Assert-ChildPath (Join-Path $demoRoot ("block-agent-{0}.pid.json" -f $Port)) $repoCacheRoot "PID record"
 $binaryPath = Assert-ChildPath (Join-Path $demoRoot "bin\block-agent.exe") $repoCacheRoot "Demo binary"
+$strictHTTPSClientPath = Assert-ChildPath (Join-Path $demoRoot "bin\strict-local-https-client.exe") $repoCacheRoot "Demo HTTPS verification client"
 $logDirectory = Assert-ChildPath (Join-Path $demoRoot "logs") $repoCacheRoot "Demo log directory"
 $tempDirectory = Assert-ChildPath (Join-Path $demoRoot "tmp") $repoCacheRoot "Demo temporary directory"
 $goCacheDirectory = Assert-ChildPath (Join-Path $demoRoot "gocache") $repoCacheRoot "Demo Go build cache"
 $goTempDirectory = Assert-ChildPath (Join-Path $demoRoot "gotmp") $repoCacheRoot "Demo Go temporary directory"
 $hmiStaticDirectory = (Resolve-Path (Join-Path $repoRoot "apps\block-hmi")).Path
 $agentDirectory = (Resolve-Path (Join-Path $repoRoot "services\block-agent")).Path
+$strictHTTPSClientSource = (Resolve-Path (Join-Path $PSScriptRoot "strict-local-https-client.go")).Path
 $goExecutable = Join-Path $workspaceRoot ".tools\go1.26.5\go\bin\go.exe"
 $verifiedRuntimeCache = Join-Path $workspaceRoot ".cache\block-v2-runtime-001"
 $verifiedModuleCache = Join-Path $verifiedRuntimeCache "gomodcache"
@@ -200,17 +247,15 @@ try {
 
     $listeners = @(Get-Listeners $Port)
     if ($listeners.Count -gt 0) {
-        if (-not (Stop-LegacyStaticDemo $Port)) {
-            $owners = foreach ($listener in $listeners) {
-                $process = Get-ProcessInfo ([int]$listener.OwningProcess)
-                if ($null -eq $process) {
-                    "PID $($listener.OwningProcess)"
-                } else {
-                    "PID $($process.ProcessId) $($process.Name): $($process.CommandLine)"
-                }
+        $owners = foreach ($listener in $listeners) {
+            $process = Get-ProcessInfo ([int]$listener.OwningProcess)
+            if ($null -eq $process) {
+                "PID $($listener.OwningProcess)"
+            } else {
+                "PID $($process.ProcessId) $($process.Name): $($process.CommandLine)"
             }
-            throw "Port $Port is occupied by an unrecognised process. It was not stopped. $($owners -join '; ')"
         }
+        throw "Port $Port is occupied by an unrecognised process. It was not stopped. $($owners -join '; ')"
     }
 
     if ($FreshAuth -and (Test-Path -LiteralPath $stateDirectory -PathType Container)) {
@@ -218,6 +263,8 @@ try {
         New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
         Write-Host "Removed only the requested demo auth database directory: $stateDirectory"
     }
+
+    $tls = Resolve-DemoTLS $demoRoot $TLSCertificatePath $TLSPrivateKeyPath $TLSCAPath
 
     $env:TEMP = $tempDirectory
     $env:TMP = $tempDirectory
@@ -233,6 +280,10 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "block-agent build failed with exit code $LASTEXITCODE."
         }
+        & $goExecutable build -o $strictHTTPSClientPath $strictHTTPSClientSource
+        if ($LASTEXITCODE -ne 0) {
+            throw "strict local HTTPS client build failed with exit code $LASTEXITCODE."
+        }
     } finally {
         Pop-Location
     }
@@ -240,7 +291,9 @@ try {
     $standardOutput = Join-Path $logDirectory "block-agent.out.log"
     $standardError = Join-Path $logDirectory "block-agent.err.log"
     $argumentList = @(
-        "-local-http-address", "127.0.0.1:$Port",
+        "-local-https-address", "127.0.0.1:$Port",
+        "-local-tls-cert", ('"{0}"' -f $tls.CertificatePath),
+        "-local-tls-key", ('"{0}"' -f $tls.PrivateKeyPath),
         "-hmi-static-dir", ('"{0}"' -f $hmiStaticDirectory),
         "-state-db", ('"{0}"' -f $databasePath)
     )
@@ -249,18 +302,17 @@ try {
         pid          = $process.Id
         binaryPath   = $binaryPath
         databasePath = $databasePath
+        certificatePath = $tls.CertificatePath
+        caPath       = $tls.CAPath
+        strictHTTPSClientPath = $strictHTTPSClientPath
         startedAt    = (Get-Date).ToString("o")
     } | ConvertTo-Json | Set-Content -LiteralPath $pidPath -Encoding utf8
 
     $healthy = $false
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        try {
-            $response = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/healthz" -TimeoutSec 1
-            if ($response.StatusCode -eq 200) {
-                $healthy = $true
-                break
-            }
-        } catch {
+        if (Test-StrictHealth $strictHTTPSClientPath $Port $tls.CAPath) {
+            $healthy = $true
+            break
         }
         Start-Sleep -Milliseconds 250
     }
@@ -269,7 +321,7 @@ try {
         throw "Block Agent did not become healthy. Inspect $standardOutput and $standardError."
     }
 
-    Write-Host "Block HMI auth demo is running at http://127.0.0.1:$Port/"
+    Write-Host "Block HMI auth demo is running at https://127.0.0.1:$Port/"
     Write-Host "PID: $($process.Id)"
     Write-Host "Database: $databasePath"
 } finally {

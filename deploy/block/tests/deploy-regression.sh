@@ -31,6 +31,9 @@ fi
 if "$DEPLOY_DIR/health-check.sh" --retries 0 >/dev/null 2>&1; then
   fail "health check accepted zero retries"
 fi
+if "$DEPLOY_DIR/health-check.sh" --url http://127.0.0.1:8080/healthz --ca-file /tmp/ca >/dev/null 2>&1; then
+  fail "health check accepted a plaintext local URL"
+fi
 
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -60,6 +63,10 @@ preflight_config() {
 
 ALLOWED_CONFIG=$TEST_ROOT/allowed.env
 printf '%s\n' \
+  'BLOCK_LOCAL_HTTPS_ADDRESS=127.0.0.1:8444' \
+  'BLOCK_LOCAL_TLS_CERT=/etc/block/certs/maintenance.crt' \
+  'BLOCK_LOCAL_TLS_KEY=/etc/block/certs/maintenance.key' \
+  'BLOCK_LOCAL_TLS_CA=/etc/block/certs/maintenance-ca.crt' \
   'BLOCK_MQTTS_V2_ENDPOINT=mqtts://bdm.example.invalid:8883' \
   'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' \
   'BLOCK_MAINTENANCE_DEVICE_ID=block-0001' > "$ALLOWED_CONFIG"
@@ -76,6 +83,21 @@ grep -Fx 'BLOCK_MAINTENANCE_DEVICE_ID=block-0001' "$ALLOWED_CONFIG" >/dev/null |
 if grep -Fx 'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' "$ALLOWED_CONFIG" >/dev/null; then
   fail "install kept the legacy maintenance address"
 fi
+
+PLAINTEXT_CONFIG=$TEST_ROOT/plaintext.env
+printf '%s\n' \
+  'BLOCK_LOCAL_HTTP_ADDRESS=127.0.0.1:8080' \
+  'BLOCK_LOCAL_HTTPS_ADDRESS=127.0.0.1:8444' \
+  'BLOCK_LOCAL_TLS_CERT=/etc/block/certs/maintenance.crt' \
+  'BLOCK_LOCAL_TLS_KEY=/etc/block/certs/maintenance.key' \
+  'BLOCK_LOCAL_TLS_CA=/etc/block/certs/maintenance-ca.crt' > "$PLAINTEXT_CONFIG"
+if OUTPUT=$(preflight_config "$PLAINTEXT_CONFIG"); then
+  fail "install accepted plaintext local business configuration"
+fi
+case "$OUTPUT" in
+  *'plaintext BLOCK_LOCAL_HTTP_ADDRESS is retired'*) ;;
+  *) fail "install did not reject BLOCK_LOCAL_HTTP_ADDRESS" ;;
+esac
 
 REJECTED_CONFIG=$TEST_ROOT/rejected.env
 printf '%s\n' 'POINTS_FILE=/etc/block/points.json' > "$REJECTED_CONFIG"

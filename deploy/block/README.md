@@ -14,10 +14,16 @@
 
 | 项目 | 正确用途 |
 | --- | --- |
-| `block.service` | 唯一 Block runtime；在 `127.0.0.1:8080` 提供本地 HMI、`/healthz` 和 WebSocket，在 `0.0.0.0:8443` 提供维护 HTTPS。 |
-| `block-kiosk.service` | 等待本地健康检查后，使用 Chromium 打开 `http://127.0.0.1:8080/`。8080 仅限本机回环访问，绝不对外开放。 |
+| `block.service` | 唯一 Block runtime；仅在 `127.0.0.1:8444` 以 TLS 提供本地 HMI、`/healthz`、API 和 WSS，在 `0.0.0.0:8443` 提供独立维护 HTTPS。 |
+| `block-kiosk.service` | 等待严格的本机 HTTPS 健康检查后，使用 Chromium 打开 `https://127.0.0.1:8444/`。8444 仅限本机回环访问，绝不对外开放；8080/8081 不监听、不重定向。 |
 | `ssh-bootstrapd` | 独立的 HTTPS 管理服务；如已安装，它监听 9443，不改变 Block runtime、HMI 或 PLC 的职责。 |
 | 系统 SSH | 22/tcp 仅为调试/设备管理例外，不能作为业务通信通道。 |
+
+`/etc/block/block.env` 必须为本机业务同时提供 `BLOCK_LOCAL_HTTPS_ADDRESS`
+（固定为 `127.0.0.1:8444`）、`BLOCK_LOCAL_TLS_CERT`、`BLOCK_LOCAL_TLS_KEY` 和
+`BLOCK_LOCAL_TLS_CA`。当前实现复用维护 HTTPS 的证书和私钥路径；公开 CA 单独供
+kiosk 与健康检查校验，不能把私钥写入环境文件。证书必须包含 `127.0.0.1` 的 SAN，
+业务 TLS 最低为 1.2。证书、私钥或 CA 缺失均为启动/安装失败，不能回退到明文。
 
 短期 HTTPS 发布证书只会映射到非 root 的发布/调试账户。它不能用于 root 安装，
 也不能以 sudo 绕过此限制。真机安装只能由设备管理员使用**已批准的固定安装
@@ -88,7 +94,8 @@ esac
 
 sudo /opt/block/current/deploy/version.sh
 sudo systemctl is-active block.service block-kiosk.service
-sudo ss -ltnp | grep -E ':(22|8080|8443|9443)([[:space:]]|$)'
+sudo ss -ltnp | grep -E ':(22|8443|8444|9443)([[:space:]]|$)'
+! sudo ss -ltnp | grep -Eq ':(8080|8081)([[:space:]]|$)'
 sudo awk -F= \
   '/^BLOCK_MQTTS_V2_(SITE_ID|BLOCK_ID|DEVICE_ID)=/ { print }' \
   /etc/block/block.env
@@ -117,7 +124,7 @@ sudo stat -c '%U:%G:%a %n' "$BACKUP"
 | 当前 release | 记录 `/opt/block/current` 的链接值、解析后的 release 路径、`/var/lib/block-release/current-version` 与 `previous-release`。 |
 | 配置与 unit | 备份 `/etc/block/block.env`、`block.service` 和 `block-kiosk.service`；配置文件不得复制到工作区或报告。 |
 | SQLite | 使用 SQLite 的一致性备份，并对备份执行 `PRAGMA integrity_check`。SQLite 备份不以普通运行中文件复制替代。 |
-| Chromium profile 与 cache | 分别备份 `/home/block-ui/.config/chromium` 和 `/home/block-ui/.cache/chromium`。必须复制符号链接本身，不能解引用。 |
+| Chromium profile、cache 与 NSS 信任库 | 分别备份 `/home/block-ui/.config/chromium`、`/home/block-ui/.cache/chromium` 和（如存在）`/home/block-ui/.pki/nssdb`。必须复制符号链接本身，不能解引用。 |
 | 现场状态 | 记录 BDM/Wi-Fi 文件存在性与 PLC endpoint 状态，不复制 Wi-Fi 内容，也不写 PLC。 |
 
 Chromium 目录中可能有悬空 `Singleton*` 符号链接。使用 `cp -a --no-dereference`
@@ -129,6 +136,10 @@ sudo cp -a --no-dereference -- \
   /home/block-ui/.config/chromium "$BACKUP/chromium-config"
 sudo cp -a --no-dereference -- \
   /home/block-ui/.cache/chromium "$BACKUP/chromium-cache"
+if sudo test -e /home/block-ui/.pki/nssdb; then
+  sudo cp -a --no-dereference -- \
+    /home/block-ui/.pki/nssdb "$BACKUP/block-ui-nssdb"
+fi
 sudo find -P "$BACKUP" -type l -ls
 ```
 
@@ -193,10 +204,11 @@ HMI 静态资源必须返回 `Cache-Control: no-store`。保留原始响应头�
 直接和 `no-store` 比较。
 
 ```bash
-HMI=http://127.0.0.1:8080
+HMI=https://127.0.0.1:8444
+HMI_CA=/etc/block/certs/maintenance-ca.crt
 ROOT_HEADERS="$BACKUP/after-root.headers"
 
-ROOT_STATUS=$(curl --fail --silent --show-error --dump-header "$ROOT_HEADERS" \
+ROOT_STATUS=$(curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error --dump-header "$ROOT_HEADERS" \
   --output /dev/null --write-out '%{http_code}' "$HMI/")
 test "$ROOT_STATUS" = "200"
 
@@ -226,12 +238,12 @@ test "$CACHE_CONTROL" = "no-store"
 例如，保留 `/index.html` 的原始头后再跟随跳转：
 
 ```bash
-curl --silent --show-error --dump-header "$BACKUP/after-index.headers" \
+curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --silent --show-error --dump-header "$BACKUP/after-index.headers" \
   --output /dev/null "$HMI/index.html"
-curl --fail --location --silent --show-error \
+curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --location --silent --show-error \
   --dump-header "$BACKUP/after-index-follow.headers" \
   --output /dev/null "$HMI/index.html"
-HMI_MODULE_STATUS=$(curl --fail --silent --show-error \
+HMI_MODULE_STATUS=$(curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error \
   --dump-header "$BACKUP/after-hmi-module.headers" \
   --output /dev/null --write-out '%{http_code}' "$HMI/assets/hmi.mjs")
 test "$HMI_MODULE_STATUS" = "200"
@@ -239,11 +251,11 @@ test "$HMI_MODULE_STATUS" = "200"
 
 ### Kiosk 与真实屏幕
 
-HTTP 响应、制品哈希和静态文件哈希一致只能证明服务端资源正确，**不能**证明
+HTTPS 响应、制品哈希和静态文件哈希一致只能证明服务端资源正确，**不能**证明
 设备屏幕已经刷新。必须在真实 X11 屏幕上验收当前 HMI。
 
 1. 等待 Chromium 启动完成，连续两次采集可见的全屏 X11 窗口、其 Browser PID
-   和进程命令行中的 `http://127.0.0.1:8080/`；两次之间至少间隔 5 秒。
+   和进程命令行中的 `https://127.0.0.1:8444/`；两次之间至少间隔 5 秒。
 2. 两次采集的 PID、URL 与全屏窗口必须一致。`block-kiosk.service` 的 wrapper
    或 MainPID 在启动过程中可能切换，不能单独用它作为成功依据。
 3. 人工核对真实屏幕显示的是本次 HMI 页面，并保存非白屏的实机屏幕截图到
@@ -253,7 +265,7 @@ HTTP 响应、制品哈希和静态文件哈希一致只能证明服务端资源
 命令行；具体工具不可用时，先 STOP 并改用设备已有的屏幕采集方式，不要绕过
 真实屏幕验收。
 
-若真实屏幕仍显示旧页面，先确认本节的 HMI HTTP 验收已通过，再执行以下唯一的
+若真实屏幕仍显示旧页面，先确认本节的 HMI HTTPS 验收已通过，再执行以下唯一的
 缓存修复步骤。只有在第 3 节的 profile/cache 备份已成功后才允许操作：
 
 ```bash
@@ -266,7 +278,30 @@ sudo systemctl start block-kiosk.service
 
 此步骤只能清空上面两个固定目录。禁止修改
 `/home/block-ui/.config/chromium`、Local Storage、IndexedDB、账号、PLC、
-SQLite、BDM 或 Wi-Fi。随后重新执行本节的 HTTP、稳定 PID/URL 和真实屏幕验收。
+SQLite、BDM 或 Wi-Fi。随后重新执行本节的 HTTPS、稳定 PID/URL 和真实屏幕验收。
+
+### Chromium 对本机 CA 的受控信任（仅必要时）
+
+先执行上面的严格健康检查和 HMI HTTPS 验收；它们必须使用
+`/etc/block/certs/maintenance-ca.crt`，不得使用 `-k`、`--insecure` 或
+`--ignore-certificate-errors`。只有这些严格检查已经通过、而 Chromium 仅因
+本机 CA 不受信任无法打开 kiosk 时，才允许设备管理员进行以下一次受控导入：
+
+```bash
+sudo systemctl stop block-kiosk.service
+sudo test -d /home/block-ui/.pki/nssdb
+sudo cp -a --no-dereference -- \
+  /home/block-ui/.pki/nssdb "$BACKUP/block-ui-nssdb-before-local-ca"
+sudo -u block-ui certutil -d sql:/home/block-ui/.pki/nssdb \
+  -A -n block-local-business-ca -t 'C,,' \
+  -i /etc/block/certs/maintenance-ca.crt
+sudo systemctl start block-kiosk.service
+```
+
+这不是安装器或 kiosk unit 的自动步骤。`certutil` 不存在、NSS 数据库缺失、导入
+失败或浏览器仍出现证书错误时立即 STOP；不要改用忽略证书错误的 Chromium 参数。
+该步骤只导入公开 CA，绝不导入私钥。若需撤销，应由设备管理员在已备份的 profile
+范围内恢复 `block-ui-nssdb-before-local-ca`，然后重新执行严格 HTTPS 验收。
 
 ## 6. 失败、回滚与 STOP 条件
 
@@ -286,7 +321,7 @@ sudo systemctl is-active block.service block-kiosk.service
 
 回滚会恢复安装前记录的不可变 release，按同样顺序重启 Block 和 kiosk，并保留
 `/etc/block` 配置和 `/var/lib/block` SQLite 数据。回滚成功后仍要重新验证健康
-检查、HMI HTTP 规则、稳定 X11 PID/URL 与真实屏幕。
+检查、HMI HTTPS 规则、稳定 X11 PID/URL 与真实屏幕。
 
 若正式回滚本身失败，才使用第 3 节的备份进行设备管理员控制下的恢复：先停止
 kiosk 和 Block，再恢复记录的 release 链接、release state、配置和 unit；只有
@@ -304,7 +339,7 @@ Block，再启动并验收 kiosk。不得删除 release 目录、profile 或现�
 - 目标版本、提交、构建时间、制品哈希和暂存校验结果；
 - 发布前后 current release、service/port/health 状态；
 - 备份目录、暂存目录、SQLite 检查、回滚结果；
-- 原始 HTTP 头文件位置、`/` 的 200/no-store 验收结果；
+- 原始 HTTPS 头文件位置、`/` 的 200/no-store 验收结果；
 - 两次 X11 PID/URL 采集和最终实机屏幕截图位置；
 - 全程未向 PLC 写入的确认。
 

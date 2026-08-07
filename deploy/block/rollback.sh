@@ -23,6 +23,17 @@ fail() {
   exit 1
 }
 
+config_value() {
+  local wanted=$1 key value
+  while IFS='=' read -r key value; do
+    if [ "$key" = "$wanted" ]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done < /etc/block/block.env
+  return 1
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version)
@@ -47,6 +58,8 @@ done
 [ "$EXECUTE" = true ] || fail "pass --execute to change a device"
 [ "$(id -u)" -eq 0 ] || fail "must run as root"
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required"
+BLOCK_LOCAL_TLS_CA=$(config_value BLOCK_LOCAL_TLS_CA) || fail "missing BLOCK_LOCAL_TLS_CA in /etc/block/block.env"
+[ -n "$BLOCK_LOCAL_TLS_CA" ] || fail "BLOCK_LOCAL_TLS_CA must not be empty"
 
 if [ -z "$VERSION" ]; then
   [ -s "$STATE_ROOT/previous-release" ] || fail "no previous release is recorded"
@@ -83,7 +96,7 @@ mv -Tf "$ROLLBACK_LINK" "$CURRENT_LINK"
 
 systemctl daemon-reload
 systemctl restart block.service
-"$CURRENT_LINK/deploy/health-check.sh" --expected-version "$(cat "$RESOLVED_RELEASE/VERSION")" --retries 30 --delay 1
+"$CURRENT_LINK/deploy/health-check.sh" --ca-file "$BLOCK_LOCAL_TLS_CA" --expected-version "$(cat "$RESOLVED_RELEASE/VERSION")" --retries 30 --delay 1
 systemctl restart block-kiosk.service
 
 if [ -n "$CURRENT_RELEASE" ]; then

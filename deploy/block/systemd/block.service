@@ -14,7 +14,9 @@ UMask=0077
 # EnvironmentFile; there is no second service or old JSON -config path.
 EnvironmentFile=/etc/block/block.env
 ExecStart=/opt/block/current/bin/block-agent \
-  -local-http-address $BLOCK_LOCAL_HTTP_ADDRESS \
+  -local-https-address $BLOCK_LOCAL_HTTPS_ADDRESS \
+  -local-tls-cert $BLOCK_LOCAL_TLS_CERT \
+  -local-tls-key $BLOCK_LOCAL_TLS_KEY \
   -state-db $BLOCK_STATE_DB \
   -hmi-static-dir $BLOCK_HMI_STATIC_DIR \
   -maintenance-https-address $BLOCK_MAINTENANCE_HTTPS_ADDRESS \
