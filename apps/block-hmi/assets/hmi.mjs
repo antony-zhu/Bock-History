@@ -421,6 +421,11 @@ class AppleBridge {
             })
         };
         window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true });
+        window.addEventListener("block-hmi-public-navigation", () => {
+            if (!this.authPanel().hidden) {
+                this.prepareGuestHMI();
+            }
+        });
         this.moveLocalAdministrationToMaintenance();
         this.bindAuthForms();
         this.bindPasswordVisibilityToggles();
@@ -502,6 +507,7 @@ class AppleBridge {
         panel.hidden = false;
         panel.setAttribute("aria-busy", "false");
         panel.setAttribute("data-auth-mode", screen);
+        document.querySelector("#authTitle").textContent = screen === "bootstrap" ? "创建管理员" : "登录";
         this.loginSection().hidden = screen !== "login";
         this.bootstrapSection().hidden = screen !== "bootstrap";
         this.setAuthNotice(message);
@@ -559,15 +565,23 @@ class AppleBridge {
     }
     bindAuthForms() {
         const login = document.querySelector("#login-form");
+        const submitLogin = () => {
+            void this.login(formValue(login, "username"), formValue(login, "password"));
+        };
         login.addEventListener("submit", (event) => {
             event.preventDefault();
-            void this.login(formValue(login, "username"), formValue(login, "password"));
+            submitLogin();
         });
+        login.addEventListener("hmi-soft-keyboard-submit", submitLogin);
         const initialAdmin = document.querySelector("#initial-admin-form");
+        const submitInitialAdmin = () => {
+            void this.createInitialAdmin(formValue(initialAdmin, "username"), formValue(initialAdmin, "password"), formValue(initialAdmin, "confirmPassword"));
+        };
         initialAdmin.addEventListener("submit", (event) => {
             event.preventDefault();
-            void this.createInitialAdmin(formValue(initialAdmin, "username"), formValue(initialAdmin, "password"), formValue(initialAdmin, "confirmPassword"));
+            submitInitialAdmin();
         });
+        initialAdmin.addEventListener("hmi-soft-keyboard-submit", submitInitialAdmin);
         const password = document.querySelector("#password-form");
         password.addEventListener("submit", (event) => {
             event.preventDefault();
@@ -661,12 +675,24 @@ class AppleBridge {
         document.addEventListener("keydown", report);
     }
     async login(username, password) {
+        if (username.trim() === "" || password === "") {
+            this.finishLoginAttempt("登录失败");
+            return;
+        }
         const account = readLocalAdministrator(() => window.localStorage);
         if (account === null || account.username !== username.trim() || account.passwordHash !== await passwordDigest(password)) {
-            this.setAuthNotice("用户名或密码不正确");
+            this.finishLoginAttempt("用户名或密码错误");
             return;
         }
         this.beginSession(account);
+        this.emitPageNotice("登录成功");
+    }
+    finishLoginAttempt(message) {
+        this.becomeGuest();
+        this.emitPageNotice(message, "danger");
+    }
+    emitPageNotice(message, level = "info") {
+        window.dispatchEvent(new CustomEvent("block-hmi-notice", { detail: { message, level } }));
     }
     async createInitialAdmin(username, password, confirmPassword) {
         if (password !== confirmPassword) {

@@ -3376,14 +3376,14 @@
     .auth-sheet {
       background: #f8fafb;
       border: 1px solid rgba(255, 255, 255, 0.76);
-      border-radius: 28px;
+      border-radius: 32px;
       box-shadow: 0 28px 70px rgba(0, 0, 0, 0.28);
       color: #172a3a;
       max-height: min(800px, calc(100vh - 48px));
       overflow: auto;
-      padding: 38px 42px;
+      padding: 52px 56px;
       pointer-events: auto;
-      width: min(520px, 100%);
+      width: min(800px, 100%);
     }
 
     #hmi-topbar[inert],
@@ -3405,56 +3405,57 @@
       pointer-events: auto;
     }
 
-    .auth-kicker {
-      color: #526a79;
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.15em;
-      margin: 0 0 10px;
-    }
-
     .auth-sheet h1 {
-      font-size: 32px;
-      letter-spacing: 0.03em;
+      font-size: 38px;
+      letter-spacing: -0.02em;
+      line-height: 1.12;
       margin: 0;
-    }
-
-    .auth-copy {
-      color: #526a79;
-      margin: 10px 0 22px;
     }
 
     .auth-notice {
       color: #b53735;
-      min-height: 1.4em;
+      margin: 16px 0 0;
+      min-height: 1.3em;
+    }
+
+    .auth-notice:empty {
+      display: none;
+    }
+
+    #authLogin,
+    #authBootstrap {
+      margin-top: 28px;
     }
 
     .auth-form {
       display: grid;
-      gap: 14px;
+      gap: 18px;
     }
 
-    .auth-form label,
     .auth-form .auth-field {
       color: #405866;
       display: grid;
-      font-size: 14px;
+      grid-template-columns: 132px minmax(0, 1fr);
+      align-items: center;
+      column-gap: 20px;
+      font-size: 18px;
       font-weight: 700;
-      gap: 7px;
     }
 
     .auth-form .auth-field > label {
       display: block;
+      white-space: nowrap;
     }
 
     .auth-form input {
       background: #ffffff;
       border: 1px solid #b7c4cc;
-      border-radius: 12px;
+      border-radius: 15px;
       color: #172a3a;
       font: inherit;
-      min-height: 46px;
-      padding: 0 13px;
+      min-height: 64px;
+      padding: 0 18px;
+      width: 100%;
     }
 
     .password-field {
@@ -3474,13 +3475,18 @@
     .auth-close {
       background: #2868d7;
       border: 0;
-      border-radius: 12px;
+      border-radius: 15px;
       color: #ffffff;
       cursor: pointer;
       font: inherit;
       font-weight: 800;
-      min-height: 46px;
+      min-height: 64px;
       padding: 0 16px;
+    }
+
+    .auth-form button[type="submit"] {
+      grid-column: 1 / -1;
+      margin-top: 4px;
     }
 
     .auth-form button:disabled,
@@ -3495,15 +3501,15 @@
       background: transparent;
       color: #526a79;
       display: inline-flex;
-      height: 42px;
+      height: 56px;
       justify-content: center;
-      min-height: 42px;
+      min-height: 56px;
       padding: 0;
       position: absolute;
       right: 2px;
       top: 50%;
       transform: translateY(-50%);
-      width: 44px;
+      width: 52px;
     }
 
     .auth-form .password-visibility-toggle:hover,
@@ -3933,21 +3939,22 @@
     }
   </style>
   <link rel="stylesheet" href="assets/vendor/simple-keyboard/index.css">
-  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260806.1">
+  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260807.1">
 </head>
 <body>
-  <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" aria-modal="true" hidden>
+  <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" hidden>
     <div class="auth-sheet">
-      <p class="auth-kicker">BLOCK LOCAL HMI</p>
-      <h1 id="authTitle">料仓控制台</h1>
-      <p class="auth-copy">请使用本机账户继续操作。</p>
+      <h1 id="authTitle">登录</h1>
       <p class="auth-notice" id="authNotice" role="status" aria-live="polite"></p>
 
       <section id="authLogin" hidden>
-        <form class="auth-form" id="login-form">
-          <label>用户名<input name="username" autocomplete="username" required data-soft-keyboard="full" data-soft-label="登录用户名"></label>
+        <form class="auth-form" id="login-form" data-soft-submit="authentication" novalidate>
           <div class="auth-field">
-            <label for="login-password">密码</label>
+            <label for="login-username">用户名：</label>
+            <input id="login-username" name="username" autocomplete="username" required data-soft-keyboard="full" data-soft-label="登录用户名">
+          </div>
+          <div class="auth-field">
+            <label for="login-password">密码：</label>
             <span class="password-field">
               <input id="login-password" name="password" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="登录密码">
               <button class="password-visibility-toggle" type="button" aria-controls="login-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
@@ -3958,17 +3965,20 @@
       </section>
 
       <section id="authBootstrap" hidden>
-        <form class="auth-form" id="initial-admin-form">
-          <label>管理员用户名<input name="username" value="admin" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名"></label>
+        <form class="auth-form" id="initial-admin-form" data-soft-submit="authentication" novalidate>
           <div class="auth-field">
-            <label for="initial-admin-password">密码</label>
+            <label for="initial-admin-username">用户名：</label>
+            <input id="initial-admin-username" name="username" value="admin" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名">
+          </div>
+          <div class="auth-field">
+            <label for="initial-admin-password">密码：</label>
             <span class="password-field">
               <input id="initial-admin-password" name="password" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="管理员密码">
               <button class="password-visibility-toggle" type="button" aria-controls="initial-admin-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
           <div class="auth-field">
-            <label for="initial-admin-confirm-password">确认密码</label>
+            <label for="initial-admin-confirm-password">确认密码：</label>
             <span class="password-field">
               <input id="initial-admin-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认管理员密码">
               <button class="password-visibility-toggle" type="button" aria-controls="initial-admin-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
@@ -4345,16 +4355,8 @@
 
       <div class="soft-keyboard-layer" id="softKeyboardLayer">
         <section class="soft-keyboard-dock" id="softKeyboardDock" data-layout="numeric" aria-label="屏幕键盘" hidden>
-          <header class="soft-keyboard-head">
-            <span class="soft-keyboard-context">
-              <small>正在输入</small>
-              <strong id="softKeyboardFieldName">维护参数</strong>
-            </span>
-            <output class="soft-keyboard-preview" id="softKeyboardPreview" aria-hidden="true">等待输入</output>
-            <button class="soft-keyboard-close" id="softKeyboardClose" type="button">收起</button>
-          </header>
           <div class="simple-keyboard hmi-simple-keyboard" id="softKeyboardHost"></div>
-          <p class="soft-keyboard-foot" id="softKeyboardFoot" aria-live="polite">取消会恢复原值，完成后仍需保存参数</p>
+          <p class="soft-keyboard-foot" id="softKeyboardFoot" aria-live="polite"></p>
         </section>
       </div>
     </section>
@@ -4428,9 +4430,9 @@
   </aside>
 
   <script src="assets/vendor/simple-keyboard/index.js"></script>
-  <script src="assets/soft-keyboard.js"></script>
+  <script src="assets/soft-keyboard.js?v=20260807.1"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260807.1").then(function (module) {
       return module.installHMIBackend();
     });
       window.HMIBackend = {
@@ -4654,6 +4656,12 @@
         requestAnimationFrame(() => toast.classList.add("show"));
         toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2200);
       }
+
+      window.addEventListener("block-hmi-notice", event => {
+        const notice = event.detail;
+        if (!notice || typeof notice.message !== "string") return;
+        showToast(notice.message, notice.level === "danger" ? "danger" : "info");
+      });
 
       const serverStateFields = [
         "revision", "updatedAt", "running", "mode", "singlePaused", "framePaused",
@@ -5253,6 +5261,9 @@
       }
 
       function switchPage(name) {
+        if (["home", "data", "alarm", "history"].includes(name)) {
+          window.dispatchEvent(new Event("block-hmi-public-navigation"));
+        }
         if (name === "maintenance" && !requireFrontendPermission("maintenance")) return false;
         const activeNav = $(".nav-button.active");
         if (

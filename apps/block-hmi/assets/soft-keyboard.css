@@ -220,121 +220,38 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 #auth-panel[data-keyboard-open="true"] .auth-sheet {
   max-height: calc(var(--auth-keyboard-top, 50vh) - var(--auth-sheet-top-gap) - var(--auth-sheet-bottom-gap));
   min-height: 0;
-  padding: 18px 28px;
+  padding: 26px 38px;
   border-radius: 22px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
-#auth-panel[data-keyboard-open="true"] .auth-kicker {
-  margin-bottom: 6px;
-  font-size: 11px;
-}
-
 #auth-panel[data-keyboard-open="true"] .auth-sheet h1 {
-  font-size: 26px;
-}
-
-#auth-panel[data-keyboard-open="true"] .auth-copy {
-  margin: 6px 0 10px;
-  font-size: 14px;
+  font-size: 30px;
 }
 
 #auth-panel[data-keyboard-open="true"] .auth-notice {
-  min-height: 1.2em;
-  margin: 0 0 6px;
+  margin: 12px 0 0;
 }
 
 #auth-panel[data-keyboard-open="true"] .auth-form {
-  gap: 9px;
+  gap: 12px;
 }
 
-#auth-panel[data-keyboard-open="true"] .auth-form label,
 #auth-panel[data-keyboard-open="true"] .auth-form .auth-field {
-  gap: 4px;
-  font-size: 13px;
+  column-gap: 16px;
+  grid-template-columns: 112px minmax(0, 1fr);
+  font-size: 16px;
 }
 
 #auth-panel[data-keyboard-open="true"] .auth-form input,
 #auth-panel[data-keyboard-open="true"] .auth-form button {
-  min-height: 42px;
+  min-height: 52px;
 }
 
 #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
   background: #f8fafc;
-}
-
-#auth-panel[data-auth-mode] ~ #hmi #softKeyboardClose {
-  display: none;
-}
-
-.soft-keyboard-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 46px;
-  margin-bottom: 10px;
-  padding: 0 3px 0 5px;
-}
-
-.soft-keyboard-context {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.soft-keyboard-context small {
-  color: var(--keyboard-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-}
-
-.soft-keyboard-context strong {
-  overflow: hidden;
-  margin-top: 3px;
-  font-size: 17px;
-  font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.soft-keyboard-preview {
-  overflow: hidden;
-  min-width: 92px;
-  max-width: 170px;
-  height: 36px;
-  margin-left: 12px;
-  padding: 0 12px;
-  color: var(--keyboard-key-text);
-  border: 1px solid var(--keyboard-key-border);
-  border-radius: 11px;
-  background: var(--keyboard-key);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 34px;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.soft-keyboard-close {
-  min-width: 68px;
-  height: 56px;
-  margin-left: 12px;
-  color: var(--blue);
-  border: 0;
-  border-radius: 11px;
-  background: rgba(0, 113, 227, 0.1);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.soft-keyboard-close:active {
-  transform: scale(0.95);
 }
 
 .hmi-simple-keyboard.hg-theme-default {
@@ -394,19 +311,36 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 }
 
 .soft-keyboard-dock[data-layout="full"] .hmi-simple-keyboard.hg-theme-default .hg-button {
-  height: 56px;
+  height: 50px;
+  border-radius: 13px;
 }
 
-.soft-keyboard-dock[data-layout="full"] .soft-keyboard-foot {
+.soft-keyboard-dock[data-layout="full"] .hmi-simple-keyboard.hg-theme-default .hg-row:first-child .hg-button {
+  height: 48px;
+  font-size: 18px;
+}
+
+.soft-keyboard-dock[data-layout="full"] .hmi-simple-keyboard.hg-theme-default .hg-row:nth-child(2) {
+  padding: 0 4.5%;
+}
+
+.soft-keyboard-dock[data-layout="full"] .hmi-simple-keyboard.hg-theme-default .hg-row:nth-child(3) {
+  padding: 0 7.5%;
+}
+
+.soft-keyboard-dock[data-layout="full"] .hmi-simple-keyboard.hg-theme-default .hg-row:nth-child(4) {
+  padding: 0 2.5%;
+}
+
+.soft-keyboard-foot {
   display: none;
 }
 
-.soft-keyboard-dock[data-layout="full"] .soft-keyboard-foot.is-error {
+.soft-keyboard-foot.is-error {
   display: block;
 }
 
 .soft-keyboard-toggle:focus,
-.soft-keyboard-close:focus,
 .settings-actions .save-button:focus,
 .hmi-simple-keyboard.hg-theme-default .hg-button:focus {
   outline: 3px solid #0759b3;
@@ -466,12 +400,6 @@ html[data-theme="graphite"] .soft-keyboard-dock {
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-html[data-theme="graphite"] .soft-keyboard-close {
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  background: rgba(255, 255, 255, 0.06);
-}
-
 html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.72);
@@ -500,7 +428,6 @@ html[data-theme="graphite"] .hmi-simple-keyboard .hg-button.hg-button-cancel {
 }
 
 html[data-theme="graphite"] .soft-keyboard-toggle:focus,
-html[data-theme="graphite"] .soft-keyboard-close:focus,
 html[data-theme="graphite"] .settings-actions .save-button:focus,
 html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button:focus {
   outline-color: #fff;
@@ -578,40 +505,6 @@ html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button:foc
     width: 336px;
     padding: 8px;
     border-radius: 17px;
-  }
-
-  .soft-keyboard-head {
-    min-height: 44px;
-    margin-bottom: 5px;
-    padding-left: 3px;
-  }
-
-  .soft-keyboard-context small {
-    font-size: 10px;
-  }
-
-  .soft-keyboard-context strong {
-    margin-top: 1px;
-    font-size: 12px;
-  }
-
-  .soft-keyboard-close {
-    min-width: 54px;
-    height: 44px;
-    margin-left: 7px;
-    border-radius: 9px;
-    font-size: 11px;
-  }
-
-  .soft-keyboard-preview {
-    min-width: 76px;
-    max-width: 120px;
-    height: 36px;
-    margin-left: 7px;
-    padding: 0 8px;
-    border-radius: 9px;
-    font-size: 10px;
-    line-height: 34px;
   }
 
   .hmi-simple-keyboard.hg-theme-default .hg-row:not(:last-child) {

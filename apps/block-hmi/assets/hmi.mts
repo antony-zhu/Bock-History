@@ -640,6 +640,11 @@ class AppleBridge {
       })
     };
     window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true });
+    window.addEventListener("block-hmi-public-navigation", () => {
+      if (!this.authPanel().hidden) {
+        this.prepareGuestHMI();
+      }
+    });
     this.moveLocalAdministrationToMaintenance();
     this.bindAuthForms();
     this.bindPasswordVisibilityToggles();
@@ -728,6 +733,7 @@ class AppleBridge {
     panel.hidden = false;
     panel.setAttribute("aria-busy", "false");
     panel.setAttribute("data-auth-mode", screen);
+    document.querySelector<HTMLElement>("#authTitle")!.textContent = screen === "bootstrap" ? "创建管理员" : "登录";
     this.loginSection().hidden = screen !== "login";
     this.bootstrapSection().hidden = screen !== "bootstrap";
     this.setAuthNotice(message);
@@ -792,20 +798,28 @@ class AppleBridge {
 
   private bindAuthForms(): void {
     const login = document.querySelector<HTMLFormElement>("#login-form")!;
+    const submitLogin = () => {
+      void this.login(formValue(login, "username"), formValue(login, "password"));
+    };
     login.addEventListener("submit", (event) => {
       event.preventDefault();
-      void this.login(formValue(login, "username"), formValue(login, "password"));
+      submitLogin();
     });
+    login.addEventListener("hmi-soft-keyboard-submit", submitLogin);
 
     const initialAdmin = document.querySelector<HTMLFormElement>("#initial-admin-form")!;
-    initialAdmin.addEventListener("submit", (event) => {
-      event.preventDefault();
+    const submitInitialAdmin = () => {
       void this.createInitialAdmin(
         formValue(initialAdmin, "username"),
         formValue(initialAdmin, "password"),
         formValue(initialAdmin, "confirmPassword")
       );
+    };
+    initialAdmin.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitInitialAdmin();
     });
+    initialAdmin.addEventListener("hmi-soft-keyboard-submit", submitInitialAdmin);
 
     const password = document.querySelector<HTMLFormElement>("#password-form")!;
     password.addEventListener("submit", (event) => {
@@ -911,12 +925,26 @@ class AppleBridge {
   }
 
   private async login(username: string, password: string): Promise<void> {
+    if (username.trim() === "" || password === "") {
+      this.finishLoginAttempt("登录失败");
+      return;
+    }
     const account = readLocalAdministrator(() => window.localStorage);
     if (account === null || account.username !== username.trim() || account.passwordHash !== await passwordDigest(password)) {
-      this.setAuthNotice("用户名或密码不正确");
+      this.finishLoginAttempt("用户名或密码错误");
       return;
     }
     this.beginSession(account);
+    this.emitPageNotice("登录成功");
+  }
+
+  private finishLoginAttempt(message: string): void {
+    this.becomeGuest();
+    this.emitPageNotice(message, "danger");
+  }
+
+  private emitPageNotice(message: string, level: "info" | "danger" = "info"): void {
+    window.dispatchEvent(new CustomEvent("block-hmi-notice", { detail: { message, level } }));
   }
 
   private async createInitialAdmin(username: string, password: string, confirmPassword: string): Promise<void> {

@@ -3,14 +3,11 @@
 
   var root = document.documentElement;
   var storageKey = "hmi-soft-keyboard-mode";
-  var defaultFootText = "取消会恢复原值，完成后保留输入";
+  var defaultFootText = "";
   var config = window.HMISoftKeyboardConfig || {};
   var enabled = config.enabled !== false && root.getAttribute("data-soft-keyboard-enabled") !== "false";
   var dock = null;
   var host = null;
-  var fieldName = null;
-  var preview = null;
-  var closeButton = null;
   var foot = null;
   var toggle = null;
   var toggleState = null;
@@ -43,13 +40,15 @@
       "{cancel} 0 00 {done}"
     ],
     "default": [
-      "q w e r t y u i o p {bksp}",
+      "1 2 3 4 5 6 7 8 9 0 - = {bksp}",
+      "q w e r t y u i o p",
       "a s d f g h j k l @",
       "{shift} z x c v b n m . - {shift}",
       "{symbols} {cancel} _ {space} {next} {done}"
     ],
     shift: [
-      "Q W E R T Y U I O P {bksp}",
+      "1 2 3 4 5 6 7 8 9 0 - = {bksp}",
+      "Q W E R T Y U I O P",
       "A S D F G H J K L @",
       "{shift} Z X C V B N M . - {shift}",
       "{symbols} {cancel} _ {space} {next} {done}"
@@ -217,15 +216,6 @@
     foot.classList.toggle("is-error", Boolean(isError));
   }
 
-  function updatePreview(value) {
-    if (!preview || !activeInput) return;
-    if (activeInput.type === "password") {
-      preview.textContent = "内容已隐藏";
-      return;
-    }
-    preview.textContent = String(value || "") || "等待输入";
-  }
-
   function clearError(input) {
     if (input) input.removeAttribute("aria-invalid");
     if (validationLine) validationLine.textContent = "";
@@ -283,7 +273,6 @@
     if (activeLayout === "numeric") nextValue = nextValue.replace(/\D/g, "");
     if (nextValue.length > maxLength) nextValue = nextValue.slice(0, maxLength);
     activeInput.value = nextValue;
-    updatePreview(nextValue);
     activeInput.removeAttribute("aria-invalid");
     if (validationLine) validationLine.textContent = "";
     updateFoot(activeFootText, false);
@@ -324,6 +313,13 @@
     form.dispatchEvent(event);
   }
 
+  function submitAuthenticationForm(input) {
+    var form = input && input.form;
+    if (!form || form.getAttribute("data-soft-submit") !== "authentication") return false;
+    form.dispatchEvent(createEvent("hmi-soft-keyboard-submit", { inputName: getInputName(input) }));
+    return true;
+  }
+
   function handleKeyPressAction(button) {
     if (!activeInput) return;
     if (button === "{shift}") {
@@ -358,6 +354,7 @@
     if (button === "{done}") {
       window.setTimeout(function () {
         var completedInput = activeInput;
+        if (submitAuthenticationForm(completedInput)) return;
         if (closeKeyboard("commit")) submitOwningForm(completedInput);
       }, 0);
     }
@@ -392,10 +389,6 @@
   function getFootText(input) {
     var explicit = input.getAttribute("data-soft-foot");
     if (explicit) return explicit;
-    if (input.type === "password") return "密码内容不会在键盘面板中显示";
-    if (input.form && input.form.id === "settingsForm") {
-      return "取消会恢复原值，完成后仍需保存参数";
-    }
     return defaultFootText;
   }
 
@@ -463,8 +456,6 @@
     activeFootText = getFootText(input);
     clearError(input);
     configureKeyboard(input);
-    fieldName.textContent = getFieldLabel(input);
-    updatePreview(input.value || "");
     input.setAttribute("aria-expanded", "true");
     input.setAttribute("aria-controls", dock.id);
     isOpen = true;
@@ -802,9 +793,6 @@
     }
     dock = document.getElementById("softKeyboardDock");
     host = document.getElementById("softKeyboardHost");
-    fieldName = document.getElementById("softKeyboardFieldName");
-    preview = document.getElementById("softKeyboardPreview");
-    closeButton = document.getElementById("softKeyboardClose");
     foot = document.getElementById("softKeyboardFoot");
     toggle = document.getElementById("softKeyboardToggle");
     toggleState = document.getElementById("softKeyboardToggleState");
@@ -827,11 +815,6 @@
     if (toggle) {
       toggle.addEventListener("click", function () {
         setMode(mode === "soft" ? "native" : "soft", true);
-      });
-    }
-    if (closeButton) {
-      closeButton.addEventListener("click", function () {
-        closeKeyboard("commit");
       });
     }
     dock.addEventListener("mousedown", function (event) {

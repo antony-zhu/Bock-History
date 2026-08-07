@@ -40,7 +40,7 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`/api/v2/maintenance/connectivity`,
 		`/api/v2/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`import("./assets/hmi.mjs")`,
+		`import("./assets/hmi.mjs?v=20260807.1")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
