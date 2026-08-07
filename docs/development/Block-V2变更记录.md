@@ -9,13 +9,13 @@
 
 | 项目 | 已核对状态 |
 | --- | --- |
-| 当前实现基准 | `290e00b`（`fix(hmi): align footer controls and narrow auth`）。文档自身的提交不作为功能实现基准。 |
+| 当前实现基准 | `be2e525`（`feat(hmi): use stateless local auth api`），并依赖同分支的 `05c035d`（`feat(block-agent): make local auth stateless`）。文档自身的提交不作为功能实现基准。 |
 | 真机实际运行版本 | `0.0.0-18c0a5260c50`。受保护部署报告确认，`456b61a69c95b35aec70935c605a1635f1ec3984` 的两次受控安装均在门禁误判后自动回滚；新 release 仅以非活动版本保留。 |
-| 本地演示 | `/?demo=1` 及其认证变体进入固定 `1920×1080` iframe 壳；小窗等比缩放和居中。缩放态仍映射到同源 `__demoFrame=1` 的真实 DOM，认证、权限和软键盘逻辑不分叉。本轮认证与底栏资源查询版本为 `20260807.5`，Node 静态契约覆盖单一同步认证入口、500px 有界 sheet、登录与 bootstrap 共用 sheet，以及导航和两端控件共用可见高度变量；当前 Browser 运行环境没有可用实例，未能执行真实点击、截图或矩形验收；Go 当前不可用。该说明不等同于真机验收。 |
-| 当前已完成 | 当前功能基准已包含 2026-08-05 至 2026-08-07 的 V2 HMI、模拟器、认证/访客、维护页、发布文档、视觉性能精简、固定工业 viewport 演示及缩放态输入映射，并完成本地认证弹层、软键盘、首帧同步认证键盘、500px 认证 sheet、底栏文案、底栏同高端控件与认证提示的视觉精简；详见下方时间线。 |
-| 尚未发布 | `290e00b` 及其后的功能源码没有真机发布证据；当前设备未运行该提交。任何新设备写入都需要新的 Release 授权。 |
+| 本地演示 | `/?demo=1` 及其认证变体进入固定 `1920×1080` iframe 壳；小窗等比缩放和居中。缩放态仍映射到同源 `__demoFrame=1` 的真实 DOM，认证、权限和软键盘逻辑不分叉。认证不再使用浏览器存储或内存 fixture，而是请求同机 Agent 的 v2 无状态 API 和测试 SQLite。TypeScript 编译、`node assets/hmi.test.mjs` 与 `go test .`（HMI UI 契约）通过；当前 Browser 运行环境没有可用实例，未执行真实点击、截图或矩形验收。该说明不等同于真机验收。 |
+| 当前已完成 | 当前功能基准已包含 2026-08-05 至 2026-08-07 的 V2 HMI、模拟器、认证/访客、维护页、发布文档、视觉性能精简、固定工业 viewport 演示及缩放态输入映射；本轮新增 SQLite 唯一账号来源、Argon2id 校验、无 Cookie/Token/服务端会话认证 API、前端内存空闲计时及退役 activity/logout 路由，详见下方时间线。 |
+| 尚未发布 | `be2e525`、`05c035d` 及其后的功能源码没有真机发布证据；当前设备未运行该提交。任何新设备写入都需要新的 Release 授权。 |
 | 需特别区分 | 2026-08-02 至 2026-08-03 的 PLC 点位、FC22 Mask Write、早期 V2 Demo 和 typed bindings 提交仍可从 Git 历史读取，但不是上述功能基准的祖先；不能把它们描述为当前源码或真机已运行功能。 |
-| 下一步 | 1. 先确认早期 V2 PLC/点位/Mask Write 分支是否仍需受控整合到当前功能基准；如需整合，完成后重新验证。2. 在 Browser 与 Go 工具可用时补跑本轮认证/键盘及底栏端控件的真实点击、首帧截图、500px sheet 与三类控件矩形和 HMI UI 契约测试，并在受控发布中用真实 `1920×1080` 屏幕完成验收。3. 获得新的设备写入授权后，严格按[唯一发布流程](../../deploy/block/README.md)发布，并记录最终屏幕与版本验收；现有 MutationObserver 错误不属于本变更，尚未修复。 |
+| 下一步 | 1. 先确认早期 V2 PLC/点位/Mask Write 分支是否仍需受控整合到当前功能基准；如需整合，完成后重新验证。2. 在可用 Browser 中补跑本轮无状态认证/键盘及底栏端控件的真实点击、首帧截图、500px sheet 与三类控件矩形；后端定向 Go 测试已尝试，但锁定依赖从 proxy.golang.org 下载超时，待网络可用时重跑。3. 获得新的设备写入授权后，严格按[唯一发布流程](../../deploy/block/README.md)发布，并记录最终屏幕与版本验收；现有 MutationObserver 错误不属于本变更，尚未修复。 |
 
 ### 记录口径
 
@@ -163,6 +163,28 @@
   `wifi.toml` 内容；真机功能验收应由 Release 角色单独授权执行。
 
 ### 2026-08-07
+
+#### 本地认证 v2：SQLite 无状态认证与页面空闲计时
+
+- **用户目标/决策**：账号和空闲时长必须由 Block SQLite 管理；认证不得再依赖
+  浏览器存储、SHA-256 摘要、Cookie、Token 或后端登录会话。保留既有认证弹层、
+  键盘与访客交互，角色只作为 HMI 前端门禁。
+- **实现结果**：`05c035d` 删除 Agent 内存 session、Cookie、活动续期和 logout
+  路由。`GET`/`POST /api/v2/auth/initial-admin`、`POST /api/v2/auth/login`、
+  `POST /api/v2/auth/password`、`GET`/`PUT /api/v2/config/session` 只使用 SQLite
+  账号、Argon2id 哈希和持久化空闲时长。`be2e525` 让 HMI 启动时读取同机 API，
+  只在页面内存保存身份和权限，并以 pointer/touch/keydown 重置本地计时器；demo
+  也使用同一 API 和测试 SQLite。`/auth/activity`、`/auth/logout` 已退役。
+- **验证/真机结果**：TypeScript 编译、`node assets/hmi.test.mjs`、`go test .`
+  （HMI UI 契约）和 `git diff --check` 通过。后端定向
+  `go test ./internal/auth ./internal/agent ./cmd/block-e2e` 已以工作区 `.cache/**`
+  作为全部临时与 Go 缓存目录尝试；`proxy.golang.org` 下载锁定的
+  `golang.org/x/crypto v0.52.0` 与 `golang.org/x/net v0.55.0` 时 HTTPS 连接超时，
+  未进入编译或测试；未改动 `go.mod`/`go.sum`，未重复重试。未连接设备、未构建
+  发布、未部署或烧写。
+- **遗留事项**：网络可用时重跑后端定向测试；在可用 Browser 与真实
+  `1920×1080` 屏幕中补验登录、首次创建、空闲退出、密码修改和键盘首帧。任何
+  真机发布仍须由 Release 角色获得新的设备写入授权后执行。
 
 #### 发布激活、Chromium 缓存验收与唯一发布文档
 

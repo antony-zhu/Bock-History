@@ -5,8 +5,8 @@ Block 是面向单台设备、可独立交付和独立运行的边缘产品。�
 ## 仓库范围
 
 ```text
-apps/block-hmi/                 # Block 本地 HMI；当前为 Go/HTML 演示基线
-services/block-agent/           # 设备适配、状态、本地存储、Local API、Outbox
+apps/block-hmi/                 # Block 本地 TypeScript HMI
+services/block-agent/           # 设备适配、状态、本地存储和 Local API
 deploy/block/                   # Block 配置、systemd、安装与回滚资料
 docs/requirements/              # Block 产品与 HMI 要求
 docs/references/                # HMI 参考资料
@@ -14,7 +14,8 @@ tests/                          # 无 Wi-Fi / 无 BDM、单元与验收测试
 archive/prototypes/web-hmi/     # 旧静态 HMI 原型，只读参考
 ```
 
-本次仓库拆分只建立职责边界并迁移现有原型，没有实现新的 `block-agent` 业务代码。
+当前功能基准由 `docs/development/Block-V2变更记录.md` 记录；真机版本与发布
+结论只以受保护的发布报告为准。
 
 ## 公共架构与契约
 
@@ -24,9 +25,20 @@ archive/prototypes/web-hmi/     # 旧静态 HMI 原型，只读参考
 
 修改 MQTT、OpenAPI、JSON Schema、身份字段或跨组件状态前，必须先由 `ARCH-COMMON` 更新 Common，再更新本仓库的 `COMMON_BASELINE`。
 
+## 本地认证 v2
+
+Block 本地认证契约位于 Common 的 `contracts/block-local-api/v2`。账号、角色、
+Argon2id 密码哈希及页面空闲时长由 Block SQLite 保存；登录、首次设置和改密是
+无状态请求，只返回 username、role、permissions。
+
+- 不签发 Cookie、Token、JWT 或服务器登录会话；`/auth/activity` 与 `/auth/logout` 不存在。
+- HMI 仅在页面内存中保存登录身份，并在真实 pointer、touch、keydown 时重置本地空闲计时器；刷新或设备重启回到访客态。
+- ADMIN = operate + maintenance，OPERATOR = operate，VIEWER = 只读。该映射仅用于 HMI 交互，Block Agent 不用它过滤业务、PLC 或维护 API。
+
 ## 当前 HMI 基线
 
-现有 [Block HMI](apps/block-hmi/README.md) 仍是演示 Controller，当前只实现明文 HTTP，不能作为满足 TLS-only 要求的生产发布物。正式实现必须：
+现有 [Block HMI](apps/block-hmi/README.md) 使用 TypeScript 运行时和同机 Local API v2；
+演示模式也使用同一认证 API 与测试 SQLite 数据库。正式实现必须：
 
 - 只调用 Block Local API，不直连 BDM；
 - 不绕过 `block-agent` 直接访问 PLC；

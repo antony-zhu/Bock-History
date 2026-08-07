@@ -125,8 +125,23 @@ Agent 本地 API socket：
   通过 NetworkManager 的 mode `0600` 临时 keyfile 应用连接。密码不会进入响应、
   日志或命令行参数，临时 keyfile 在调用结束后删除。
 
-这些维护接口不实现 Cookie、角色或多账户认证；HMI 保留自己的浏览器本地管理员
-交互门禁。它们不提供 PLC 写入、BDM 控制、远程配置或任何 Pad 写接口。
+这些维护接口不实现 Cookie、角色或多账户认证；HMI 使用同机无状态认证 API 的
+页面内存交互门禁。它们不提供 PLC 写入、BDM 控制、远程配置或任何 Pad 写接口。
+
+## 本地认证 v2
+
+本地认证以 Common `contracts/block-local-api/v2` 为准。SQLite 是账号和页面空闲
+时长的唯一来源：保存 username、Argon2id password hash、role 和 60–3600 秒的
+`idleTimeoutSeconds`（默认 300）。不新增会话表。
+
+- `GET` / `POST /api/v2/auth/initial-admin`：读取首次管理员状态或创建首个 ADMIN。
+- `POST /api/v2/auth/login`：校验 username/password，返回 username、role、permissions。
+- `POST /api/v2/auth/password`：显式提交 username/currentPassword/newPassword 后改密。
+- `GET` / `PUT /api/v2/config/session`：读取或保存页面本地空闲时长。
+
+这些接口不签发 Cookie、Token、JWT、`expiresAt` 或服务器登录会话；
+`/api/v2/auth/activity` 和 `/api/v2/auth/logout` 不注册。角色映射只供 HMI 前端
+控制按钮显示，Agent 不用其过滤业务、PLC 或维护接口。
 
 这些写操作只属于 Block 现场本地接口，不会从 BDM 或 Pad 调用。请求必须带
 稳定 `Idempotency-Key`；Agent 在发送前写入 SQLite，按单队列执行，并在
