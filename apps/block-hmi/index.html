@@ -4074,12 +4074,12 @@
         <form class="auth-form" id="login-form" data-soft-submit="authentication" novalidate>
           <div class="auth-field">
             <label for="login-username">用户名：</label>
-            <input id="login-username" name="username" autocomplete="username" required data-soft-keyboard="full" data-soft-label="登录用户名">
+            <input id="login-username" name="username" maxlength="128" autocomplete="username" required data-soft-keyboard="full" data-soft-label="登录用户名">
           </div>
           <div class="auth-field">
             <label for="login-password">密码：</label>
             <span class="password-field">
-              <input id="login-password" name="password" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="登录密码">
+              <input id="login-password" name="password" type="password" maxlength="4096" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="登录密码">
               <button class="password-visibility-toggle" type="button" aria-controls="login-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
@@ -4091,19 +4091,19 @@
         <form class="auth-form" id="initial-admin-form" data-soft-submit="authentication" novalidate>
           <div class="auth-field">
             <label for="initial-admin-username">用户名：</label>
-            <input id="initial-admin-username" name="username" value="admin" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名">
+            <input id="initial-admin-username" name="username" value="admin" maxlength="128" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名">
           </div>
           <div class="auth-field">
             <label for="initial-admin-password">密码：</label>
             <span class="password-field">
-              <input id="initial-admin-password" name="password" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="管理员密码">
+              <input id="initial-admin-password" name="password" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="管理员密码">
               <button class="password-visibility-toggle" type="button" aria-controls="initial-admin-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
           <div class="auth-field">
             <label for="initial-admin-confirm-password">确认密码：</label>
             <span class="password-field">
-              <input id="initial-admin-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认管理员密码">
+              <input id="initial-admin-confirm-password" name="confirmPassword" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认管理员密码">
               <button class="password-visibility-toggle" type="button" aria-controls="initial-admin-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
@@ -4442,13 +4442,13 @@
               </section>
 
               <section class="maintenance-panel account-settings-panel" id="accountSettingsPanel" role="tabpanel" tabindex="0" aria-labelledby="maintenanceAccountsTab" data-maintenance-panel="accounts" hidden>
-                <header class="maintenance-panel-head"><span>04</span><div><h2>账号管理</h2><p>仅管理当前浏览器中的本机账户、密码和会话时长。</p></div></header>
+                <header class="maintenance-panel-head"><span>04</span><div><h2>账号管理</h2><p>管理本机账户密码和页面空闲时长。</p></div></header>
                 <section id="authAccount">
                   <div class="auth-account-head"><strong>本机账户</strong></div>
                   <form class="auth-form" id="password-form">
-                    <div class="auth-field"><label for="maintenance-current-password">当前密码</label><span class="password-field"><input id="maintenance-current-password" name="currentPassword" type="password" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="当前密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-current-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
-                    <div class="auth-field"><label for="maintenance-new-password">新密码</label><span class="password-field"><input id="maintenance-new-password" name="newPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-new-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
-                    <div class="auth-field"><label for="maintenance-confirm-password">确认新密码</label><span class="password-field"><input id="maintenance-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                    <div class="auth-field"><label for="maintenance-current-password">当前密码</label><span class="password-field"><input id="maintenance-current-password" name="currentPassword" type="password" maxlength="4096" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="当前密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-current-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                    <div class="auth-field"><label for="maintenance-new-password">新密码</label><span class="password-field"><input id="maintenance-new-password" name="newPassword" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-new-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                    <div class="auth-field"><label for="maintenance-confirm-password">确认新密码</label><span class="password-field"><input id="maintenance-confirm-password" name="confirmPassword" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
                     <button type="submit">修改密码</button>
                   </form>
                   <form class="auth-form auth-policy" id="session-policy-form"><label>不活动退出（秒）<input name="idleTimeoutSeconds" type="number" value="300" min="60" step="60" inputmode="numeric" required data-soft-keyboard="numeric" data-soft-label="不活动退出秒数"></label><button type="submit">保存会话时长</button></form>

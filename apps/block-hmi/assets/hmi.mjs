@@ -237,6 +237,12 @@ function idleTimeoutFrom(value) {
 export function frontendSessionIsActive(session, now = Date.now()) {
     return session !== null && session.expiresAt > now;
 }
+export function renewFrontendSession(session, idleTimeoutSeconds, now = Date.now()) {
+    if (session === null || !frontendSessionIsActive(session, now)) {
+        return null;
+    }
+    return { ...session, expiresAt: now + idleTimeoutSeconds * 1000 };
+}
 export function demoAuthPreviewFromSearch(search) {
     const query = new URLSearchParams(search);
     if (query.get("demo") !== "1") {
@@ -644,7 +650,9 @@ class AppleBridge {
             if (!this.signedIn || this.session === null) {
                 return;
             }
-            this.refreshFrontendSession();
+            if (!this.refreshFrontendSession()) {
+                return;
+            }
         };
         document.addEventListener("pointerdown", report, { passive: true });
         document.addEventListener("touchstart", report, { passive: true });
@@ -869,11 +877,14 @@ class AppleBridge {
         }, delay);
     }
     refreshFrontendSession() {
-        if (this.session === null) {
-            return;
+        const renewed = renewFrontendSession(this.session, this.idleTimeoutSeconds);
+        if (renewed === null) {
+            this.becomeGuest();
+            return false;
         }
-        this.session.expiresAt = Date.now() + this.idleTimeoutSeconds * 1000;
+        this.session = renewed;
         this.scheduleSessionExpiry();
+        return true;
     }
     scheduleSessionExpiry() {
         if (this.sessionExpiryTimer !== null) {

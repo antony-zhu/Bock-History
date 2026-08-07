@@ -386,7 +386,7 @@ type BackendIdentity = {
   role: "VIEWER" | "OPERATOR" | "ADMIN";
   permissions: FrontendPermissions;
 };
-type FrontendSession = {
+export type FrontendSession = {
   username: string;
   role: BackendIdentity["role"];
   permissions: FrontendPermissions;
@@ -426,6 +426,13 @@ function idleTimeoutFrom(value: unknown): number | null {
 
 export function frontendSessionIsActive(session: FrontendSession | null, now = Date.now()): boolean {
   return session !== null && session.expiresAt > now;
+}
+
+export function renewFrontendSession(session: FrontendSession | null, idleTimeoutSeconds: number, now = Date.now()): FrontendSession | null {
+  if (session === null || !frontendSessionIsActive(session, now)) {
+    return null;
+  }
+  return { ...session, expiresAt: now + idleTimeoutSeconds * 1000 };
 }
 
 export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
@@ -886,7 +893,9 @@ class AppleBridge {
       if (!this.signedIn || this.session === null) {
         return;
       }
-      this.refreshFrontendSession();
+      if (!this.refreshFrontendSession()) {
+        return;
+      }
     };
     document.addEventListener("pointerdown", report, { passive: true });
     document.addEventListener("touchstart", report, { passive: true });
@@ -1119,12 +1128,15 @@ class AppleBridge {
     }, delay);
   }
 
-  private refreshFrontendSession(): void {
-    if (this.session === null) {
-      return;
+  private refreshFrontendSession(): boolean {
+    const renewed = renewFrontendSession(this.session, this.idleTimeoutSeconds);
+    if (renewed === null) {
+      this.becomeGuest();
+      return false;
     }
-    this.session.expiresAt = Date.now() + this.idleTimeoutSeconds * 1000;
+    this.session = renewed;
     this.scheduleSessionExpiry();
+    return true;
   }
 
   private scheduleSessionExpiry(): void {

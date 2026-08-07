@@ -22,6 +22,7 @@ import {
   demoAuthPreviewFromSearch,
   frontendSessionIsActive,
   isDisplayPath,
+  renewFrontendSession,
   StartCommandReceipt
 } from "./hmi.mjs";
 
@@ -35,6 +36,16 @@ assert.equal(frontendSessionIsActive({
 assert.equal(frontendSessionIsActive({
   username: "admin", role: "ADMIN", permissions: { operate: true, maintenance: true }, expiresAt: 200
 }, 200), false);
+const expiredBeforeTimeoutCallback = {
+  username: "admin", role: "ADMIN", permissions: { operate: true, maintenance: true }, expiresAt: 200
+};
+assert.equal(renewFrontendSession(expiredBeforeTimeoutCallback, 300, 200), null);
+assert.equal(renewFrontendSession(expiredBeforeTimeoutCallback, 300, 201), null);
+assert.deepEqual(renewFrontendSession({
+  username: "admin", role: "ADMIN", permissions: { operate: true, maintenance: true }, expiresAt: 201
+}, 300, 200), {
+  username: "admin", role: "ADMIN", permissions: { operate: true, maintenance: true }, expiresAt: 300200
+});
 
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=bootstrap"), "bootstrap");
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=login"), "login");
@@ -137,7 +148,8 @@ assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?requirePermission\
 assert.match(source, /private sendCommand\([\s\S]*?requirePermission\("operate"\)/);
 assert.doesNotMatch(source, /\/api\/v2\/auth\/status/);
 assert.doesNotMatch(source, /\/api\/v2\/auth\/(activity|logout)/);
-assert.match(source, /private refreshFrontendSession\(\): void/);
+assert.match(source, /private refreshFrontendSession\(\): boolean \{[\s\S]*?renewFrontendSession\(this\.session, this\.idleTimeoutSeconds\)[\s\S]*?this\.becomeGuest\(\)/);
+assert.match(source, /const report = \(\) => \{[\s\S]*?if \(!this\.refreshFrontendSession\(\)\) \{[\s\S]*?return;/);
 assert.match(source, /document\.addEventListener\("pointerdown", report/);
 assert.match(source, /document\.addEventListener\("touchstart", report/);
 assert.match(source, /document\.addEventListener\("keydown", report\)/);

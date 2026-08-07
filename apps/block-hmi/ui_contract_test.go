@@ -95,13 +95,16 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!regexp.MustCompile(`(?s)\.maintenance-panel \{.*?overflow-y: auto;.*?overscroll-behavior: contain;`).MatchString(page) {
 		t.Fatal("maintenance panels do not have isolated local scrolling")
 	}
-	passwordInputs := regexp.MustCompile(`<input id="([^"]+)"[^>]*type="password"`).FindAllStringSubmatch(page, -1)
+	passwordInputs := regexp.MustCompile(`<input id="([^"]+)"[^>]*type="password"[^>]*>`).FindAllStringSubmatch(page, -1)
 	passwordToggles := regexp.MustCompile(`<button[^>]*aria-controls="([^"]+)"[^>]*data-password-toggle`).FindAllStringSubmatch(page, -1)
 	if len(passwordInputs) != 7 || len(passwordToggles) != len(passwordInputs) {
 		t.Fatalf("password visibility controls do not cover every password input: inputs=%d toggles=%d", len(passwordInputs), len(passwordToggles))
 	}
 	passwordInputIDs := map[string]bool{}
 	for _, match := range passwordInputs {
+		if match[1] != "wifiPasswordInput" && !strings.Contains(match[0], `maxlength="4096"`) {
+			t.Fatalf("password input %q does not enforce the v2 4096-character maximum", match[1])
+		}
 		passwordInputIDs[match[1]] = true
 	}
 	for _, match := range passwordToggles {
@@ -111,6 +114,14 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if !strings.Contains(page, `class="password-visibility-toggle" type="button"`) || !strings.Contains(page, `aria-label="显示密码"`) || !strings.Contains(page, `aria-pressed="false"`) {
 		t.Fatal("password visibility controls are missing button semantics or accessible state")
+	}
+	for _, usernameInput := range []string{
+		`id="login-username" name="username" maxlength="128"`,
+		`id="initial-admin-username" name="username" value="admin" maxlength="128"`,
+	} {
+		if !strings.Contains(page, usernameInput) {
+			t.Fatalf("username input does not enforce the v2 128-character maximum: %q", usernameInput)
+		}
 	}
 	if !strings.Contains(page, `}, 650);`) || strings.Contains(page, `backend.updateSettings`) {
 		t.Fatal("production settings do not use the dedicated 650 ms local Agent save path")
@@ -153,6 +164,10 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`authRequest("/api/v2/config/session", "PUT"`,
 		`await this.loadAuthenticationState();`,
 		`this.refreshFrontendSession();`,
+		`export function renewFrontendSession(session: FrontendSession | null, idleTimeoutSeconds: number, now = Date.now()): FrontendSession | null`,
+		`if (session === null || !frontendSessionIsActive(session, now))`,
+		`const renewed = renewFrontendSession(this.session, this.idleTimeoutSeconds);`,
+		`this.becomeGuest();`,
 		`new Event("block-hmi-guest")`,
 	} {
 		if !strings.Contains(source, required) {
