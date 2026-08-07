@@ -6,6 +6,17 @@
   <meta name="theme-color" id="themeColor" content="#f5f5f7">
   <title>料仓控制台 · Apple Style</title>
   <script>
+    (() => {
+      const query = new URLSearchParams(window.location.search);
+      if (query.get("demo") !== "1" || query.get("__demoFrame") === "1") return;
+
+      const shellURL = new URL("demo-shell.html", window.location.href);
+      shellURL.search = window.location.search;
+      shellURL.hash = window.location.hash;
+      window.location.replace(shellURL.href);
+    })();
+  </script>
+  <script>
     if (/(?:^|[?&])performance=1(?:&|$)/.test(window.location.search)) {
       document.documentElement.dataset.performance = "low";
     }

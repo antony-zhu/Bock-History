@@ -54,6 +54,10 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	if strings.Contains(page, "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
 	}
+	if !strings.Contains(page, `query.get("demo") !== "1" || query.get("__demoFrame") === "1"`) ||
+		!strings.Contains(page, `new URL("demo-shell.html", window.location.href)`) {
+		t.Fatal("demo entry does not route through the fixed viewport shell")
+	}
 	if !regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.settings-layout \{.*?overflow: hidden;`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)\.maintenance-panel \{.*?overflow-y: auto;.*?overscroll-behavior: contain;`).MatchString(page) {
 		t.Fatal("maintenance panels do not have isolated local scrolling")
@@ -145,6 +149,7 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		t.Fatal("soft keyboard does not announce initialization completion")
 	}
 	for _, asset := range []string{
+		"assets/demo-shell.mjs",
 		"assets/hmi.mjs",
 		"assets/machine-bin.png",
 		"assets/soft-keyboard.css",
@@ -155,6 +160,29 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	} {
 		if _, err := os.Stat(asset); err != nil {
 			t.Fatalf("required HMI asset %q is missing: %v", asset, err)
+		}
+	}
+}
+
+func TestDemoShellUsesFixedIndustrialViewport(t *testing.T) {
+	contents, err := os.ReadFile("demo-shell.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := string(contents)
+	for _, required := range []string{
+		`id="demoFrame"`,
+		`width="1920"`,
+		`height="1080"`,
+		`width: 1920px;`,
+		`height: 1080px;`,
+		`transform: scale(var(--demo-scale, 1));`,
+		`demoFrameURL(window.location.href)`,
+		`demoDisplayScale(window.innerWidth, window.innerHeight)`,
+		`window.history.replaceState(null, "", demoVisibleURL(window.location.href).href)`,
+	} {
+		if !strings.Contains(shell, required) {
+			t.Fatalf("demo shell is missing %q", required)
 		}
 	}
 }

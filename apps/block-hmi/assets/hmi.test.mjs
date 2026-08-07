@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { assertAuthKeyboardLayout, authKeyboardSafeGap } from "../tools/auth-layout-probe.mjs";
 import {
+  demoDisplayScale,
+  demoFrameParameter,
+  demoFrameURL,
+  demoVisibleURL,
+  demoViewport
+} from "./demo-shell.mjs";
+import {
   ActivationFilter,
   applyAbsoluteValues,
   buildPLCConnect,
@@ -66,6 +73,22 @@ assert.equal(demoAuthScreenForPreview("login", () => ({ getItem: () => null })),
 assert.equal(demoAuthScreenForPreview("login", storage), "login");
 assert.equal(demoAuthScreenForPreview("bootstrap", storage), "bootstrap");
 
+assert.deepEqual(demoViewport, { width: 1920, height: 1080 });
+assert.equal(demoDisplayScale(1920, 1080), 1);
+assert.equal(demoDisplayScale(1600, 900), 5 / 6);
+assert.equal(demoDisplayScale(3840, 2160), 1);
+const bootstrapFrameURL = demoFrameURL("http://127.0.0.1:4173/demo-shell.html?demo=1&auth=bootstrap&performance=1#auth");
+assert.equal(bootstrapFrameURL.pathname, "/index.html");
+assert.equal(bootstrapFrameURL.searchParams.get("demo"), "1");
+assert.equal(bootstrapFrameURL.searchParams.get("auth"), "bootstrap");
+assert.equal(bootstrapFrameURL.searchParams.get("performance"), "1");
+assert.equal(bootstrapFrameURL.searchParams.get(demoFrameParameter), "1");
+assert.equal(bootstrapFrameURL.hash, "#auth");
+const visibleDemoURL = demoVisibleURL("http://127.0.0.1:4173/demo-shell.html?demo=1&auth=login#auth");
+assert.equal(visibleDemoURL.pathname, "/");
+assert.equal(visibleDemoURL.search, "?demo=1&auth=login");
+assert.equal(visibleDemoURL.hash, "#auth");
+
 const filter = new ActivationFilter();
 assert.equal(filter.accept({ type: "click", pointerId: 1, detail: 1, timeStamp: 100 }), true);
 assert.equal(filter.accept({ type: "click", pointerId: 1, detail: 1, timeStamp: 120 }), false);
@@ -103,6 +126,7 @@ assert.equal(devices.length, 0);
 
 const source = readFileSync(new URL("./hmi.mts", import.meta.url), "utf8");
 const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
 assert.match(source, /crypto\.subtle\.digest\("SHA-256"/);
@@ -130,6 +154,12 @@ assert.doesNotMatch(source, /event\.code === 4401/);
 assert.match(source, /new WebSocket\(websocketURL\(\)\)/);
 assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(index, /window\.BlockHMIReady\.then\(syncFrontendPermissions\)/);
+assert.match(index, /query\.get\("demo"\) !== "1" \|\| query\.get\("__demoFrame"\) === "1"/);
+assert.match(index, /new URL\("demo-shell\.html", window\.location\.href\)/);
+assert.match(demoShell, /<iframe[\s\S]*?id="demoFrame"[\s\S]*?width="1920"[\s\S]*?height="1080"/);
+assert.match(demoShell, /import \{ demoDisplayScale, demoFrameURL, demoVisibleURL \} from "\.\/assets\/demo-shell\.mjs"/);
+assert.match(demoShell, /frame\.src = demoFrameURL\(window\.location\.href\)\.href/);
+assert.match(demoShell, /window\.history\.replaceState\(null, "", demoVisibleURL\(window\.location\.href\)\.href\)/);
 assert.match(index, /function requireFrontendPermission\(permission\)/);
 assert.match(index, /name === "maintenance" && !requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S]*?overflow: hidden;/);
