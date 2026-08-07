@@ -81,6 +81,20 @@ VERSION
 `artifact.sha256` 是传输前后的比对依据。它只覆盖发布制品；不要对私钥、密码、
 真实配置或 Wi-Fi 文件计算、记录或上传哈希。
 
+### Windows 工作区的推荐打包方式
+
+Windows 的部分 `tar` 路径会丢失 `deploy/tests/*.sh` 的执行位。必须在 WSL/Linux
+shell 中打包，而不是用资源管理器或 Windows `tar.exe` 重新封装；上传同一个压缩包和
+manifest，设备解包后先检查模式。执行位不符时立即 STOP 并从原始候选重新打包，不能
+在设备上猜测性 `chmod` 后继续安装。
+
+```bash
+# 在 WSL/Linux shell，且在生成 artifact.sha256 后执行。
+cd "$CACHE_ROOT"
+tar --format=posix -czf artifact.tar.gz artifact artifact.sha256
+tar -tzf artifact.tar.gz >/dev/null
+```
+
 ## 3. 真机只读盘点与备份
 
 只有设备管理员在已批准的固定安装身份下才能进入本节。先创建一个发布记录，
@@ -100,7 +114,13 @@ case "$VERSION" in
 esac
 
 sudo /opt/block/current/deploy/version.sh
-sudo systemctl is-active block.service block-kiosk.service
+sudo readlink -f /opt/block/current
+sudo cat /var/lib/block-release/current-version
+sudo cat /var/lib/block-release/previous-release
+for SERVICE in block.service block-kiosk.service ssh-bootstrapd.service; do
+  printf '%s=' "$SERVICE"
+  sudo systemctl is-active "$SERVICE" || true
+done
 sudo ss -ltnp | grep -E ':(22|8443|8444|9443)([[:space:]]|$)'
 ! sudo ss -ltnp | grep -Eq ':(8080|8081)([[:space:]]|$)'
 sudo awk -F= \
@@ -108,12 +128,17 @@ sudo awk -F= \
   /etc/block/block.env
 sudo awk -F= \
   '$1 == "BLOCK_MQTTS_V2_ENABLED" { print }' /etc/block/block.env
+sudo awk -F= \
+  '$1 ~ /^BLOCK_(LOCAL_HTTPS_ADDRESS|MAINTENANCE_HTTPS_ADDRESS|MQTTS_V2_ENDPOINT)$/ { print }' \
+  /etc/block/block.env
 ```
 
-盘点记录必须包含：当前 `current` 指向和版本、两个 Block service 的状态、监听
-端口、`siteId`/`blockId`/`deviceId`、BDM 启用状态、PLC endpoint 是否已配置，
-以及 Wi-Fi 配置文件是否存在。只记录 Wi-Fi 文件的存在状态，绝不读取或输出其
-内容。PLC endpoint 与点位在本步骤只读，不得扫描写入或下发控制。
+盘点记录必须包含：当前 `current` 与 `previous-release`、当前版本、三个 service
+（`block.service`、`block-kiosk.service`、`ssh-bootstrapd.service`）的状态、监听端口、
+安全的配置摘要（地址、BDM 开关和业务身份，不含秘密）、`siteId`/`blockId`/
+`deviceId`、PLC endpoint 是否已配置，以及 Wi-Fi 配置文件是否存在。只记录 Wi-Fi
+文件的存在状态，绝不读取或输出其内容。PLC endpoint 与点位在本步骤只读，不得
+扫描写入或下发控制。
 
 在任何设备写入前，创建 root 独占的备份目录：
 
@@ -122,6 +147,19 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 BACKUP="/var/backups/block/pre-$VERSION-$STAMP"
 sudo install -d -o root -g root -m 0700 "$BACKUP"
 sudo stat -c '%U:%G:%a %n' "$BACKUP"
+
+# 保存 current/previous、两个 unit、受保护配置和维护端口基线；不显示配置内容。
+sudo cp -a --no-dereference /opt/block/current "$BACKUP/current-link"
+sudo cp -a -- "$(sudo readlink -f /opt/block/current)" "$BACKUP/current-release"
+sudo cp -a -- /var/lib/block-release/current-version \
+  /var/lib/block-release/previous-release "$BACKUP/"
+sudo cp -a -- /etc/systemd/system/block.service \
+  /etc/systemd/system/block-kiosk.service /etc/block/block.env "$BACKUP/"
+for SERVICE in block.service block-kiosk.service ssh-bootstrapd.service; do
+  sudo systemctl is-active "$SERVICE" | sudo tee "$BACKUP/$SERVICE.before" >/dev/null || true
+done
+sudo ss -ltnH | awk '$4 ~ /:(8443|9443)$/ { print $1, $4 }' | sort | \
+  sudo tee "$BACKUP/maintenance-listeners.before" >/dev/null
 ```
 
 备份至少包含下列内容，并在发布记录中写明每一项的源路径和备份路径：
@@ -133,6 +171,30 @@ sudo stat -c '%U:%G:%a %n' "$BACKUP"
 | SQLite | 使用 SQLite 的一致性备份，并对备份执行 `PRAGMA integrity_check`。SQLite 备份不以普通运行中文件复制替代。 |
 | Chromium profile、cache 与 NSS 信任库 | 分别备份 `/home/block-ui/.config/chromium`、`/home/block-ui/.cache/chromium` 和（如存在）`/home/block-ui/.pki/nssdb`。必须复制符号链接本身，不能解引用。 |
 | 现场状态 | 记录 BDM/Wi-Fi 文件存在性与 PLC endpoint 状态，不复制 Wi-Fi 内容，也不写 PLC。 |
+
+设备自带 Python 3.6，不能假定存在 `sqlite3.Connection.backup`。本次和后续发布均
+使用短暂停机冷备：先停止 kiosk、再停止 Block，复制 SQLite，运行完整性检查，随后
+**先恢复旧 Block、再恢复旧 kiosk**，确认恢复后才可进入制品暂存。不要为了备份安装
+Python 包或其他工具。
+
+```bash
+DB=/var/lib/block/block.db
+sudo systemctl stop block-kiosk.service
+sudo systemctl stop block.service
+if ! sudo cp -a -- "$DB" "$BACKUP/block.db" || \
+   ! sudo sqlite3 "$BACKUP/block.db" 'PRAGMA integrity_check;' | grep -Fxq ok; then
+  sudo systemctl start block.service
+  sudo systemctl start block-kiosk.service
+  exit 1
+fi
+sudo sqlite3 -noheader "$BACKUP/block.db" \
+  'SELECT username || "|" || role FROM local_accounts ORDER BY username; SELECT "idle=" || idle_timeout_seconds FROM local_system_settings WHERE singleton_id = 1;' | \
+  sudo tee "$BACKUP/auth-before.txt" >/dev/null
+sudo systemctl start block.service
+sudo systemctl is-active --quiet block.service
+sudo systemctl start block-kiosk.service
+sudo systemctl is-active --quiet block-kiosk.service
+```
 
 Chromium 目录中可能有悬空 `Singleton*` 符号链接。使用 `cp -a --no-dereference`
 （或等价的保留符号链接方式）备份，并用 `find -P` 检查；不得用会解引用链接的
@@ -162,10 +224,12 @@ sudo find -P "$BACKUP" -type l -ls
 STAGE="/var/backups/block/stage-$VERSION-$STAMP"
 sudo install -d -o root -g root -m 0700 "$STAGE"
 
-# 通过批准的管理通道把 artifact/ 与 artifact.sha256 传到 $STAGE；
+# 通过批准的管理通道把 WSL/Linux 生成的 artifact.tar.gz 传到 $STAGE 后立即解包。
+sudo tar -xzf "$STAGE/artifact.tar.gz" -C "$STAGE" --no-same-owner
 # 复制当前受保护配置以准备 $STAGE/block.env，不在终端或报告中显示其内容。
 sudo install -m 0640 -o root -g block /etc/block/block.env "$STAGE/block.env"
 sudo sh -c "cd '$STAGE/artifact' && sha256sum -c ../artifact.sha256"
+sudo file "$STAGE/artifact/bin/block-agent" | grep -Eq 'ELF .*ARM aarch64'
 sudo test -x "$STAGE/artifact/bin/block-agent"
 sudo test -f "$STAGE/artifact/web/index.html"
 sudo test -f "$STAGE/artifact/web/assets/points.json"
@@ -175,12 +239,20 @@ sudo test -x "$STAGE/artifact/deploy/health-check.sh"
 sudo test -f "$STAGE/artifact/deploy/systemd/block.service"
 sudo test -f "$STAGE/artifact/deploy/systemd/block-kiosk.service"
 sudo test -f "$STAGE/artifact/deploy/config/block.env.example"
+for SCRIPT in \
+  deploy/install.sh deploy/rollback.sh deploy/health-check.sh \
+  deploy/install-users.sh deploy/version.sh deploy/verify-install.sh \
+  deploy/verify-static.sh deploy/tests/deploy-regression.sh \
+  deploy/tests/install-rollback-regression.sh; do
+  sudo test -x "$STAGE/artifact/$SCRIPT"
+done
+sudo stat -c '%a %n' "$STAGE/artifact/deploy/tests/"*.sh
 test "$(sudo cat "$STAGE/artifact/VERSION")" = "$VERSION"
 ```
 
 `block.env` 不能持久化点位，且不得包含 PLC 点位表、密码、私钥内容或 Wi-Fi
-设置。制品哈希、布局或版本任何一项不符时立即 STOP；不要覆盖原 release，也
-不要手工修改当前链接。
+设置。制品哈希、ELF 架构、执行位、布局或版本任何一项不符时立即 STOP；不要覆盖
+原 release，也不要手工修改当前链接或在设备上修补候选的模式。
 
 直接使用暂存候选制品内的安装器执行一次正式安装；这也是首次迁移入口：
 
@@ -205,6 +277,11 @@ daemon-reload`、enable 两个 service、**明确 `systemctl restart block.servi
 `block-kiosk.service`、`/etc/block/block.env`、`current`/`previous-release` 状态，
 并以恢复目标自身的健康检查脚本重新启动服务。
 
+候选制品、候选 `deploy/`、本机 TLS 材料、配置和两个 unit 任一预检失败时，安装器
+不得创建 release、写配置、切换 `current` 或停止现有服务。通过预检后才创建事务
+snapshot；切换后的失败由候选自带的 rollback 恢复 snapshot，而不是调用旧
+`current` installer。
+
 ## 5. 发布验收
 
 安装器成功返回后，先验证版本、服务和本地健康检查：
@@ -214,6 +291,56 @@ sudo /opt/block/current/deploy/verify-install.sh --expected-version "$VERSION"
 sudo /opt/block/current/deploy/version.sh
 sudo systemctl is-active block.service block-kiosk.service
 ```
+
+`verify-install.sh` 只把真实点位配置键（如 `POINTS_FILE`、`BLOCK_POINT_MAP`）视为
+禁止项；它必须放行合法的 `BLOCK_MQTTS_V2_ENDPOINT`，不得按任意 `POINT` 子串误报。
+
+### 本次固定验收清单
+
+以下检查全部通过才算发布成功。`8444` 必须是 loopback 的严格 HTTPS；Kiosk 打开的
+同源页面还必须持续接收 WSS 实时数据。HTTPS 健康成功而 HMI/WSS 不工作，仍是失败。
+
+```bash
+HMI=https://127.0.0.1:8444
+HMI_CA=/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt
+
+sudo readlink -f /opt/block/current
+sudo cat /var/lib/block-release/current-version
+sudo cat /var/lib/block-release/previous-release
+for SERVICE in block.service block-kiosk.service ssh-bootstrapd.service; do
+  sudo systemctl is-active "$SERVICE" | sudo tee "$BACKUP/$SERVICE.after" >/dev/null || true
+  sudo diff -u "$BACKUP/$SERVICE.before" "$BACKUP/$SERVICE.after"
+done
+
+sudo curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error \
+  "$HMI/healthz" >/dev/null
+! sudo ss -ltnH | grep -Eq ':(8080|8081)([[:space:]]|$)'
+sudo ss -ltnH | awk '$4 ~ /:(8443|9443)$/ { print $1, $4 }' | sort | \
+  sudo tee "$BACKUP/maintenance-listeners.after" >/dev/null
+sudo diff -u "$BACKUP/maintenance-listeners.before" "$BACKUP/maintenance-listeners.after"
+```
+
+账号、idle 和首次管理员状态也必须保留。只记录用户名与角色，绝不输出密码哈希：
+
+```bash
+sudo sqlite3 -noheader /var/lib/block/block.db \
+  'PRAGMA integrity_check; SELECT username || "|" || role FROM local_accounts ORDER BY username; SELECT "idle=" || idle_timeout_seconds FROM local_system_settings WHERE singleton_id = 1;' | \
+  sudo tee "$BACKUP/auth-after.txt" >/dev/null
+sudo grep -Fxq ok "$BACKUP/auth-after.txt"
+sudo diff -u "$BACKUP/auth-before.txt" \
+  <(sudo sed '1{/^ok$/d;}' "$BACKUP/auth-after.txt")
+
+sudo curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error \
+  "$HMI/api/v2/auth/initial-admin" | sudo tee "$BACKUP/bootstrap-after.json" >/dev/null
+sudo grep -Eq '"bootstrapRequired"[[:space:]]*:[[:space:]]*false' "$BACKUP/bootstrap-after.json"
+sudo curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error \
+  "$HMI/api/v2/config/session" | sudo tee "$BACKUP/idle-after.json" >/dev/null
+sudo grep -Eq '"idleTimeoutSeconds"[[:space:]]*:[[:space:]]*[0-9]+' "$BACKUP/idle-after.json"
+```
+
+`ssh-bootstrapd.service` 只有设备原先已启用时才要求为 `active`；若它原先未启用，
+before/after 比对仍必须一致。最后在真实 Kiosk 屏幕上确认 URL 为
+`https://127.0.0.1:8444/`、页面不报证书错误并持续显示 WSS 更新。
 
 ### HMI 静态资源与缓存规则
 
@@ -298,28 +425,30 @@ sudo systemctl start block-kiosk.service
 `/home/block-ui/.config/chromium`、Local Storage、IndexedDB、账号、PLC、
 SQLite、BDM 或 Wi-Fi。随后重新执行本节的 HTTPS、稳定 PID/URL 和真实屏幕验收。
 
-### Chromium 对本机 CA 的受控信任（仅必要时）
+### Chromium 对本机 CA 的受控信任（仅 `NET::ERR_CERT_AUTHORITY_INVALID` 时）
 
 先执行上面的严格健康检查和 HMI HTTPS 验收；它们必须使用
 `/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt`，不得使用 `-k`、`--insecure` 或
-`--ignore-certificate-errors`。只有这些严格检查已经通过、而 Chromium 仅因
-本机 CA 不受信任无法打开 kiosk 时，才允许设备管理员进行以下一次受控导入：
+`--ignore-certificate-errors`。只有这些严格检查已经通过，并且 Chromium 真实显示
+`NET::ERR_CERT_AUTHORITY_INVALID` 时，才允许设备管理员进行以下一次受控导入：
 
 ```bash
 sudo systemctl stop block-kiosk.service
 sudo test -d /home/block-ui/.pki/nssdb
 sudo cp -a --no-dereference -- \
   /home/block-ui/.pki/nssdb "$BACKUP/block-ui-nssdb-before-local-ca"
+sudo -u block-ui sh -c 'command -v certutil >/dev/null'
 sudo -u block-ui certutil -d sql:/home/block-ui/.pki/nssdb \
   -A -n block-local-business-ca -t 'C,,' \
   -i /usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt
 sudo systemctl start block-kiosk.service
 ```
 
-这不是安装器或 kiosk unit 的自动步骤。`certutil` 不存在、NSS 数据库缺失、导入
-失败或浏览器仍出现证书错误时立即 STOP；不要改用忽略证书错误的 Chromium 参数。
-该步骤只导入公开 CA，绝不导入私钥。若需撤销，应由设备管理员在已备份的 profile
-范围内恢复 `block-ui-nssdb-before-local-ca`，然后重新执行严格 HTTPS 验收。
+这不是安装器或 kiosk unit 的自动步骤。只使用设备已有的 `certutil`；不得安装额外
+工具。`certutil` 不存在、NSS 数据库缺失、导入失败或浏览器仍出现证书错误时立即
+STOP；不要改用忽略证书错误的 Chromium 参数。该步骤只导入公开 CA，绝不导入私钥。
+若需撤销，应由设备管理员在已备份的 profile 范围内恢复
+`block-ui-nssdb-before-local-ca`，然后重新执行严格 HTTPS 验收。
 
 ## 6. 失败、回滚与 STOP 条件
 
@@ -368,3 +497,34 @@ Block，再启动并验收 kiosk。不得删除 release 目录、profile 或现�
 验收结束后，删除本次运行时创建的 SSH 私钥副本、known_hosts、临时 SSH 配置和
 会话目录；不要删除设备管理员保存的原始固定身份。保留有效备份、暂存证据和
 release 目录，直到设备管理员按留存策略确认可以清理。
+
+## 8. 2026-08-07 真机发布记录
+
+首次候选安装、`8444` 严格 TLS 健康检查和候选事务链均已通过；验收阶段的旧
+`verify-install.sh` 将合法的 `BLOCK_MQTTS_V2_ENDPOINT` 中的 `POINT` 误判为
+持久化点位。安装器因此完整回滚到旧 release，未连续重试或手工绕过回滚。
+
+随后以 `6a406cd` 修复精确点位键匹配并重新构建候选，第二次发布成功。最终设备版本为
+`0.0.0-verify-install-fix`。本记录不提交真实设备备份、报告或截图：受保护的设备
+备份留在设备上；工作区证据只可按相对缓存路径记录，例如
+`.cache/device-release-candidate-deploy-bundle/deployment-attempt-report.md` 和同目录下的
+截图，缓存不进入 Git。
+
+## 9. 下次发布固定清单与停止点
+
+1. 先完成第 3 节盘点，记录 current/previous、三个 service、端口与安全配置摘要。
+2. 创建 root-only 备份，完成两个 unit、`block.env`、current release 与 SQLite 冷备；
+   冷备完成后先恢复旧 Block、再恢复旧 kiosk。
+3. 在 WSL/Linux 打包候选，传输后校验 manifest、ELF arm64 和全部 `deploy/*.sh`、
+   `deploy/tests/*.sh` 执行位；模式不符就重新打包。
+4. 只运行 `$STAGE/artifact/deploy/install.sh`，不调用旧 current installer，也不手动
+   切换链接或重启服务。
+5. 让安装器完成 TLS/config/unit 预检、snapshot 与事务安装；它失败时先核对已恢复的
+   current、unit、配置和健康状态，不立即重试。
+6. 按第 5 节完成 current/previous、三个 service、8444 HTTPS/WSS、8080/8081 缺失、
+   8443/9443 不变、SQLite/accounts/idle/bootstrapRequired 和真实屏幕验收。
+
+备份不完整、SQLite 冷备或完整性检查失败、manifest/ELF/执行位不符、候选预检失败、
+安装器回滚、严格 TLS 或 WSS 验收失败、端口变化、账号/idle/bootstrap 状态变化，或
+Chromium 不是已证实的 `NET::ERR_CERT_AUTHORITY_INVALID`，均为 STOP 条件。保留证据、
+恢复既有服务状态，并在新的授权与明确故障原因前不重试。
