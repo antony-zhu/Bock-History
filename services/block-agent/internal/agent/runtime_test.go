@@ -304,10 +304,10 @@ func TestAlarmHistoryPersistsLocallyWithoutMQTTS(t *testing.T) {
 }
 
 func TestOnlyLoopbackBindingIsAccepted(t *testing.T) {
-	if _, err := NewLocalRuntime("0.0.0.0:8080", time.Now); err == nil {
-		t.Fatal("wildcard local HTTP address was accepted")
+	if _, err := NewLocalRuntime("0.0.0.0:8444", time.Now); err == nil {
+		t.Fatal("wildcard local HTTPS address was accepted")
 	}
-	if _, err := NewLocalRuntime("127.0.0.1:8080", time.Now); err != nil {
+	if _, err := NewLocalRuntime("127.0.0.1:8444", time.Now); err != nil {
 		t.Fatalf("loopback address rejected: %v", err)
 	}
 }
@@ -339,7 +339,7 @@ func startRuntimeWithOptionsAndFactory(t *testing.T, factory plcworker.Factory, 
 	}
 	context, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runtime.ServeListener(context, listener) }()
+	go func() { done <- runtime.serveListener(context, listener) }()
 	address := listener.Addr().String()
 	waitFor(t, time.Second, func() bool {
 		response, err := http.Get("http://" + address + "/healthz")

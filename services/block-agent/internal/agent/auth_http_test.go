@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net"
@@ -43,7 +44,7 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runtime.ServeListener(ctx, listener) }()
+	go func() { done <- runtime.serveListener(ctx, listener) }()
 	defer stopRuntime(t, cancel, done)
 	address := "http://" + listener.Addr().String()
 	client := &http.Client{}
@@ -290,14 +291,16 @@ func TestWebSocketAllowsGuestRuntimeAndRejectsForeignOrigin(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- runtime.ServeListener(ctx, listener) }()
+	material := newRuntimeTLSMaterial(t, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	go func() { done <- runtime.serveTLSListener(ctx, listener, material.certificate) }()
 	defer stopRuntime(t, cancel, done)
 
 	host := listener.Addr().String()
-	guestConfig, err := websocket.NewConfig("ws://"+host+"/ws", "http://"+host)
+	guestConfig, err := websocket.NewConfig("wss://"+host+"/ws", "https://"+host)
 	if err != nil {
 		t.Fatal(err)
 	}
+	guestConfig.TlsConfig = &tls.Config{RootCAs: runtimeTLSRoots(material.ca), ServerName: "127.0.0.1", MinVersion: tls.VersionTLS12}
 	guest, err := websocket.DialConfig(guestConfig)
 	if err != nil {
 		t.Fatalf("anonymous local HMI websocket: %v", err)
@@ -320,7 +323,7 @@ func TestWebSocketAllowsGuestRuntimeAndRejectsForeignOrigin(t *testing.T) {
 		t.Fatalf("guest PLC maintenance message = %#v", disconnectResult)
 	}
 
-	response, err := http.Get("http://" + host + "/api/v2/auth/initial-admin")
+	response, err := strictRuntimeTLSClient(material.ca, "127.0.0.1", tls.VersionTLS13).Get("https://" + host + "/api/v2/auth/initial-admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,10 +333,11 @@ func TestWebSocketAllowsGuestRuntimeAndRejectsForeignOrigin(t *testing.T) {
 		t.Fatalf("bootstrap endpoint status=%d body=%+v", response.StatusCode, bootstrap)
 	}
 
-	foreignConfig, err := websocket.NewConfig("ws://"+host+"/ws", "http://example.invalid")
+	foreignConfig, err := websocket.NewConfig("wss://"+host+"/ws", "https://example.invalid")
 	if err != nil {
 		t.Fatal(err)
 	}
+	foreignConfig.TlsConfig = &tls.Config{RootCAs: runtimeTLSRoots(material.ca), ServerName: "127.0.0.1", MinVersion: tls.VersionTLS12}
 	if _, err := websocket.DialConfig(foreignConfig); err == nil {
 		t.Fatal("foreign WebSocket Origin was accepted")
 	}

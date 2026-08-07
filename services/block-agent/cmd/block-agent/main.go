@@ -23,7 +23,9 @@ import (
 )
 
 func main() {
-	localHTTPAddress := flag.String("local-http-address", "127.0.0.1:8080", "loopback HTTP and WebSocket address")
+	localHTTPSAddress := flag.String("local-https-address", "127.0.0.1:8444", "loopback HTTPS and WSS address")
+	localTLSCertificate := flag.String("local-tls-cert", "", "local HTTPS certificate path")
+	localTLSPrivateKey := flag.String("local-tls-key", "", "local HTTPS private key path")
 	stateDatabase := flag.String("state-db", "data/block.db", "local SQLite database path")
 	hmiStaticDirectory := flag.String("hmi-static-dir", "", "directory containing the local HMI static build")
 	wifiInterface := flag.String("wifi-interface", "wlan0", "NetworkManager Wi-Fi interface used by local HMI maintenance")
@@ -65,7 +67,7 @@ func main() {
 		log.Fatalf("initialize Block authentication: %v", err)
 	}
 	dataDirectory := filepath.Dir(*stateDatabase)
-	runtime, err := agentapp.NewLocalRuntimeWithOptions(*localHTTPAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
+	runtime, err := agentapp.NewLocalRuntimeWithOptions(*localHTTPSAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
 		AlarmStore:      store,
 		PLCEndpointPath: filepath.Join(dataDirectory, "plc-endpoint.json"),
 		MaintenancePath: filepath.Join(dataDirectory, "maintenance.json"),
@@ -83,6 +85,9 @@ func main() {
 	})
 	if err != nil {
 		log.Fatalf("initialize Block local runtime: %v", err)
+	}
+	if *localTLSCertificate == "" || *localTLSPrivateKey == "" {
+		log.Fatal("local TLS certificate and private key are required")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -115,8 +120,8 @@ func main() {
 			_ = maintenance.Shutdown(shutdownContext)
 		}()
 	}
-	log.Printf("block-agent listening on %s", *localHTTPAddress)
-	if err := runtime.Run(ctx); err != nil {
+	log.Printf("block-agent local HTTPS listening on %s", *localHTTPSAddress)
+	if err := runtime.RunTLS(ctx, *localTLSCertificate, *localTLSPrivateKey); err != nil {
 		log.Fatalf("run Block local runtime: %v", err)
 	}
 }

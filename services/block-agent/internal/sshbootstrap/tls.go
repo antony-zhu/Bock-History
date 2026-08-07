@@ -45,11 +45,21 @@ func ServeTLSOnly(server *http.Server, certificatePath, privateKeyPath string) e
 	if err != nil {
 		return err
 	}
-	config := server.TLSConfig.Clone()
-	config.Certificates = []tls.Certificate{certificate}
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return err
 	}
+	return ServeTLSListener(server, listener, certificate)
+}
+
+// ServeTLSListener serves only completed TLS handshakes from a caller-owned
+// listener. Keeping the handshake at the listener boundary prevents Go's HTTP
+// server from returning a plaintext compatibility response to an HTTP client.
+func ServeTLSListener(server *http.Server, listener net.Listener, certificate tls.Certificate) error {
+	config := &tls.Config{}
+	if server.TLSConfig != nil {
+		config = server.TLSConfig.Clone()
+	}
+	config.Certificates = []tls.Certificate{certificate}
 	return server.Serve(&tlsHandshakeListener{Listener: listener, config: config})
 }

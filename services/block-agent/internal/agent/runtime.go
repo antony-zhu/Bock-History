@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"block.local/block-agent/internal/plcworker"
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
+	"block.local/block-agent/internal/sshbootstrap"
 	"block.local/block-agent/internal/wifi"
 	"golang.org/x/net/websocket"
 )
@@ -44,6 +46,7 @@ type Runtime struct {
 	production      *maintenance.Store
 	wifiBackend     wifi.Backend
 	wifiInterface   string
+	testPlaintext   bool
 	alarmID         atomic.Uint64
 
 	mu         sync.Mutex
@@ -138,28 +141,55 @@ func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory pl
 		Handler:           mux,
 		ReadHeaderTimeout: 3 * time.Second,
 		IdleTimeout:       30 * time.Second,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	return runtime, nil
 }
 
-// Run listens only on 127.0.0.1. It remains idle when the kiosk is absent.
-func (r *Runtime) Run(ctx context.Context) error {
+// RunTLS listens only on 127.0.0.1 and accepts only TLS 1.2 or newer. It
+// remains idle when the kiosk is absent.
+func (r *Runtime) RunTLS(ctx context.Context, certificatePath, privateKeyPath string) error {
+	if certificatePath == "" || privateKeyPath == "" {
+		return errors.New("local HTTPS certificate and private key are required")
+	}
+	certificate, err := tls.LoadX509KeyPair(certificatePath, privateKeyPath)
+	if err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", r.address)
 	if err != nil {
 		return err
 	}
-	return r.ServeListener(ctx, listener)
+	return r.serveTLSListener(ctx, listener, certificate)
 }
 
-// ServeListener is split out so tests can use a loopback port selected by the
-// operating system. Production callers use Run.
-func (r *Runtime) ServeListener(ctx context.Context, listener net.Listener) error {
+// serveTLSListener is split out so package tests can use a loopback port
+// selected by the operating system. Production callers use RunTLS.
+func (r *Runtime) serveTLSListener(ctx context.Context, listener net.Listener, certificate tls.Certificate) error {
 	if err := validateLoopbackListener(listener); err != nil {
 		_ = listener.Close()
 		return err
 	}
+	r.testPlaintext = false
+	return r.serve(ctx, func() error {
+		return sshbootstrap.ServeTLSListener(r.server, listener, certificate)
+	})
+}
+
+// serveListener is retained only for package-level handler tests. Production
+// business traffic must use RunTLS.
+func (r *Runtime) serveListener(ctx context.Context, listener net.Listener) error {
+	if err := validateLoopbackListener(listener); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	r.testPlaintext = true
+	return r.serve(ctx, func() error { return r.server.Serve(listener) })
+}
+
+func (r *Runtime) serve(ctx context.Context, serve func() error) error {
 	errorsChannel := make(chan error, 1)
-	go func() { errorsChannel <- r.server.Serve(listener) }()
+	go func() { errorsChannel <- serve() }()
 	select {
 	case <-ctx.Done():
 		r.StopSession()
@@ -557,11 +587,11 @@ func readMessageType(raw []byte) (string, error) {
 func validateLoopbackAddress(address string) error {
 	host, rawPort, err := net.SplitHostPort(address)
 	if err != nil || host != "127.0.0.1" {
-		return fmt.Errorf("local HTTP address must be 127.0.0.1:PORT")
+		return fmt.Errorf("local HTTPS address must be 127.0.0.1:PORT")
 	}
 	port, err := strconv.Atoi(rawPort)
 	if err != nil || port < 0 || port > 65535 {
-		return fmt.Errorf("local HTTP port is invalid")
+		return fmt.Errorf("local HTTPS port is invalid")
 	}
 	return nil
 }
@@ -569,12 +599,19 @@ func validateLoopbackAddress(address string) error {
 func validateLoopbackListener(listener net.Listener) error {
 	address, ok := listener.Addr().(*net.TCPAddr)
 	if !ok || !address.IP.Equal(net.ParseIP("127.0.0.1")) {
-		return errors.New("local HTTP listener must bind 127.0.0.1")
+		return errors.New("local HTTPS listener must bind 127.0.0.1")
 	}
 	return nil
 }
 
-func checkLocalOrigin(config *websocket.Config, request *http.Request) error {
+func (r *Runtime) websocketOriginScheme() string {
+	if r.testPlaintext {
+		return "http"
+	}
+	return "https"
+}
+
+func checkLocalOrigin(config *websocket.Config, request *http.Request, scheme string) error {
 	origin, err := websocket.Origin(config, request)
 	if err != nil {
 		return err
@@ -582,7 +619,7 @@ func checkLocalOrigin(config *websocket.Config, request *http.Request) error {
 	if origin == nil {
 		return nil // non-browser local diagnostics do not send Origin
 	}
-	if origin.Scheme != "http" || origin.Host != config.Location.Host || origin.Hostname() != "127.0.0.1" {
+	if origin.Scheme != scheme || origin.Host != config.Location.Host || origin.Hostname() != "127.0.0.1" {
 		return errors.New("WebSocket Origin is not local")
 	}
 	return nil

@@ -158,7 +158,7 @@ func responseIdentity(identity auth.Identity) identityResponse {
 }
 
 func (r *Runtime) checkHandshake(config *websocket.Config, request *http.Request) error {
-	return checkLocalOrigin(config, request)
+	return checkLocalOrigin(config, request, r.websocketOriginScheme())
 }
 
 func staticHMI(files fs.FS) http.Handler {
