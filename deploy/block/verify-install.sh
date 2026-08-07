@@ -51,7 +51,7 @@ done
 [ -f "$CURRENT_LINK/web/index.html" ] || fail "missing HMI index.html"
 [ -f "$CURRENT_LINK/web/assets/points.json" ] || fail "missing HMI points.json"
 [ -f "$CONFIG_FILE" ] || fail "missing Block configuration"
-if grep -Eq '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*POINTS?[A-Za-z0-9_]*=' "$CONFIG_FILE"; then
+if grep -Eq '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*_)?POINTS?(_[A-Za-z0-9_]+)?=' "$CONFIG_FILE"; then
   fail "Block configuration persists points"
 fi
 if config_value BLOCK_LOCAL_HTTP_ADDRESS >/dev/null; then

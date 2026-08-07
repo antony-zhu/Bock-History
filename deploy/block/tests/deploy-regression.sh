@@ -105,4 +105,43 @@ case "$OUTPUT" in
   *) fail "install did not reject POINTS_FILE" ;;
 esac
 
+VERIFY_ROOT=$TEST_ROOT/verify-install
+mkdir -p "$VERIFY_ROOT/release/bin" "$VERIFY_ROOT/release/web/assets" "$VERIFY_ROOT/release/deploy" "$VERIFY_ROOT/bin"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$VERIFY_ROOT/release/bin/block-agent"
+chmod +x "$VERIFY_ROOT/release/bin/block-agent"
+printf '%s\n' test > "$VERIFY_ROOT/release/VERSION"
+: > "$VERIFY_ROOT/release/web/index.html"
+: > "$VERIFY_ROOT/release/web/assets/points.json"
+printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$VERIFY_ROOT/release/deploy/health-check.sh"
+chmod +x "$VERIFY_ROOT/release/deploy/health-check.sh"
+ln -s "$VERIFY_ROOT/release" "$VERIFY_ROOT/current"
+printf '%s\n' \
+  'BLOCK_LOCAL_HTTPS_ADDRESS=127.0.0.1:8444' \
+  'BLOCK_LOCAL_TLS_CA=/public/ca.crt' \
+  'BLOCK_MQTTS_V2_ENDPOINT=mqtts://bdm.example.invalid:8883' > "$VERIFY_ROOT/block.env"
+printf '%s\n' \
+  '#!/usr/bin/env sh' \
+  '[ "$1" = is-active ] && [ "$2" = --quiet ] || exit 1' \
+  '[ "$3" = block.service ] && exit 0' \
+  '[ "$3" = block-hmi.service ] && exit 3' \
+  'exit 1' > "$VERIFY_ROOT/bin/systemctl"
+chmod +x "$VERIFY_ROOT/bin/systemctl"
+cp "$DEPLOY_DIR/verify-install.sh" "$VERIFY_ROOT/verify-install.sh"
+sed -i \
+  -e "s|/opt/block/current|$VERIFY_ROOT/current|g" \
+  -e "s|/etc/block/block.env|$VERIFY_ROOT/block.env|g" \
+  "$VERIFY_ROOT/verify-install.sh"
+chmod +x "$VERIFY_ROOT/verify-install.sh"
+if ! PATH="$VERIFY_ROOT/bin:$PATH" "$VERIFY_ROOT/verify-install.sh" --expected-version test >/dev/null; then
+  fail "verify-install rejected a legal BLOCK_MQTTS_V2_ENDPOINT"
+fi
+printf '%s\n' 'POINTS_FILE=/etc/block/points.json' >> "$VERIFY_ROOT/block.env"
+if OUTPUT=$(PATH="$VERIFY_ROOT/bin:$PATH" "$VERIFY_ROOT/verify-install.sh" --expected-version test 2>&1); then
+  fail "verify-install accepted persisted point configuration"
+fi
+case "$OUTPUT" in
+  *'Block configuration persists points'*) ;;
+  *) fail "verify-install did not reject POINTS_FILE" ;;
+esac
+
 printf 'Block deployment regression passed\n'
