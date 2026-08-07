@@ -370,8 +370,10 @@ async function loadConfiguration(demo: boolean): Promise<PageConfiguration> {
 }
 
 function websocketURL(): string {
-  const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return scheme + "//" + window.location.host + "/ws";
+  if (window.location.protocol !== "https:") {
+    throw new Error("Block HMI requires HTTPS before opening WSS");
+  }
+  return "wss://" + window.location.host + "/ws";
 }
 
 function isDemoMode(): boolean {

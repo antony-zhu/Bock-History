@@ -201,8 +201,10 @@ async function loadConfiguration(demo) {
     return configurationFrom(await response.json());
 }
 function websocketURL() {
-    const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return scheme + "//" + window.location.host + "/ws";
+    if (window.location.protocol !== "https:") {
+        throw new Error("Block HMI requires HTTPS before opening WSS");
+    }
+    return "wss://" + window.location.host + "/ws";
 }
 function isDemoMode() {
     return new URLSearchParams(window.location.search).get("demo") === "1";

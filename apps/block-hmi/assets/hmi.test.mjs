@@ -155,6 +155,8 @@ assert.match(source, /document\.addEventListener\("touchstart", report/);
 assert.match(source, /document\.addEventListener\("keydown", report\)/);
 assert.doesNotMatch(source, /event\.code === 4401/);
 assert.match(source, /new WebSocket\(websocketURL\(\)\)/);
+assert.match(source, /function websocketURL\(\): string \{[\s\S]*?window\.location\.protocol !== "https:"[\s\S]*?return "wss:\/\/" \+ window\.location\.host \+ "\/ws";/);
+assert.doesNotMatch(source, /"ws:"/);
 assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(index, /window\.BlockHMIReady\.then\(syncFrontendPermissions\)/);
 assert.match(index, /query\.get\("demo"\) !== "1" \|\| query\.get\("__demoFrame"\) === "1"/);
