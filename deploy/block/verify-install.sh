@@ -4,6 +4,7 @@ set -euo pipefail
 EXPECTED_VERSION=
 CURRENT_LINK=/opt/block/current
 CONFIG_FILE=/etc/block/block.env
+CHROMIUM_POLICY_FILE=/etc/chromium-browser/policies/managed/block-kiosk.json
 
 usage() {
   cat <<'EOF'
@@ -50,6 +51,9 @@ done
 [ -f "$CURRENT_LINK/VERSION" ] || fail "missing release VERSION"
 [ -f "$CURRENT_LINK/web/index.html" ] || fail "missing HMI index.html"
 [ -f "$CURRENT_LINK/web/assets/points.json" ] || fail "missing HMI points.json"
+[ -f "$CURRENT_LINK/deploy/chromium/block-kiosk.json" ] || fail "missing versioned Chromium kiosk policy"
+[ -f "$CHROMIUM_POLICY_FILE" ] || fail "missing installed Chromium kiosk policy"
+cmp -s "$CURRENT_LINK/deploy/chromium/block-kiosk.json" "$CHROMIUM_POLICY_FILE" || fail "installed Chromium kiosk policy does not match the current release"
 [ -f "$CONFIG_FILE" ] || fail "missing Block configuration"
 if grep -Eq '^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*_)?POINTS?(_[A-Za-z0-9_]+)?=' "$CONFIG_FILE"; then
   fail "Block configuration persists points"
@@ -68,6 +72,7 @@ if [ -n "$EXPECTED_VERSION" ]; then
 fi
 
 systemctl is-active --quiet block.service || fail "block.service is not active"
+systemctl is-active --quiet block-kiosk.service || fail "block-kiosk.service is not active"
 if systemctl is-active --quiet block-hmi.service; then
   fail "legacy block-hmi.service is still active"
 fi

@@ -13,6 +13,8 @@ CURRENT_LINK=/opt/block/current
 STATE_ROOT=/var/lib/block-release
 CONFIG_ROOT=/etc/block
 SYSTEMD_ROOT=/etc/systemd/system
+CHROMIUM_POLICY_ROOT=/etc/chromium-browser/policies/managed
+CHROMIUM_POLICY_FILE=$CHROMIUM_POLICY_ROOT/block-kiosk.json
 SNAPSHOTS_ROOT=/var/lib/block-release/unit-snapshots
 ROLLBACK_ARMED=false
 INSTALL_SNAPSHOT=
@@ -134,7 +136,7 @@ validate_candidate_deploy() {
   for tool in build.sh install.sh rollback.sh health-check.sh install-users.sh version.sh verify-install.sh verify-static.sh tests/deploy-regression.sh tests/install-rollback-regression.sh; do
     [ -x "$CANDIDATE_DEPLOY_DIR/$tool" ] || fail "missing executable candidate deploy tool: $tool"
   done
-  for tool in README.md config/block.env.example systemd/block.service systemd/block-kiosk.service; do
+  for tool in README.md config/block.env.example systemd/block.service systemd/block-kiosk.service chromium/block-kiosk.json; do
     [ -f "$CANDIDATE_DEPLOY_DIR/$tool" ] || fail "missing candidate deploy file: $tool"
   done
 }
@@ -147,6 +149,15 @@ snapshot_state_file() {
     printf 'present\n' > "$INSTALL_SNAPSHOT/state/$name.state"
   else
     printf 'absent\n' > "$INSTALL_SNAPSHOT/state/$name.state"
+  fi
+}
+
+snapshot_chromium_policy() {
+  if [ -f "$CHROMIUM_POLICY_FILE" ]; then
+    cp -a -- "$CHROMIUM_POLICY_FILE" "$INSTALL_SNAPSHOT/state/block-kiosk.json"
+    printf 'present\n' > "$INSTALL_SNAPSHOT/state/block-kiosk.json.state"
+  else
+    printf 'absent\n' > "$INSTALL_SNAPSHOT/state/block-kiosk.json.state"
   fi
 }
 
@@ -181,6 +192,7 @@ snapshot_install_state() {
   else
     printf 'absent\n' > "$INSTALL_SNAPSHOT/state/block.env.state"
   fi
+  snapshot_chromium_policy
   snapshot_state_file previous-release
   snapshot_state_file current-version
   snapshot_state_file current-unit-snapshot
@@ -277,6 +289,7 @@ install -d -o block -g block -m 0755 "$RELEASES_ROOT"
 install -d -o block -g block -m 0750 /var/lib/block
 install -d -o root -g block -m 0750 "$CONFIG_ROOT"
 install -d -o root -g root -m 0755 "$SYSTEMD_ROOT"
+install -d -o root -g root -m 0755 "$CHROMIUM_POLICY_ROOT"
 install -d -o root -g root -m 0750 "$STATE_ROOT"
 snapshot_install_state
 ROLLBACK_ARMED=true
@@ -291,11 +304,12 @@ install -m 0644 -o block -g block "$ARTIFACT_DIR/VERSION" "$RELEASE_DIR/VERSION"
 cp -a "$ARTIFACT_DIR/web/." "$RELEASE_DIR/web/"
 chown -R block:block "$RELEASE_DIR/web"
 
-install -d -o root -g root -m 0755 "$RELEASE_DIR/deploy/config" "$RELEASE_DIR/deploy/systemd" "$RELEASE_DIR/deploy/tests"
+install -d -o root -g root -m 0755 "$RELEASE_DIR/deploy/chromium" "$RELEASE_DIR/deploy/config" "$RELEASE_DIR/deploy/systemd" "$RELEASE_DIR/deploy/tests"
 for TOOL in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh; do
   install -m 0755 -o root -g root "$CANDIDATE_DEPLOY_DIR/$TOOL" "$RELEASE_DIR/deploy/$TOOL"
 done
 install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/README.md" "$RELEASE_DIR/deploy/README.md"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/chromium/block-kiosk.json" "$RELEASE_DIR/deploy/chromium/block-kiosk.json"
 install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/config/block.env.example" "$RELEASE_DIR/deploy/config/block.env.example"
 install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block.service" "$RELEASE_DIR/deploy/systemd/block.service"
 install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block-kiosk.service" "$RELEASE_DIR/deploy/systemd/block-kiosk.service"
@@ -303,6 +317,7 @@ install -m 0755 -o root -g root "$CANDIDATE_DEPLOY_DIR/tests/deploy-regression.s
 install -m 0755 -o root -g root "$CANDIDATE_DEPLOY_DIR/tests/install-rollback-regression.sh" "$RELEASE_DIR/deploy/tests/install-rollback-regression.sh"
 
 install -m 0640 -o root -g block "$CONFIG_FILE" "$CONFIG_ROOT/block.env"
+install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/chromium/block-kiosk.json" "$CHROMIUM_POLICY_FILE"
 install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block.service" "$SYSTEMD_ROOT/block.service"
 install -m 0644 -o root -g root "$CANDIDATE_DEPLOY_DIR/systemd/block-kiosk.service" "$SYSTEMD_ROOT/block-kiosk.service"
 

@@ -72,6 +72,27 @@ if config["BLOCK_MQTTS_V2_ENDPOINT"] != "mqtts://bdm.example.invalid:8883":
     raise SystemExit("BDM connection defaults must be MQTTS on 8883")
 PY
 
+python3 - "$SCRIPT_DIR/chromium/block-kiosk.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    policy = json.load(source)
+
+expected = {
+    "PasswordManagerEnabled": False,
+    "AutofillAddressEnabled": False,
+    "AutofillCreditCardEnabled": False,
+    "TranslateEnabled": False,
+    "DefaultPopupsSetting": 2,
+    "DefaultNotificationsSetting": 2,
+    "DefaultGeolocationSetting": 2,
+    "DefaultMediaStreamSetting": 2,
+}
+if policy != expected:
+    raise SystemExit(f"unexpected Chromium kiosk policy: {policy}")
+PY
+
 python3 - "$SCRIPT_DIR/install.sh" <<'PY'
 import sys
 
@@ -81,6 +102,8 @@ for required in (
     'validate_candidate_deploy',
     'run the candidate artifact\'s deploy/install.sh, not an installer from /opt/block/current',
     '"$CANDIDATE_DEPLOY_DIR/$TOOL" "$RELEASE_DIR/deploy/$TOOL"',
+    '"$CANDIDATE_DEPLOY_DIR/chromium/block-kiosk.json" "$RELEASE_DIR/deploy/chromium/block-kiosk.json"',
+    '"$CANDIDATE_DEPLOY_DIR/chromium/block-kiosk.json" "$CHROMIUM_POLICY_FILE"',
     '"$CANDIDATE_DEPLOY_DIR/tests/install-rollback-regression.sh" "$RELEASE_DIR/deploy/tests/install-rollback-regression.sh"',
 ):
     if required not in source:
@@ -116,6 +139,8 @@ if tls_validation >= source.index('"$SCRIPT_DIR/install-users.sh"'):
     raise SystemExit("TLS material must be validated before any install-user mutation")
 if snapshot >= source.index('install -m 0640 -o root -g block "$CONFIG_FILE"'):
     raise SystemExit("install must snapshot the old state before writing the new config")
+if 'snapshot_chromium_policy' not in source or 'CHROMIUM_POLICY_FILE=$CHROMIUM_POLICY_ROOT/block-kiosk.json' not in source:
+    raise SystemExit("install must version and snapshot the Chromium kiosk policy")
 PY
 
 python3 - "$SCRIPT_DIR/build.sh" <<'PY'
@@ -124,8 +149,9 @@ import sys
 source = open(sys.argv[1], encoding="utf-8").read()
 for required in (
     'copy_deploy_bundle()',
-    '"$OUTPUT_DIR/deploy/config" "$OUTPUT_DIR/deploy/systemd" "$OUTPUT_DIR/deploy/tests"',
+    '"$OUTPUT_DIR/deploy/chromium" "$OUTPUT_DIR/deploy/config" "$OUTPUT_DIR/deploy/systemd" "$OUTPUT_DIR/deploy/tests"',
     'for tool in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh; do',
+    '"$SCRIPT_DIR/chromium/block-kiosk.json" "$OUTPUT_DIR/deploy/chromium/block-kiosk.json"',
     '"$SCRIPT_DIR/config/block.env.example" "$OUTPUT_DIR/deploy/config/block.env.example"',
     '"$SCRIPT_DIR/systemd/block.service" "$OUTPUT_DIR/deploy/systemd/block.service"',
     '"$SCRIPT_DIR/systemd/block-kiosk.service" "$OUTPUT_DIR/deploy/systemd/block-kiosk.service"',
@@ -144,6 +170,8 @@ for required in (
     'restore_snapshot_units',
     'restore_snapshot_current_link',
     'install_target_units',
+    'install_target_kiosk_policy',
+    'restore_snapshot_chromium_policy',
     'release_health_check',
     '"$health_check" --help 2>&1 | grep -F -- \'--ca-file\'',
     '"$health_check" --ca-file "$ca"',
@@ -156,6 +184,19 @@ gate = source.index('target release crosses local HTTP/TLS topology but has no r
 manual_stop = source.rindex('systemctl stop block-kiosk.service')
 if gate >= manual_stop:
     raise SystemExit("cross-topology rollback must reject before stopping services")
+PY
+
+python3 - "$SCRIPT_DIR/verify-install.sh" <<'PY'
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+for required in (
+    'CHROMIUM_POLICY_FILE=/etc/chromium-browser/policies/managed/block-kiosk.json',
+    '"$CURRENT_LINK/deploy/chromium/block-kiosk.json" "$CHROMIUM_POLICY_FILE"',
+    'systemctl is-active --quiet block-kiosk.service',
+):
+    if required not in source:
+        raise SystemExit(f"verify-install is missing Chromium kiosk verification: {required}")
 PY
 
 UNIT_COUNT=$(find "$SCRIPT_DIR/systemd" -maxdepth 1 -type f -name '*.service' | wc -l)
@@ -189,7 +230,10 @@ grep -Fx 'ExecStartPre=/opt/block/current/deploy/health-check.sh --url https://1
 if grep -Fq '$BLOCK_' "$SCRIPT_DIR/systemd/block-kiosk.service"; then
   fail "kiosk must not depend on a Block environment variable"
 fi
-grep -Fx 'ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble https://127.0.0.1:8444/' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --deny-permission-prompts https://127.0.0.1:8444/?performance=1' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+if grep -n -E -- '--ignore-certificate-errors|--allow-insecure-localhost|--disable-web-security|--disable-popup-blocking' "$SCRIPT_DIR/systemd/block-kiosk.service"; then
+  fail "kiosk must not bypass TLS or allow native popups"
+fi
 grep -Fx 'ExecStopPost=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost -SI:localuser:block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 if grep -R -n -E 'network-online|block-hmi|block-plc-simulator' "$SCRIPT_DIR/systemd"; then
   fail "v2 units must not depend on network-online or legacy services"

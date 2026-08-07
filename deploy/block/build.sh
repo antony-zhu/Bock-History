@@ -28,11 +28,12 @@ fail() {
 copy_deploy_bundle() {
   local tool
 
-  install -d -m 0755 "$OUTPUT_DIR/deploy/config" "$OUTPUT_DIR/deploy/systemd" "$OUTPUT_DIR/deploy/tests"
+  install -d -m 0755 "$OUTPUT_DIR/deploy/chromium" "$OUTPUT_DIR/deploy/config" "$OUTPUT_DIR/deploy/systemd" "$OUTPUT_DIR/deploy/tests"
   for tool in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh; do
     install -m 0755 "$SCRIPT_DIR/$tool" "$OUTPUT_DIR/deploy/$tool"
   done
   install -m 0644 "$SCRIPT_DIR/README.md" "$OUTPUT_DIR/deploy/README.md"
+  install -m 0644 "$SCRIPT_DIR/chromium/block-kiosk.json" "$OUTPUT_DIR/deploy/chromium/block-kiosk.json"
   install -m 0644 "$SCRIPT_DIR/config/block.env.example" "$OUTPUT_DIR/deploy/config/block.env.example"
   install -m 0644 "$SCRIPT_DIR/systemd/block.service" "$OUTPUT_DIR/deploy/systemd/block.service"
   install -m 0644 "$SCRIPT_DIR/systemd/block-kiosk.service" "$OUTPUT_DIR/deploy/systemd/block-kiosk.service"

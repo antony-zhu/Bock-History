@@ -106,12 +106,14 @@ case "$OUTPUT" in
 esac
 
 VERIFY_ROOT=$TEST_ROOT/verify-install
-mkdir -p "$VERIFY_ROOT/release/bin" "$VERIFY_ROOT/release/web/assets" "$VERIFY_ROOT/release/deploy" "$VERIFY_ROOT/bin"
+mkdir -p "$VERIFY_ROOT/release/bin" "$VERIFY_ROOT/release/web/assets" "$VERIFY_ROOT/release/deploy/chromium" "$VERIFY_ROOT/etc/chromium-browser/policies/managed" "$VERIFY_ROOT/bin"
 printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$VERIFY_ROOT/release/bin/block-agent"
 chmod +x "$VERIFY_ROOT/release/bin/block-agent"
 printf '%s\n' test > "$VERIFY_ROOT/release/VERSION"
 : > "$VERIFY_ROOT/release/web/index.html"
 : > "$VERIFY_ROOT/release/web/assets/points.json"
+cp "$DEPLOY_DIR/chromium/block-kiosk.json" "$VERIFY_ROOT/release/deploy/chromium/block-kiosk.json"
+cp "$DEPLOY_DIR/chromium/block-kiosk.json" "$VERIFY_ROOT/etc/chromium-browser/policies/managed/block-kiosk.json"
 printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$VERIFY_ROOT/release/deploy/health-check.sh"
 chmod +x "$VERIFY_ROOT/release/deploy/health-check.sh"
 ln -s "$VERIFY_ROOT/release" "$VERIFY_ROOT/current"
@@ -123,12 +125,14 @@ printf '%s\n' \
   '#!/usr/bin/env sh' \
   '[ "$1" = is-active ] && [ "$2" = --quiet ] || exit 1' \
   '[ "$3" = block.service ] && exit 0' \
+  '[ "$3" = block-kiosk.service ] && exit 0' \
   '[ "$3" = block-hmi.service ] && exit 3' \
   'exit 1' > "$VERIFY_ROOT/bin/systemctl"
 chmod +x "$VERIFY_ROOT/bin/systemctl"
 cp "$DEPLOY_DIR/verify-install.sh" "$VERIFY_ROOT/verify-install.sh"
 sed -i \
   -e "s|/opt/block/current|$VERIFY_ROOT/current|g" \
+  -e "s|/etc/chromium-browser|$VERIFY_ROOT/etc/chromium-browser|g" \
   -e "s|/etc/block/block.env|$VERIFY_ROOT/block.env|g" \
   "$VERIFY_ROOT/verify-install.sh"
 chmod +x "$VERIFY_ROOT/verify-install.sh"

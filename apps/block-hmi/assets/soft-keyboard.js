@@ -224,19 +224,21 @@
 
   function updateFoot(message, isError) {
     if (!foot) return;
-    foot.textContent = message || defaultFootText;
-    foot.classList.toggle("is-error", Boolean(isError));
+    var nextText = message || defaultFootText;
+    var nextError = Boolean(isError);
+    if (foot.textContent !== nextText) foot.textContent = nextText;
+    if (foot.classList.contains("is-error") !== nextError) foot.classList.toggle("is-error", nextError);
   }
 
   function clearError(input) {
-    if (input) input.removeAttribute("aria-invalid");
-    if (validationLine) validationLine.textContent = "";
+    if (input && input.hasAttribute("aria-invalid")) input.removeAttribute("aria-invalid");
+    if (validationLine && validationLine.textContent !== "") validationLine.textContent = "";
     updateFoot(activeFootText, false);
   }
 
   function setError(input, message) {
-    if (input) input.setAttribute("aria-invalid", "true");
-    if (validationLine) validationLine.textContent = message;
+    if (input && input.getAttribute("aria-invalid") !== "true") input.setAttribute("aria-invalid", "true");
+    if (validationLine && validationLine.textContent !== message) validationLine.textContent = message;
     updateFoot(message, true);
   }
 
@@ -292,10 +294,8 @@
     var maxLength = getMaxLength(activeInput);
     if (activeLayout === "numeric") nextValue = nextValue.replace(/\D/g, "");
     if (nextValue.length > maxLength) nextValue = nextValue.slice(0, maxLength);
-    activeInput.value = nextValue;
-    activeInput.removeAttribute("aria-invalid");
-    if (validationLine) validationLine.textContent = "";
-    updateFoot(activeFootText, false);
+    if (activeInput.value !== nextValue) activeInput.value = nextValue;
+    clearError(activeInput);
     if (emitInput) dispatchFieldEvent(activeInput, "input");
     if (keyboard && keyboard.getInput(activeInputName) !== nextValue) {
       keyboard.setInput(nextValue, activeInputName);
@@ -493,6 +493,7 @@
     root.setAttribute("data-soft-keyboard-open", "true");
     root.setAttribute("data-soft-keyboard-layout", activeLayout);
     showDock(options && options.immediate === true);
+    window.dispatchEvent(createEvent("hmi-soft-keyboard-statechange", { open: true }));
     return true;
   }
 
@@ -547,6 +548,7 @@
     root.removeAttribute("data-soft-keyboard-layout");
     clearAuthKeyboardLayout();
     hideDock();
+    window.dispatchEvent(createEvent("hmi-soft-keyboard-statechange", { open: false }));
     return true;
   }
 
@@ -698,8 +700,7 @@
       if (mode === "soft") openForInput(input);
     });
     input.addEventListener("input", function () {
-      input.removeAttribute("aria-invalid");
-      if (validationLine) validationLine.textContent = "";
+      clearError(input);
     });
   }
 

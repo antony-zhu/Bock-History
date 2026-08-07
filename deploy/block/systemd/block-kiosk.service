@@ -11,7 +11,7 @@ PermissionsStartOnly=true
 Environment=DISPLAY=:0
 ExecStartPre=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost +SI:localuser:block-ui
 ExecStartPre=/opt/block/current/deploy/health-check.sh --url https://127.0.0.1:8444/healthz --ca-file /usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt --retries 30 --delay 1
-ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble https://127.0.0.1:8444/
+ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --deny-permission-prompts https://127.0.0.1:8444/?performance=1
 ExecStopPost=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost -SI:localuser:block-ui
 Restart=on-failure
 RestartSec=2s

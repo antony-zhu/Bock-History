@@ -40,9 +40,9 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`/api/v2/maintenance/connectivity`,
 		`/api/v2/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`assets/soft-keyboard.css?v=20260807.5`,
-		`assets/soft-keyboard.js?v=20260807.5`,
-		`import("./assets/hmi.mjs?v=20260807.5")`,
+		`assets/soft-keyboard.css?v=20260807.6`,
+		`assets/soft-keyboard.js?v=20260807.6`,
+		`import("./assets/hmi.mjs?v=20260807.6")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -167,6 +167,9 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`export function renewFrontendSession(session: FrontendSession | null, idleTimeoutSeconds: number, now = Date.now()): FrontendSession | null`,
 		`if (session === null || !frontendSessionIsActive(session, now))`,
 		`const renewed = renewFrontendSession(this.session, this.idleTimeoutSeconds);`,
+		`private setAuthSubmitBusy(form: HTMLFormElement, busy: boolean): void`,
+		`private publishLiveState(): void`,
+		`window.addEventListener("hmi-soft-keyboard-statechange", () => this.flushDeferredLiveState());`,
 		`this.becomeGuest();`,
 		`new Event("block-hmi-guest")`,
 	} {
@@ -200,6 +203,27 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if !regexp.MustCompile(`private sendPLCScan[\s\S]*?requirePermission\("maintenance"\)`).MatchString(source) {
 		t.Fatal("HMI PLC actions are not protected by the frontend maintenance gate")
+	}
+	bootstrap := regexp.MustCompile(`(?s)private async createInitialAdmin\(username: string, password: string, confirmPassword: string\): Promise<void> \{.*?\n  \}\n\n  private async changePassword`).FindString(source)
+	if bootstrap == "" ||
+		!strings.Contains(bootstrap, `if (this.initialAdminInFlight)`) ||
+		!strings.Contains(bootstrap, `this.initialAdminInFlight = true;`) ||
+		!strings.Contains(bootstrap, `this.beginSession(identity);`) ||
+		!strings.Contains(bootstrap, `this.emitPageNotice("管理员创建成功");`) ||
+		strings.Contains(bootstrap, `/api/v2/auth/login`) {
+		t.Fatal("initial-admin completion must be single-flight and enter the in-memory admin session without a second login")
+	}
+	if !regexp.MustCompile(`(?s)message\.type === "points\.changed".*?this\.publishLiveState\(\);`).MatchString(source) {
+		t.Fatal("PLC updates still render through the full input path instead of coalescing while an input is active")
+	}
+	if !strings.Contains(page, `function flushDeferredServerRender()`) ||
+		!regexp.MustCompile(`(?s)function applyServerState\(nextState, options = \{\}\).*?if \(inputInteractionActive\(\)\).*?deferredServerRender = true;.*?return true;`).MatchString(page) {
+		t.Fatal("input interaction does not defer full-page state rendering")
+	}
+	for _, forbidden := range []string{`requestFullscreen`, `exitFullscreen`, `alert(`, `confirm(`, `prompt(`} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("HMI page still permits a native browser dialog or chrome surface: %q", forbidden)
+		}
 	}
 	if !strings.Contains(source, `toggle.addEventListener("pointerdown", (event) => event.preventDefault())`) || !strings.Contains(source, `input.type = input.type === "password" ? "text" : "password";`) {
 		t.Fatal("password visibility toggle does not preserve the current input target")

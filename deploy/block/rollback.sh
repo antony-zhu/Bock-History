@@ -11,6 +11,8 @@ STATE_ROOT=/var/lib/block-release
 CONFIG_ROOT=/etc/block
 CONFIG_FILE=/etc/block/block.env
 SYSTEMD_ROOT=/etc/systemd/system
+CHROMIUM_POLICY_ROOT=/etc/chromium-browser/policies/managed
+CHROMIUM_POLICY_FILE=$CHROMIUM_POLICY_ROOT/block-kiosk.json
 SNAPSHOTS_ROOT=/var/lib/block-release/unit-snapshots
 
 usage() {
@@ -71,6 +73,14 @@ install_target_units() {
   install -m 0644 -o root -g root "$units_dir/block-kiosk.service" "$SYSTEMD_ROOT/block-kiosk.service"
 }
 
+install_target_kiosk_policy() {
+  local release=$1 policy
+  policy=$release/deploy/chromium/block-kiosk.json
+  [ -f "$policy" ] || return 1
+  install -d -m 0755 "$CHROMIUM_POLICY_ROOT"
+  install -m 0644 -o root -g root "$policy" "$CHROMIUM_POLICY_FILE"
+}
+
 validate_snapshot() {
   local unit
   case "$SNAPSHOT" in
@@ -86,6 +96,13 @@ validate_snapshot() {
     absent) ;;
     *) fail "snapshot has invalid config state" ;;
   esac
+  if [ -f "$SNAPSHOT/state/block-kiosk.json.state" ]; then
+    case "$(cat "$SNAPSHOT/state/block-kiosk.json.state")" in
+      present) [ -f "$SNAPSHOT/state/block-kiosk.json" ] || fail "snapshot is missing Chromium kiosk policy" ;;
+      absent) ;;
+      *) fail "snapshot has invalid Chromium kiosk policy state" ;;
+    esac
+  fi
   for unit in block.service block-kiosk.service; do
     if grep -Fqx "$unit"$'\t'present "$SNAPSHOT/units.state"; then
       [ -f "$SNAPSHOT/units/$unit" ] || fail "snapshot is missing $unit"
@@ -127,6 +144,21 @@ restore_snapshot_file() {
       ;;
     absent) rm -f -- "$destination" ;;
     *) fail "snapshot has invalid state for $name" ;;
+  esac
+}
+
+restore_snapshot_chromium_policy() {
+  local state
+  [ -f "$SNAPSHOT/state/block-kiosk.json.state" ] || return 0
+  state=$(cat "$SNAPSHOT/state/block-kiosk.json.state")
+  case "$state" in
+    present)
+      [ -f "$SNAPSHOT/state/block-kiosk.json" ] || fail "snapshot is missing Chromium kiosk policy"
+      install -d -m 0755 "$CHROMIUM_POLICY_ROOT"
+      cp -a -- "$SNAPSHOT/state/block-kiosk.json" "$CHROMIUM_POLICY_FILE"
+      ;;
+    absent) rm -f -- "$CHROMIUM_POLICY_FILE" ;;
+    *) fail "snapshot has invalid Chromium kiosk policy state" ;;
   esac
 }
 
@@ -199,6 +231,7 @@ rollback_snapshot() {
   systemctl stop block-kiosk.service >/dev/null 2>&1 || true
   systemctl stop block.service >/dev/null 2>&1 || true
   restore_snapshot_file block.env "$CONFIG_FILE"
+  restore_snapshot_chromium_policy
   restore_snapshot_units
   systemctl daemon-reload
   restore_snapshot_current_link
@@ -294,10 +327,14 @@ systemctl stop block-kiosk.service >/dev/null 2>&1 || true
 systemctl stop block.service >/dev/null 2>&1 || true
 if [ -n "$TARGET_SNAPSHOT" ]; then
   restore_snapshot_file block.env "$CONFIG_FILE"
+  restore_snapshot_chromium_policy
 fi
 if ! install_target_units "$TARGET_RELEASE"; then
   [ -n "$TARGET_SNAPSHOT" ] || fail "target release has no systemd units and no install snapshot"
   restore_snapshot_units
+fi
+if [ -z "$TARGET_SNAPSHOT" ]; then
+  install_target_kiosk_policy "$TARGET_RELEASE" || true
 fi
 systemctl daemon-reload
 set_current_release "$TARGET_RELEASE"

@@ -361,6 +361,8 @@ class AppleBridge {
     signedIn = false;
     session = null;
     bootstrapRequired = false;
+    loginInFlight = false;
+    initialAdminInFlight = false;
     idleTimeoutSeconds = defaultIdleTimeoutSeconds;
     configured = false;
     reconnectDelay = 1000;
@@ -370,6 +372,7 @@ class AppleBridge {
     plcState = "disconnected";
     lastPLCSampleAt = null;
     lastPLCError = "";
+    deferredLiveState = false;
     values = new Map();
     plcDevices = [];
     pendingStartCommand = new StartCommandReceipt();
@@ -400,6 +403,10 @@ class AppleBridge {
         this.bindAccountControls();
         this.bindPLCControls();
         this.bindActivityReporting();
+        window.addEventListener("hmi-soft-keyboard-statechange", () => this.flushDeferredLiveState());
+        document.addEventListener("focusout", () => {
+            window.setTimeout(() => this.flushDeferredLiveState(), 0);
+        });
         this.prepareGuestHMI();
         await this.loadAuthenticationState();
         if (this.demo) {
@@ -582,6 +589,13 @@ class AppleBridge {
             void this.saveSessionPolicy(Number(formValue(policy, "idleTimeoutSeconds")));
         });
     }
+    setAuthSubmitBusy(form, busy) {
+        form.setAttribute("aria-busy", String(busy));
+        const submit = form.querySelector('[type="submit"]');
+        if (submit !== null) {
+            submit.disabled = busy;
+        }
+    }
     bindPasswordVisibilityToggles() {
         document.querySelectorAll("[data-password-toggle]").forEach((toggle) => {
             const inputId = toggle.getAttribute("aria-controls");
@@ -657,7 +671,6 @@ class AppleBridge {
             }
         };
         document.addEventListener("pointerdown", report, { passive: true });
-        document.addEventListener("touchstart", report, { passive: true });
         document.addEventListener("keydown", report);
     }
     async login(username, password) {
@@ -665,6 +678,12 @@ class AppleBridge {
             this.finishLoginAttempt("登录失败");
             return;
         }
+        if (this.loginInFlight) {
+            return;
+        }
+        this.loginInFlight = true;
+        const form = document.querySelector("#login-form");
+        this.setAuthSubmitBusy(form, true);
         try {
             const { response, value } = await this.authRequest("/api/v2/auth/login", "POST", {
                 username: username.trim(), password
@@ -684,6 +703,10 @@ class AppleBridge {
         catch {
             this.finishLoginAttempt("无法连接本机登录服务");
         }
+        finally {
+            this.loginInFlight = false;
+            this.setAuthSubmitBusy(form, false);
+        }
     }
     finishLoginAttempt(message) {
         this.becomeGuest();
@@ -702,10 +725,19 @@ class AppleBridge {
             this.setAuthNotice("请填写管理员用户名和密码");
             return;
         }
+        if (this.initialAdminInFlight) {
+            return;
+        }
+        this.initialAdminInFlight = true;
+        const form = document.querySelector("#initial-admin-form");
+        this.setAuthSubmitBusy(form, true);
         try {
             const { response, value } = await this.authRequest("/api/v2/auth/initial-admin", "POST", {
                 username: normalizedUsername, password, confirmPassword
             });
+            if (this.signedIn) {
+                return;
+            }
             if (response.status === 409) {
                 this.bootstrapRequired = false;
                 this.showLogin("本机管理员已存在，请登录。");
@@ -718,9 +750,14 @@ class AppleBridge {
             }
             this.bootstrapRequired = false;
             this.beginSession(identity);
+            this.emitPageNotice("管理员创建成功");
         }
         catch {
             this.setAuthNotice("无法连接本机登录服务");
+        }
+        finally {
+            this.initialAdminInFlight = false;
+            this.setAuthSubmitBusy(form, false);
         }
     }
     async changePassword(currentPassword, newPassword, confirmPassword) {
@@ -796,7 +833,9 @@ class AppleBridge {
         this.updateAccountControl();
         this.emitPermissionChange();
         this.renderPLCCandidates();
-        this.emitState();
+        if (!this.flushDeferredLiveState()) {
+            this.emitState();
+        }
     }
     logout() {
         this.endAuthenticationKeyboard();
@@ -818,7 +857,9 @@ class AppleBridge {
         this.updateAccountControl();
         this.emitPermissionChange();
         this.renderPLCCandidates();
-        this.emitState();
+        if (!this.flushDeferredLiveState()) {
+            this.emitState();
+        }
         this.deferProductionPolicy();
     }
     openSocket() {
@@ -975,8 +1016,7 @@ class AppleBridge {
             applyAbsoluteValues(this.values, message.values);
             this.revision += 1;
             this.lastPLCSampleAt = latestPointTime(message.values) ?? new Date().toISOString();
-            this.renderPLCReadOnly();
-            this.emitState();
+            this.publishLiveState();
             return;
         }
         if (message.type === "plc.scan.result" && message.success === true && Array.isArray(message.devices)) {
@@ -1007,7 +1047,7 @@ class AppleBridge {
         }
         if (message.success === false) {
             this.lastPLCError = message.error?.message ?? errorText(message.error?.code);
-            this.renderPLCReadOnly();
+            this.publishLiveState();
             this.setAuthNotice(errorText(message.error?.code));
         }
     }
@@ -1188,7 +1228,40 @@ class AppleBridge {
     }
     setPLCStatus(message) {
         document.querySelector("#plc-status").textContent = message;
+        if (this.isUserInputActive()) {
+            this.deferredLiveState = true;
+            return;
+        }
         this.renderPLCReadOnly();
+    }
+    isUserInputActive() {
+        const active = document.activeElement;
+        const authPanel = this.authPanel();
+        const activeInHiddenAuthPanel = authPanel.hidden && authPanel.contains(active);
+        const nativeKeyboardInput = window.HMISoftKeyboard?.getMode() === "native" &&
+            (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
+            !activeInHiddenAuthPanel;
+        return !authPanel.hidden ||
+            window.HMISoftKeyboard?.isOpen() === true ||
+            nativeKeyboardInput;
+    }
+    publishLiveState() {
+        if (this.isUserInputActive()) {
+            this.deferredLiveState = true;
+            return;
+        }
+        this.deferredLiveState = false;
+        this.renderPLCReadOnly();
+        this.emitState();
+    }
+    flushDeferredLiveState() {
+        if (!this.deferredLiveState || this.isUserInputActive()) {
+            return false;
+        }
+        this.deferredLiveState = false;
+        this.renderPLCReadOnly();
+        this.emitState();
+        return true;
     }
     renderPLCReadOnly() {
         const connection = document.querySelector("#plc-connection-value");
@@ -1244,6 +1317,10 @@ class AppleBridge {
         }
     }
     emitState() {
+        if (this.isUserInputActive()) {
+            this.deferredLiveState = true;
+            return;
+        }
         window.dispatchEvent(new Event("block-hmi-state"));
     }
     deferProductionPolicy() {

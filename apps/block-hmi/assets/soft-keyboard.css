@@ -177,13 +177,11 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   border: 1px solid var(--keyboard-panel-border);
   border-radius: 28px;
   background: var(--keyboard-panel);
-  box-shadow:
-    0 26px 64px var(--keyboard-shadow),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  box-shadow: none;
   opacity: 0;
   transform: translateY(-50%) scale(0.98);
   transform-origin: right center;
-  transition: opacity 150ms ease, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: none;
 }
 
 .soft-keyboard-dock[hidden] {
@@ -289,21 +287,19 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   border-bottom-color: rgba(29, 29, 31, 0.18);
   border-radius: 15px;
   background: var(--keyboard-key);
-  box-shadow:
-    0 5px 12px rgba(73, 89, 111, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  box-shadow: none;
   cursor: pointer;
   font-family: inherit;
   font-size: 20px;
   font-weight: 650;
-  transition: transform 80ms ease, background 100ms ease, box-shadow 100ms ease;
+  transition: none;
 }
 
 .hmi-simple-keyboard.hg-theme-default .hg-button:active,
 .hmi-simple-keyboard.hg-theme-default .hg-button.hg-activeButton {
   background: rgba(0, 113, 227, 0.14);
-  box-shadow: inset 0 2px 5px rgba(29, 29, 31, 0.08);
-  transform: scale(0.96);
+  box-shadow: none;
+  transform: none;
 }
 
 .hmi-simple-keyboard .hg-button.hg-function-key {
@@ -335,7 +331,7 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 .hmi-simple-keyboard .hg-button[data-skbtn="{shift}"].is-shift-active {
   color: #fff;
   background: var(--blue);
-  box-shadow: inset 0 2px 5px rgba(29, 29, 31, 0.16);
+  box-shadow: none;
 }
 
 .hmi-simple-keyboard .hg-button.hg-button-done {

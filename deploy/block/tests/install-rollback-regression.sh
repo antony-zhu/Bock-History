@@ -115,6 +115,7 @@ rewrite_fixture_paths() {
       -e "s|/var/lib/block-release|$placeholder|g" \
       -e "s|/var/lib/block|$TEST_ROOT/var/lib/block|g" \
       -e "s|$placeholder|$TEST_ROOT/var/lib/block-release|g" \
+      -e "s|/etc/chromium-browser|$TEST_ROOT/etc/chromium-browser|g" \
       -e "s|/etc/systemd/system|$TEST_ROOT/etc/systemd/system|g" \
       -e "s|/etc/block|$TEST_ROOT/etc/block|g" \
       -e "s|/opt/block|$TEST_ROOT/opt/block|g" \
@@ -186,11 +187,12 @@ rewrite_fixture_paths
 make_mock_commands "$TEST_ROOT/mock-bin"
 make_tls_material
 
-mkdir -p "$TEST_ROOT/opt/block/releases" "$TEST_ROOT/etc/systemd/system" "$TEST_ROOT/etc/block" "$TEST_ROOT/var/lib/block-release"
+mkdir -p "$TEST_ROOT/opt/block/releases" "$TEST_ROOT/etc/chromium-browser/policies/managed" "$TEST_ROOT/etc/systemd/system" "$TEST_ROOT/etc/block" "$TEST_ROOT/var/lib/block-release"
 write_legacy_http_release old old
 ln -s "$TEST_ROOT/opt/block/releases/old" "$TEST_ROOT/opt/block/current"
 printf '%s\n' old-unit > "$TEST_ROOT/etc/systemd/system/block.service"
 printf '%s\n' old-kiosk-unit > "$TEST_ROOT/etc/systemd/system/block-kiosk.service"
+printf '%s\n' old-kiosk-policy > "$TEST_ROOT/etc/chromium-browser/policies/managed/block-kiosk.json"
 printf '%s\n' 'BLOCK_LOCAL_HTTP_ADDRESS=127.0.0.1:8080' > "$TEST_ROOT/etc/block/block.env"
 printf '%s\n' /prior/release > "$TEST_ROOT/var/lib/block-release/previous-release"
 printf '%s\n' old > "$TEST_ROOT/var/lib/block-release/current-version"
@@ -222,6 +224,7 @@ fi
 [ "$(readlink -f "$TEST_ROOT/opt/block/current")" = "$TEST_ROOT/opt/block/releases/old" ] || fail "automatic rollback did not restore current release"
 [ "$(cat "$TEST_ROOT/etc/systemd/system/block.service")" = old-unit ] || fail "automatic rollback did not restore Block unit"
 [ "$(cat "$TEST_ROOT/etc/systemd/system/block-kiosk.service")" = old-kiosk-unit ] || fail "automatic rollback did not restore kiosk unit"
+[ "$(cat "$TEST_ROOT/etc/chromium-browser/policies/managed/block-kiosk.json")" = old-kiosk-policy ] || fail "automatic rollback did not restore Chromium kiosk policy"
 [ "$(cat "$TEST_ROOT/etc/block/block.env")" = 'BLOCK_LOCAL_HTTP_ADDRESS=127.0.0.1:8080' ] || fail "automatic rollback did not restore old config"
 [ "$(cat "$TEST_ROOT/var/lib/block-release/previous-release")" = /prior/release ] || fail "automatic rollback did not restore previous-release"
 if [ ! -f "$TEST_ROOT/old-health" ]; then
@@ -237,9 +240,10 @@ write_candidate_artifact new-success
 for tool in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh tests/deploy-regression.sh tests/install-rollback-regression.sh; do
   [ -x "$TEST_ROOT/opt/block/releases/new-success/deploy/$tool" ] || fail "successful release is missing deploy tool: $tool"
 done
-for file in README.md config/block.env.example systemd/block.service systemd/block-kiosk.service; do
+for file in README.md chromium/block-kiosk.json config/block.env.example systemd/block.service systemd/block-kiosk.service; do
   [ -f "$TEST_ROOT/opt/block/releases/new-success/deploy/$file" ] || fail "successful release is missing deploy file: $file"
 done
+[ -f "$TEST_ROOT/etc/chromium-browser/policies/managed/block-kiosk.json" ] || fail "successful candidate install did not install Chromium kiosk policy"
 [ ! -e "$TEST_ROOT/legacy-installer-used" ] || fail "successful candidate install invoked the legacy current installer"
 
 write_legacy_http_release no-snapshot no-snapshot
@@ -264,6 +268,7 @@ rm -f "$TEST_ROOT/old-health"
 [ "$(readlink -f "$TEST_ROOT/opt/block/current")" = "$TEST_ROOT/opt/block/releases/old" ] || fail "manual rollback did not restore current release"
 [ "$(cat "$TEST_ROOT/etc/systemd/system/block.service")" = 'old block unit' ] || fail "manual rollback did not install target Block unit"
 [ "$(cat "$TEST_ROOT/etc/systemd/system/block-kiosk.service")" = 'old kiosk unit' ] || fail "manual rollback did not install target kiosk unit"
+[ "$(cat "$TEST_ROOT/etc/chromium-browser/policies/managed/block-kiosk.json")" = old-kiosk-policy ] || fail "manual rollback did not restore target Chromium kiosk policy"
 [ "$(cat "$TEST_ROOT/etc/block/block.env")" = 'BLOCK_LOCAL_HTTP_ADDRESS=127.0.0.1:8080' ] || fail "manual rollback did not restore target config snapshot"
 [ -f "$TEST_ROOT/old-health" ] || fail "manual rollback passed unsupported options to old health check"
 

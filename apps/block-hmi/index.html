@@ -4062,7 +4062,7 @@
     }
   </style>
   <link rel="stylesheet" href="assets/vendor/simple-keyboard/index.css">
-  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260807.5">
+  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260807.6">
 </head>
 <body>
   <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" hidden>
@@ -4071,15 +4071,15 @@
       <p class="auth-notice" id="authNotice" role="status" aria-live="polite"></p>
 
       <section id="authLogin" hidden>
-        <form class="auth-form" id="login-form" data-soft-submit="authentication" novalidate>
+        <form class="auth-form" id="login-form" data-soft-submit="authentication" autocomplete="off" novalidate>
           <div class="auth-field">
             <label for="login-username">用户名：</label>
-            <input id="login-username" name="username" maxlength="128" autocomplete="username" required data-soft-keyboard="full" data-soft-label="登录用户名">
+            <input id="login-username" name="username" maxlength="128" autocomplete="off" required data-soft-keyboard="full" data-soft-label="登录用户名">
           </div>
           <div class="auth-field">
             <label for="login-password">密码：</label>
             <span class="password-field">
-              <input id="login-password" name="password" type="password" maxlength="4096" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="登录密码">
+              <input id="login-password" name="password" type="password" maxlength="4096" autocomplete="off" required data-soft-keyboard="full" data-soft-label="登录密码">
               <button class="password-visibility-toggle" type="button" aria-controls="login-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
@@ -4088,22 +4088,22 @@
       </section>
 
       <section id="authBootstrap" hidden>
-        <form class="auth-form" id="initial-admin-form" data-soft-submit="authentication" novalidate>
+        <form class="auth-form" id="initial-admin-form" data-soft-submit="authentication" autocomplete="off" novalidate>
           <div class="auth-field">
             <label for="initial-admin-username">用户名：</label>
-            <input id="initial-admin-username" name="username" value="admin" maxlength="128" autocomplete="username" required data-soft-keyboard="full" data-soft-label="管理员用户名">
+            <input id="initial-admin-username" name="username" value="admin" maxlength="128" autocomplete="off" required data-soft-keyboard="full" data-soft-label="管理员用户名">
           </div>
           <div class="auth-field">
             <label for="initial-admin-password">密码：</label>
             <span class="password-field">
-              <input id="initial-admin-password" name="password" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="管理员密码">
+              <input id="initial-admin-password" name="password" type="password" maxlength="4096" autocomplete="off" required data-soft-keyboard="full" data-soft-label="管理员密码">
               <button class="password-visibility-toggle" type="button" aria-controls="initial-admin-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
           <div class="auth-field">
             <label for="initial-admin-confirm-password">确认密码：</label>
             <span class="password-field">
-              <input id="initial-admin-confirm-password" name="confirmPassword" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认管理员密码">
+              <input id="initial-admin-confirm-password" name="confirmPassword" type="password" maxlength="4096" autocomplete="off" required data-soft-keyboard="full" data-soft-label="确认管理员密码">
               <button class="password-visibility-toggle" type="button" aria-controls="initial-admin-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
@@ -4409,7 +4409,7 @@
                 <header class="maintenance-panel-head"><span>02</span><div><h2>Wi-Fi</h2><p id="wifiConnectionSummary">正在读取本机连接状态</p></div></header>
                 <form class="settings-form maintenance-form" id="wifiSettingsForm">
                   <div class="settings-row single-field"><label for="wifiSsidInput">Wi-Fi 名称：</label><input id="wifiSsidInput" name="ssid" type="text" autocomplete="off" required data-soft-keyboard="full" data-soft-label="Wi-Fi 名称"></div>
-                  <div class="settings-row single-field"><label for="wifiPasswordInput">Wi-Fi 密码：</label><span class="password-field"><input id="wifiPasswordInput" name="password" type="password" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="Wi-Fi 密码" aria-describedby="wifiPasswordHint"><button class="password-visibility-toggle" type="button" aria-controls="wifiPasswordInput" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                  <div class="settings-row single-field"><label for="wifiPasswordInput">Wi-Fi 密码：</label><span class="password-field"><input id="wifiPasswordInput" name="password" type="password" autocomplete="off" required data-soft-keyboard="full" data-soft-label="Wi-Fi 密码" aria-describedby="wifiPasswordHint"><button class="password-visibility-toggle" type="button" aria-controls="wifiPasswordInput" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
                   <dl class="connection-facts" aria-label="Wi-Fi 与 BDM 当前状态">
                     <div><dt>网卡</dt><dd id="wifiInterfaceValue">—</dd></div>
                     <div><dt>本机 IP</dt><dd id="wifiIpv4Value">—</dd></div>
@@ -4446,9 +4446,9 @@
                 <section id="authAccount">
                   <div class="auth-account-head"><strong>本机账户</strong></div>
                   <form class="auth-form" id="password-form">
-                    <div class="auth-field"><label for="maintenance-current-password">当前密码</label><span class="password-field"><input id="maintenance-current-password" name="currentPassword" type="password" maxlength="4096" autocomplete="current-password" required data-soft-keyboard="full" data-soft-label="当前密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-current-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
-                    <div class="auth-field"><label for="maintenance-new-password">新密码</label><span class="password-field"><input id="maintenance-new-password" name="newPassword" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-new-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
-                    <div class="auth-field"><label for="maintenance-confirm-password">确认新密码</label><span class="password-field"><input id="maintenance-confirm-password" name="confirmPassword" type="password" maxlength="4096" autocomplete="new-password" required data-soft-keyboard="full" data-soft-label="确认新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                    <div class="auth-field"><label for="maintenance-current-password">当前密码</label><span class="password-field"><input id="maintenance-current-password" name="currentPassword" type="password" maxlength="4096" autocomplete="off" required data-soft-keyboard="full" data-soft-label="当前密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-current-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                    <div class="auth-field"><label for="maintenance-new-password">新密码</label><span class="password-field"><input id="maintenance-new-password" name="newPassword" type="password" maxlength="4096" autocomplete="off" required data-soft-keyboard="full" data-soft-label="新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-new-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                    <div class="auth-field"><label for="maintenance-confirm-password">确认新密码</label><span class="password-field"><input id="maintenance-confirm-password" name="confirmPassword" type="password" maxlength="4096" autocomplete="off" required data-soft-keyboard="full" data-soft-label="确认新密码"><button class="password-visibility-toggle" type="button" aria-controls="maintenance-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
                     <button type="submit">修改密码</button>
                   </form>
                   <form class="auth-form auth-policy" id="session-policy-form"><label>不活动退出（秒）<input name="idleTimeoutSeconds" type="number" value="300" min="60" step="60" inputmode="numeric" required data-soft-keyboard="numeric" data-soft-label="不活动退出秒数"></label><button type="submit">保存会话时长</button></form>
@@ -4544,9 +4544,9 @@
   </aside>
 
   <script src="assets/vendor/simple-keyboard/index.js"></script>
-  <script src="assets/soft-keyboard.js?v=20260807.5"></script>
+  <script src="assets/soft-keyboard.js?v=20260807.6"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260807.5").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260807.6").then(function (module) {
       return module.installHMIBackend();
     });
       window.HMIBackend = {
@@ -4668,6 +4668,7 @@
       let backendReadInFlight = false;
       let backendWriteInFlight = false;
       let backendPollTimer = 0;
+      let deferredServerRender = false;
       let settingsDirty = false;
       const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
       const demoMaintenance = {
@@ -4852,14 +4853,39 @@
         if (!Array.isArray(state.alarms)) state.alarms = [];
         if (!Array.isArray(state.history)) state.history = [];
 
-        renderAll();
-        if (nextState.updatedAt) {
-          const updatedAt = new Date(nextState.updatedAt);
-          if (!Number.isNaN(updatedAt.getTime())) {
-            $("#dataFreshness").textContent = `数据刷新：${formatClockTime(updatedAt)}`;
-          }
+        if (inputInteractionActive()) {
+          deferredServerRender = true;
+          return true;
         }
+        renderAll();
+        renderDataFreshness(nextState.updatedAt);
         return true;
+      }
+
+      function inputInteractionActive() {
+        const active = document.activeElement;
+        const authPanel = $("#auth-panel");
+        const activeInHiddenAuthPanel = authPanel.hidden && authPanel.contains(active);
+        const nativeKeyboardInput = window.HMISoftKeyboard && window.HMISoftKeyboard.getMode() === "native" &&
+          (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && !activeInHiddenAuthPanel;
+        return !authPanel.hidden ||
+          Boolean(window.HMISoftKeyboard && window.HMISoftKeyboard.isOpen()) ||
+          nativeKeyboardInput;
+      }
+
+      function renderDataFreshness(value) {
+        if (!value) return;
+        const updatedAt = new Date(value);
+        if (!Number.isNaN(updatedAt.getTime())) {
+          $("#dataFreshness").textContent = `数据刷新：${formatClockTime(updatedAt)}`;
+        }
+      }
+
+      function flushDeferredServerRender() {
+        if (!deferredServerRender || inputInteractionActive()) return;
+        deferredServerRender = false;
+        renderAll();
+        renderDataFreshness(state.updatedAt);
       }
 
       function backendErrorMessage(error) {
@@ -5609,21 +5635,13 @@
         document.body.classList.remove("portrait-allowed");
         fitStage();
       });
+      document.addEventListener("contextmenu", event => event.preventDefault());
       window.addEventListener("keydown", event => {
         if (window.HMISoftKeyboard && window.HMISoftKeyboard.isOpen()) return;
         if (event.key === "Escape" && !themeMenu.hidden) {
           setThemeMenu(false);
           themeToggle.focus();
           return;
-        }
-        if (event.key.toLowerCase() === "f" && !event.target.matches("input")) {
-          if (document.fullscreenElement) {
-            if (document.exitFullscreen) document.exitFullscreen();
-          } else {
-            if (document.documentElement.requestFullscreen) {
-              document.documentElement.requestFullscreen();
-            }
-          }
         }
         if (event.key >= "1" && event.key <= "5" && !event.target.matches("input")) {
           switchPage(["home", "data", "maintenance", "alarm", "history"][Number(event.key) - 1]);
@@ -5654,6 +5672,12 @@
         refreshBackendState({ announceRecovery: true }).then(() => {
           scheduleBackendRefresh(backendConnected ? 2000 : 5000);
         });
+      });
+      document.addEventListener("focusout", () => {
+        window.setTimeout(flushDeferredServerRender, 0);
+      });
+      window.addEventListener("hmi-soft-keyboard-statechange", () => {
+        window.setTimeout(flushDeferredServerRender, 0);
       });
       window.addEventListener("block-hmi-state", () => {
         void refreshBackendState();

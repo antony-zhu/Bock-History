@@ -74,7 +74,7 @@ deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
 bin/block-agent
 web/index.html
 web/assets/points.json
-deploy/install.sh、rollback.sh、health-check.sh、systemd unit、配置示例及其引用的 helper/test
+deploy/chromium/block-kiosk.json、deploy/install.sh、rollback.sh、health-check.sh、systemd unit、配置示例及其引用的 helper/test
 VERSION
 ```
 
@@ -528,3 +528,22 @@ release 目录，直到设备管理员按留存策略确认可以清理。
 安装器回滚、严格 TLS 或 WSS 验收失败、端口变化、账号/idle/bootstrap 状态变化，或
 Chromium 不是已证实的 `NET::ERR_CERT_AUTHORITY_INVALID`，均为 STOP 条件。保留证据、
 恢复既有服务状态，并在新的授权与明确故障原因前不重试。
+
+## 10. 2026-08-07 Kiosk 原生界面与输入响应验收
+
+`deploy/chromium/block-kiosk.json` 是随 release 版本化的 Chromium 受管策略。安装器会把它写入
+`/etc/chromium-browser/policies/managed/block-kiosk.json`，并将安装前的该文件纳入事务快照；自动或手工
+回滚时恢复对应快照。策略关闭密码保存、地址/银行卡自动填充和翻译，并拒绝默认弹窗、通知、定位与媒体权限。
+Kiosk unit 仅使用 `--no-default-browser-check`、`--noerrdialogs`、`--deny-permission-prompts` 等受控参数，保持
+`https://127.0.0.1:8444/?performance=1` 的严格 TLS；禁止加入 `--ignore-certificate-errors`、
+`--allow-insecure-localhost`、`--disable-web-security` 或任何绕过本机 CA 校验的参数。
+
+HMI 不再请求浏览器全屏、右键菜单或 `alert`/`confirm`/`prompt` 原生对话框。首次管理员创建采用单飞请求：
+接口成功返回 `201` 后直接建立前端内存会话，不再回跳登录或重复调用登录接口。软键盘或认证输入期间，PLC/WSS
+与本机后端轮询继续接收最新数据，但合并延后全页渲染；关闭软键盘或离开输入后仅刷新一次最新状态。该取舍以
+“操作响应优先于装饰效果”为准，不改变 PLC 采集和本地自治。
+
+设备管理员在真实 Kiosk 屏幕完成常规 HTTPS/WSS 验收后，还应确认：无首次运行、保存密码、自动填充、翻译、
+权限或浏览器错误提示；首个管理员提交后一次进入会话；连续软键盘输入无明显卡顿，关闭键盘后页面数据保持最新。
+候选制品仍按第 2 节生成并校验 `$CACHE_ROOT/artifact.sha256`，发布报告同时记录版本、该 manifest 的 SHA-256 与
+`artifact/bin/block-agent` 的 SHA-256；不得记录密码、私钥或真实 Wi-Fi 配置。

@@ -46,7 +46,6 @@ assert.deepEqual(renewFrontendSession({
 }, 300, 200), {
   username: "admin", role: "ADMIN", permissions: { operate: true, maintenance: true }, expiresAt: 300200
 });
-
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=bootstrap"), "bootstrap");
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=login"), "login");
 assert.equal(demoAuthPreviewFromSearch("?demo=1"), null);
@@ -119,6 +118,14 @@ assert.match(source, /private moveLocalAdministrationToMaintenance\(\): void/);
 assert.match(source, /private bindPasswordVisibilityToggles\(\): void/);
 assert.match(source, /toggle\.addEventListener\("pointerdown", \(event\) => event\.preventDefault\(\)\)/);
 assert.match(source, /input\.type = input\.type === "password" \? "text" : "password";/);
+const loginAttempt = source.match(/private async login\(username: string, password: string\): Promise<void> \{[\s\S]*?\n  \}\n\n  private finishLoginAttempt/);
+assert.notEqual(loginAttempt, null);
+assert.match(loginAttempt[0], /if \(this\.loginInFlight\) \{\s*return;\s*\}[\s\S]*?this\.loginInFlight = true;[\s\S]*?this\.setAuthSubmitBusy\(form, true\);[\s\S]*?finally \{[\s\S]*?this\.loginInFlight = false;[\s\S]*?this\.setAuthSubmitBusy\(form, false\);/);
+const bootstrapAttempt = source.match(/private async createInitialAdmin\(username: string, password: string, confirmPassword: string\): Promise<void> \{[\s\S]*?\n  \}\n\n  private async changePassword/);
+assert.notEqual(bootstrapAttempt, null);
+assert.match(bootstrapAttempt[0], /if \(this\.initialAdminInFlight\) \{\s*return;\s*\}[\s\S]*?this\.initialAdminInFlight = true;[\s\S]*?this\.setAuthSubmitBusy\(form, true\);/);
+assert.match(bootstrapAttempt[0], /this\.beginSession\(identity\);\s*this\.emitPageNotice\("管理员创建成功"\);/);
+assert.doesNotMatch(bootstrapAttempt[0], /authRequest\("\/api\/v2\/auth\/login"/);
 const authKeyboardOpen = source.match(/private openAuthWithKeyboard\(screen: AuthScreen, message = ""\): void \{[\s\S]*?\n  \}\n\n  private showLogin/);
 assert.notEqual(authKeyboardOpen, null);
 assert.match(authKeyboardOpen[0], /const keyboard = window\.HMISoftKeyboard;[\s\S]*?keyboard\?\.init\(\);/);
@@ -151,7 +158,7 @@ assert.doesNotMatch(source, /\/api\/v2\/auth\/(activity|logout)/);
 assert.match(source, /private refreshFrontendSession\(\): boolean \{[\s\S]*?renewFrontendSession\(this\.session, this\.idleTimeoutSeconds\)[\s\S]*?this\.becomeGuest\(\)/);
 assert.match(source, /const report = \(\) => \{[\s\S]*?if \(!this\.refreshFrontendSession\(\)\) \{[\s\S]*?return;/);
 assert.match(source, /document\.addEventListener\("pointerdown", report/);
-assert.match(source, /document\.addEventListener\("touchstart", report/);
+assert.doesNotMatch(source, /document\.addEventListener\("touchstart", report/);
 assert.match(source, /document\.addEventListener\("keydown", report\)/);
 assert.doesNotMatch(source, /event\.code === 4401/);
 assert.match(source, /new WebSocket\(websocketURL\(\)\)/);
@@ -187,9 +194,9 @@ assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]
 assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
 assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", state\.mode === "manual"\);/);
 for (const asset of [
-  'assets/soft-keyboard.css?v=20260807.5',
-  'assets/soft-keyboard.js?v=20260807.5',
-  './assets/hmi.mjs?v=20260807.5'
+  'assets/soft-keyboard.css?v=20260807.6',
+  'assets/soft-keyboard.js?v=20260807.6',
+  './assets/hmi.mjs?v=20260807.6'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
 }
@@ -229,6 +236,19 @@ assert.match(keyboardSource, /var shiftIcon = '<svg[\s\S]*?var backspaceIcon = '
 assert.match(keyboardSource, /value: "切换大小写"[\s\S]*?value: "退格"/);
 assert.match(keyboardSource, /function isAuthenticationInput\(input\) \{[\s\S]*?data-soft-submit/);
 assert.match(keyboardSource, /function validateInput\(input, focusOnError\) \{[\s\S]*?isAuthenticationInput\(input\)/);
+assert.match(keyboardSource, /function syncActiveValue\(value, emitInput\) \{[\s\S]*?if \(activeInput\.value !== nextValue\) activeInput\.value = nextValue;[\s\S]*?clearError\(activeInput\);/);
+assert.match(keyboardSource, /function clearError\(input\) \{[\s\S]*?input\.hasAttribute\("aria-invalid"\)[\s\S]*?validationLine\.textContent !== ""/);
+assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: true \}/);
+assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: false \}/);
+assert.match(keyboardCSS, /\.soft-keyboard-dock \{[\s\S]*?box-shadow: none;[\s\S]*?transition: none;/);
+assert.match(keyboardCSS, /\.hmi-simple-keyboard\.hg-theme-default \.hg-button \{[\s\S]*?box-shadow: none;[\s\S]*?transition: none;/);
+assert.match(source, /private publishLiveState\(\): void \{[\s\S]*?this\.isUserInputActive\(\)[\s\S]*?this\.deferredLiveState = true;/);
+assert.match(source, /message\.type === "points\.changed"[\s\S]*?this\.publishLiveState\(\);/);
+assert.match(index, /function applyServerState\(nextState, options = \{\}\) \{[\s\S]*?if \(inputInteractionActive\(\)\) \{[\s\S]*?deferredServerRender = true;[\s\S]*?return true;[\s\S]*?renderAll\(\);/);
+assert.match(index, /window\.addEventListener\("hmi-soft-keyboard-statechange", \(\) => \{[\s\S]*?flushDeferredServerRender/);
+assert.match(index, /document\.addEventListener\("contextmenu", event => event\.preventDefault\(\)\);/);
+assert.doesNotMatch(index, /requestFullscreen|exitFullscreen|\balert\(|\bconfirm\(|\bprompt\(/);
+assert.doesNotMatch(source + keyboardSource, /\balert\(|\bconfirm\(|\bprompt\(/);
 assert.match(source, /const maintenance = document\.querySelector<HTMLElement>\("#accountSettingsPanel"\)!;/);
 assert.match(source, /private renderPLCReadOnly\(\): void/);
 assert.equal(existsSync(new URL("./machine-bin.png", import.meta.url)), true);
