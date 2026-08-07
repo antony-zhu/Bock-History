@@ -1,12 +1,20 @@
-# Block v2 真机发布与回滚
+# Block v2 真机发布
 
-本文件是 Block 的唯一正式真机发布流程。每次安装（包括首次迁移）必须从受控暂存的
+本文件是 Block 的唯一真机发布流程。当前默认采用开发阶段流程；生产阶段恢复要求在
+明确进入生产阶段后再启用。每次安装（包括首次迁移）必须从受控暂存的
 候选制品执行 `artifact/deploy/install.sh`；绝不调用 `/opt/block/current/deploy/install.sh`
-升级。安装成功后，该候选的同一份流程会随 release 复制到 `current/deploy/`，仅用于
-验收或后续手工回滚。不要另建手工发布流程、第二个 systemd 服务或临时发布工具。
+升级。安装成功后，该候选的同一份流程会随 release 复制到 `current/deploy/`。不要另建
+手工发布流程、第二个 systemd 服务或临时发布工具。
 
 本流程只发布 Block runtime 和本地 HMI，不配置 Wi-Fi、BDM、PLC 点位或 PLC
 控制逻辑。整个发布过程不得向 PLC 写入任何值。
+
+### 2026-08-08 开发阶段策略记录
+
+自 2026-08-08 起，开发阶段发布不要求程序可恢复：普通程序发布不备份旧程序或
+数据库，失败后修复并重新安装。只有删除账号、数据库迁移或直接修改业务数据等
+破坏性数据库写操作，才在首次写入前备份数据库一次。生产备份与回滚要求待明确进入
+生产阶段后另行启用；本记录不代表执行了一次新发布。
 
 ## 1. 发布边界与身份
 
@@ -55,11 +63,11 @@ export TMPDIR="$CACHE_ROOT/tmp"
 export GOTMPDIR="$CACHE_ROOT/go-tmp"
 ```
 
-运行仓库已有的发布回归检查并生成不可变制品。`build.sh` 要求制品目录尚不存在。
+生成不可变制品。开发阶段可运行仓库已有的发布回归检查，但 rollback/transaction
+相关测试不是发布前置门禁。`build.sh` 要求制品目录尚不存在。
 
 ```bash
 cd "$BLOCK_REPO"
-deploy/block/tests/deploy-regression.sh
 deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
 
 (
@@ -74,7 +82,7 @@ deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
 bin/block-agent
 web/index.html
 web/assets/points.json
-deploy/chromium/block-kiosk.json、deploy/install.sh、rollback.sh、health-check.sh、systemd unit、配置示例及其引用的 helper/test
+deploy/chromium/block-kiosk.json、deploy/install.sh、health-check.sh、systemd unit、配置示例及其引用的必要 helper
 VERSION
 ```
 
@@ -95,14 +103,14 @@ tar --format=posix -czf artifact.tar.gz artifact artifact.sha256
 tar -tzf artifact.tar.gz >/dev/null
 ```
 
-## 3. 真机只读盘点与备份
+## 3. 开发阶段默认流程：真机只读盘点与数据备份边界
 
 只有设备管理员在已批准的固定安装身份下才能进入本节。先创建一个发布记录，
 随后所有命令均在目标机执行。先做只读盘点；身份、当前版本或服务状态有任何一
 项与发布单不符时立即 STOP，不传输、不安装、不重启。
 
 在目标机的同一个 shell 中重新设置发布版本。此值必须与第 2 节已构建并签核的
-`VERSION` 完全一致，后续备份、暂存、安装和验收命令都使用它。
+`VERSION` 完全一致，后续暂存、安装和验收命令都使用它。
 
 ```bash
 VERSION='<approved-version>'
@@ -140,42 +148,41 @@ sudo awk -F= \
 文件的存在状态，绝不读取或输出其内容。PLC endpoint 与点位在本步骤只读，不得
 扫描写入或下发控制。
 
-在任何设备写入前，创建 root 独占的备份目录：
+创建 root 独占的发布证据目录，用于保存安装前后状态摘要；它不是程序或数据库备份：
 
 ```bash
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-BACKUP="/var/backups/block/pre-$VERSION-$STAMP"
+BACKUP="/var/backups/block/evidence-$VERSION-$STAMP"
 sudo install -d -o root -g root -m 0700 "$BACKUP"
 sudo stat -c '%U:%G:%a %n' "$BACKUP"
 
-# 保存 current/previous、两个 unit、受保护配置和维护端口基线；不显示配置内容。
-sudo cp -a --no-dereference /opt/block/current "$BACKUP/current-link"
-sudo cp -a -- "$(sudo readlink -f /opt/block/current)" "$BACKUP/current-release"
-sudo cp -a -- /var/lib/block-release/current-version \
-  /var/lib/block-release/previous-release "$BACKUP/"
-sudo cp -a -- /etc/systemd/system/block.service \
-  /etc/systemd/system/block-kiosk.service /etc/block/block.env "$BACKUP/"
+# 只记录摘要，不复制旧二进制、release、unit 或受保护配置。
+sudo readlink -f /opt/block/current | sudo tee "$BACKUP/current.before" >/dev/null
+sudo cat /var/lib/block-release/current-version | \
+  sudo tee "$BACKUP/current-version.before" >/dev/null
+sudo cat /var/lib/block-release/previous-release | \
+  sudo tee "$BACKUP/previous-release.before" >/dev/null
 for SERVICE in block.service block-kiosk.service ssh-bootstrapd.service; do
   sudo systemctl is-active "$SERVICE" | sudo tee "$BACKUP/$SERVICE.before" >/dev/null || true
 done
 sudo ss -ltnH | awk '$4 ~ /:(8443|9443)$/ { print $1, $4 }' | sort | \
   sudo tee "$BACKUP/maintenance-listeners.before" >/dev/null
+sudo sqlite3 -noheader /var/lib/block/block.db \
+  'PRAGMA integrity_check; SELECT username || "|" || role FROM local_accounts ORDER BY username; SELECT "idle=" || idle_timeout_seconds FROM local_system_settings WHERE singleton_id = 1;' | \
+  sudo tee "$BACKUP/auth-before.txt" >/dev/null
+sudo grep -Fxq ok "$BACKUP/auth-before.txt"
 ```
 
-备份至少包含下列内容，并在发布记录中写明每一项的源路径和备份路径：
+当前开发阶段不要求程序可恢复。普通 runtime 或 HMI 发布不要求为程序回退复制旧二进制、
+release、unit、配置或 Chromium profile，也不备份 SQLite；发布失败时先定位和修复问题，
+重新构建并取得新的设备写入授权后再安装。
 
-| 备份对象 | 要求 |
-| --- | --- |
-| 当前 release | 记录 `/opt/block/current` 的链接值、解析后的 release 路径、`/var/lib/block-release/current-version` 与 `previous-release`。 |
-| 配置与 unit | 备份 `/etc/block/block.env`、`block.service` 和 `block-kiosk.service`；配置文件不得复制到工作区或报告。 |
-| SQLite | 使用 SQLite 的一致性备份，并对备份执行 `PRAGMA integrity_check`。SQLite 备份不以普通运行中文件复制替代。 |
-| Chromium profile、cache 与 NSS 信任库 | 分别备份 `/home/block-ui/.config/chromium`、`/home/block-ui/.cache/chromium` 和（如存在）`/home/block-ui/.pki/nssdb`。必须复制符号链接本身，不能解引用。 |
-| 现场状态 | 记录 BDM/Wi-Fi 文件存在性与 PLC endpoint 状态，不复制 Wi-Fi 内容，也不写 PLC。 |
-
-设备自带 Python 3.6，不能假定存在 `sqlite3.Connection.backup`。本次和后续发布均
-使用短暂停机冷备：先停止 kiosk、再停止 Block，复制 SQLite，运行完整性检查，随后
-**先恢复旧 Block、再恢复旧 kiosk**，确认恢复后才可进入制品暂存。不要为了备份安装
-Python 包或其他工具。
+只有删除账号、数据库迁移、直接修改业务数据等破坏性数据库写操作，才在首次数据库
+写入前创建一次 SQLite 一致性备份，并执行 `PRAGMA integrity_check`。同一任务后续步骤
+共用这份备份，不得按发布步骤重复备份；只有该备份之后又发生独立的数据迁移，才创建
+新的数据库备份。设备自带 Python 3.6，不能假定存在 `sqlite3.Connection.backup`；需要
+备份时使用下面的短暂停机冷备，不为此安装 Python 包或其他工具。若当前任务只是程序
+发布，跳过下面的数据库备份命令：
 
 ```bash
 DB=/var/lib/block/block.db
@@ -187,33 +194,14 @@ if ! sudo cp -a -- "$DB" "$BACKUP/block.db" || \
   sudo systemctl start block-kiosk.service
   exit 1
 fi
-sudo sqlite3 -noheader "$BACKUP/block.db" \
-  'SELECT username || "|" || role FROM local_accounts ORDER BY username; SELECT "idle=" || idle_timeout_seconds FROM local_system_settings WHERE singleton_id = 1;' | \
-  sudo tee "$BACKUP/auth-before.txt" >/dev/null
 sudo systemctl start block.service
 sudo systemctl is-active --quiet block.service
 sudo systemctl start block-kiosk.service
 sudo systemctl is-active --quiet block-kiosk.service
 ```
 
-Chromium 目录中可能有悬空 `Singleton*` 符号链接。使用 `cp -a --no-dereference`
-（或等价的保留符号链接方式）备份，并用 `find -P` 检查；不得用会解引用链接的
-递归 diff 作为备份有效性判断。例如：
-
-```bash
-sudo cp -a --no-dereference -- \
-  /home/block-ui/.config/chromium "$BACKUP/chromium-config"
-sudo cp -a --no-dereference -- \
-  /home/block-ui/.cache/chromium "$BACKUP/chromium-cache"
-if sudo test -e /home/block-ui/.pki/nssdb; then
-  sudo cp -a --no-dereference -- \
-    /home/block-ui/.pki/nssdb "$BACKUP/block-ui-nssdb"
-fi
-sudo find -P "$BACKUP" -type l -ls
-```
-
-备份未完整、权限不是 `root:root 0700`、SQLite 检查失败或 Chromium profile 复制
-失败时立即 STOP。不得以删除 profile、重建账户或跳过备份继续发布。
+破坏性数据库写操作所需的备份目录权限不是 `root:root 0700`、复制失败或完整性检查
+失败时立即 STOP，不得执行该数据库写操作。普通程序发布不受此备份门禁约束。
 
 ## 4. 制品暂存与安装
 
@@ -234,16 +222,14 @@ sudo test -x "$STAGE/artifact/bin/block-agent"
 sudo test -f "$STAGE/artifact/web/index.html"
 sudo test -f "$STAGE/artifact/web/assets/points.json"
 sudo test -x "$STAGE/artifact/deploy/install.sh"
-sudo test -x "$STAGE/artifact/deploy/rollback.sh"
 sudo test -x "$STAGE/artifact/deploy/health-check.sh"
 sudo test -f "$STAGE/artifact/deploy/systemd/block.service"
 sudo test -f "$STAGE/artifact/deploy/systemd/block-kiosk.service"
 sudo test -f "$STAGE/artifact/deploy/config/block.env.example"
 for SCRIPT in \
-  deploy/install.sh deploy/rollback.sh deploy/health-check.sh \
+  deploy/install.sh deploy/health-check.sh \
   deploy/install-users.sh deploy/version.sh deploy/verify-install.sh \
-  deploy/verify-static.sh deploy/tests/deploy-regression.sh \
-  deploy/tests/install-rollback-regression.sh; do
+  deploy/verify-static.sh; do
   sudo test -x "$STAGE/artifact/$SCRIPT"
 done
 sudo stat -c '%a %n' "$STAGE/artifact/deploy/tests/"*.sh
@@ -268,19 +254,17 @@ daemon-reload`、enable 两个 service、**明确 `systemctl restart block.servi
 通过本地健康检查后再 `systemctl restart block-kiosk.service`。不要用 `enable --now`
 代替这个顺序，也不要在安装器运行中手工重启任何服务。
 
-在 `current` 已切换后的失败会触发安装器的自动回滚。若安装器返回失败，先检查
-当前版本和 service 状态；不要立刻再次运行默认 rollback，也不要重复安装。自动
-回滚已经执行过时，再执行一次默认 rollback 可能会切换到错误的方向。
+若安装器返回失败，记录当前版本、service 状态和健康检查结果，定位并修复程序后重新
+构建；取得新的设备写入授权后再安装。当前开发阶段不要求恢复旧程序，也不要求验证
+自动或手工 rollback 成功后才能继续。
 
-安装器会在写入配置、unit 或 `current` 链接之前严格验证本机证书、私钥和公开 CA，
-然后创建安装前快照。切换后的任何失败都会用该快照恢复 `block.service`、
-`block-kiosk.service`、`/etc/block/block.env`、`current`/`previous-release` 状态，
-并以恢复目标自身的健康检查脚本重新启动服务。
+安装器仍须在写入配置、unit 或 `current` 链接之前严格验证本机证书、私钥和公开 CA。
+现有安装器内部的 transaction、snapshot 和 rollback 行为允许保留，但它们不是开发
+发布的前置门禁，也不得成为额外备份数据库的理由。
 
 候选制品、候选 `deploy/`、本机 TLS 材料、配置和两个 unit 任一预检失败时，安装器
-不得创建 release、写配置、切换 `current` 或停止现有服务。通过预检后才创建事务
-snapshot；切换后的失败由候选自带的 rollback 恢复 snapshot，而不是调用旧
-`current` installer。
+不得创建 release、写配置、切换 `current` 或停止现有服务。开发发布只把预检、安装
+结果和发布后健康检查作为门禁，不检查 rollback/transaction 脚本是否存在或通过。
 
 ## 5. 发布验收
 
@@ -411,7 +395,7 @@ HTTPS 响应、制品哈希和静态文件哈希一致只能证明服务端资�
 真实屏幕验收。
 
 若真实屏幕仍显示旧页面，先确认本节的 HMI HTTPS 验收已通过，再执行以下唯一的
-缓存修复步骤。只有在第 3 节的 profile/cache 备份已成功后才允许操作：
+缓存修复步骤：
 
 ```bash
 sudo systemctl stop block-kiosk.service
@@ -450,13 +434,17 @@ STOP；不要改用忽略证书错误的 Chromium 参数。该步骤只导入公
 若需撤销，应由设备管理员在已备份的 profile 范围内恢复
 `block-ui-nssdb-before-local-ca`，然后重新执行严格 HTTPS 验收。
 
-## 6. 失败、回滚与 STOP 条件
+## 6. 开发阶段失败处理与生产阶段恢复要求
 
-下列任一情况都必须 STOP 并保留证据：目标身份不匹配、制品哈希不匹配、备份不
-完整、安装器失败、健康检查失败、根路径不是 `200`、`no-store` 缺失、X11 PID/URL
-不稳定、屏幕仍非本次页面，或没有可用的真实屏幕采集方式。
+开发阶段下列任一情况都必须 STOP 并保留证据：目标身份不匹配、制品哈希不匹配、
+安装器失败、健康检查失败、根路径不是 `200`、`no-store` 缺失、X11 PID/URL 不稳定、
+屏幕仍非本次页面，或没有可用的真实屏幕采集方式。若任务包含破坏性数据库写操作，
+其唯一数据库备份不完整或完整性检查失败也必须 STOP；普通程序发布没有数据库备份
+门禁。程序安装失败后修复并重新安装，不要求程序回滚或恢复旧版本。
 
-安装器在切换后失败时会自行调用回滚。手工回滚只适用于：安装器已成功返回、
+现有 rollback/transaction 脚本和安装器内部自动回滚可以保留，但其存在、测试通过或
+成功恢复均不是开发发布门禁。将来明确进入生产阶段后，再启用下列程序恢复流程并按
+当时批准的生产策略验证。生产阶段的手工回滚只适用于：安装器已成功返回、
 当前版本仍是目标版本，并且已确认 `/var/lib/block-release/previous-release` 指向
 安装前的 release。满足这三个条件后，执行：
 
@@ -471,22 +459,23 @@ sudo systemctl is-active block.service block-kiosk.service
 使用恢复目标 release 自带的兼容参数。它不恢复 `/var/lib/block` SQLite 数据。回滚
 成功后仍要重新验证健康检查、HMI HTTPS 规则、稳定 X11 PID/URL 与真实屏幕。
 
-若正式回滚本身失败，才使用第 3 节的备份进行设备管理员控制下的恢复：先停止
-kiosk 和 Block，再恢复记录的 release 链接、release state、配置和 unit；只有
-SQLite 已确认损坏时才恢复 SQLite 备份。随后执行 `daemon-reload`，先启动并验收
-Block，再启动并验收 kiosk。不得删除 release 目录、profile 或现场数据来伪造恢复。
+生产阶段程序备份、回滚失败后的恢复和留存要求必须在进入生产阶段时另行批准，不能
+沿用当前开发阶段的无程序备份流程。任何阶段都不得删除 release 目录、profile 或现场
+数据来伪造恢复。
 
-不要自动重试或连续重复安装。任何新的尝试都必须先说明故障原因、确认当前版本
-和备份可用，并取得新的设备写入授权。
+不要自动重试或连续重复安装。任何新的尝试都必须先说明故障原因、确认当前版本，并
+取得新的设备写入授权；只有破坏性数据库写操作才需要同时确认数据库备份可用。
 
 ## 7. 发布报告与清理
 
-完成、回滚或 STOP 后都要产生一份不含秘密的发布报告。报告至少包含：
+完成或 STOP 后都要产生一份不含秘密的发布报告。生产阶段启用回滚后，回滚也必须
+产生报告。报告至少包含：
 
 - 发布单号、`siteId`、`blockId`、`deviceId`；
 - 目标版本、提交、构建时间、制品哈希和暂存校验结果；
 - 发布前后 current release、service/port/health 状态；
-- 备份目录、暂存目录、SQLite 检查、回滚结果；
+- 发布证据目录和暂存目录；若执行过破坏性数据库写操作，记录该任务唯一 SQLite
+  备份及完整性检查结果；生产阶段启用回滚后再记录回滚结果；
 - 原始 HTTPS 头文件位置、`/` 的 200/no-store 验收结果；
 - 两次 X11 PID/URL 采集和最终实机屏幕截图位置；
 - 全程未向 PLC 写入的确认。
@@ -495,8 +484,8 @@ Block，再启动并验收 kiosk。不得删除 release 目录、profile 或现�
 路径/内容/指纹，或可复用的 SSH 会话材料。
 
 验收结束后，删除本次运行时创建的 SSH 私钥副本、known_hosts、临时 SSH 配置和
-会话目录；不要删除设备管理员保存的原始固定身份。保留有效备份、暂存证据和
-release 目录，直到设备管理员按留存策略确认可以清理。
+会话目录；不要删除设备管理员保存的原始固定身份。保留暂存证据、release 目录和本次
+破坏性数据库写操作产生的唯一有效备份，直到设备管理员按留存策略确认可以清理。
 
 ## 8. 2026-08-07 真机发布记录
 
@@ -510,24 +499,25 @@ release 目录，直到设备管理员按留存策略确认可以清理。
 `.cache/device-release-candidate-deploy-bundle/deployment-attempt-report.md` 和同目录下的
 截图，缓存不进入 Git。
 
-## 9. 下次发布固定清单与停止点
+## 9. 开发阶段下次发布固定清单与停止点
 
 1. 先完成第 3 节盘点，记录 current/previous、三个 service、端口与安全配置摘要。
-2. 创建 root-only 备份，完成两个 unit、`block.env`、current release 与 SQLite 冷备；
-   冷备完成后先恢复旧 Block、再恢复旧 kiosk。
-3. 在 WSL/Linux 打包候选，传输后校验 manifest、ELF arm64 和全部 `deploy/*.sh`、
-   `deploy/tests/*.sh` 执行位；模式不符就重新打包。
+2. 记录 Git 提交、制品版本与哈希。普通程序发布不备份旧程序或数据库；若任务包含
+   删除账号等破坏性数据库写操作，在首次写入前仅做一次 SQLite 备份和完整性检查。
+3. 在 WSL/Linux 打包候选，传输后校验 manifest、ELF arm64 和必要发布脚本执行位；
+   模式不符就重新打包。
 4. 只运行 `$STAGE/artifact/deploy/install.sh`，不调用旧 current installer，也不手动
    切换链接或重启服务。
-5. 让安装器完成 TLS/config/unit 预检、snapshot 与事务安装；它失败时先核对已恢复的
-   current、unit、配置和健康状态，不立即重试。
+5. 让安装器完成 TLS/config/unit 预检和安装；它失败时记录现状、定位并修复问题，
+   重新构建并取得新的设备写入授权后再安装，不要求程序回滚。
 6. 按第 5 节完成 current/previous、三个 service、8444 HTTPS/WSS、8080/8081 缺失、
    8443/9443 不变、SQLite/accounts/idle/bootstrapRequired 和真实屏幕验收。
 
-备份不完整、SQLite 冷备或完整性检查失败、manifest/ELF/执行位不符、候选预检失败、
-安装器回滚、严格 TLS 或 WSS 验收失败、端口变化、账号/idle/bootstrap 状态变化，或
-Chromium 不是已证实的 `NET::ERR_CERT_AUTHORITY_INVALID`，均为 STOP 条件。保留证据、
-恢复既有服务状态，并在新的授权与明确故障原因前不重试。
+manifest/ELF/执行位不符、候选预检失败、严格 TLS 或 WSS 验收失败、端口变化、
+账号/idle/bootstrap 状态变化，或 Chromium 不是已证实的
+`NET::ERR_CERT_AUTHORITY_INVALID`，均为 STOP 条件。破坏性数据库写任务的唯一备份或
+完整性检查失败同样 STOP。保留证据，并在新的授权与明确故障原因前不重试；普通程序
+发布不要求恢复旧程序状态。
 
 ## 10. 2026-08-07 Kiosk 原生界面与输入响应验收
 
