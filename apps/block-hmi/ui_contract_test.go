@@ -40,7 +40,7 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`/api/v2/maintenance/connectivity`,
 		`/api/v2/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`import("./assets/hmi.mjs?v=20260807.3")`,
+		`import("./assets/hmi.mjs?v=20260807.4")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -115,6 +115,10 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] \{.*?--auth-sheet-top-gap:.*?padding-bottom: calc\(100vh - var\(--auth-keyboard-top`).Match(keyboardCSS) {
 		t.Fatal("auth keyboard layout does not reserve a bounded area above the keyboard")
 	}
+	if !regexp.MustCompile(`(?s)\.soft-keyboard-dock\[data-open-immediate="true"\] \{.*?transition: none;`).Match(keyboardCSS) ||
+		!regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-dock \{.*?transition: none;`).Match(keyboardCSS) {
+		t.Fatal("authentication keyboard entrance still animates after the sheet is visible")
+	}
 
 	bridge, err := os.ReadFile("assets/hmi.mts")
 	if err != nil {
@@ -131,9 +135,10 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		`#accountSettingsPanel`,
 		`private renderPLCReadOnly(): void`,
 		`private bindPasswordVisibilityToggles(): void`,
-		`window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true })`,
-		`private openFocusedAuthenticationKeyboard(): void`,
-		`private openAuthenticationKeyboardInput(input: HTMLInputElement): void`,
+		`private openAuthWithKeyboard(screen: AuthScreen, message = ""): void`,
+		`keyboard?.init();`,
+		`keyboard.open(input, { immediate: true });`,
+		`input.focus({ preventScroll: true });`,
 		`private requirePermission(permission: "operate" | "maintenance"): boolean`,
 		`this.openSocket();`,
 		`buildRuntimeConfigure(this.config.points)`,
@@ -157,6 +162,12 @@ func TestStaticHMIUsesLocalGuestPermissions(t *testing.T) {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("HMI bridge still contains backend auth dependency %q", forbidden)
 		}
+	}
+	authOpen := regexp.MustCompile(`(?s)private openAuthWithKeyboard\(screen: AuthScreen, message = ""\): void \{.*?\n  \}\n\n  private showLogin`).FindString(source)
+	if authOpen == "" ||
+		!regexp.MustCompile(`(?s)keyboard\?\.init\(\);.*?panel\.hidden = false;.*?panel\.setAttribute\("data-auth-mode", screen\);.*?keyboard\.open\(input, \{ immediate: true \}\);.*?input\.focus\(\{ preventScroll: true \}\);`).MatchString(authOpen) ||
+		strings.Contains(authOpen, "requestAnimationFrame") || strings.Contains(authOpen, "setTimeout") {
+		t.Fatal("authentication sheet and keyboard are not opened in one synchronous path")
 	}
 	if !regexp.MustCompile(`private sendCommand[\s\S]*?requirePermission\("operate"\)`).MatchString(source) {
 		t.Fatal("HMI point commands are not protected by the frontend permission gate")

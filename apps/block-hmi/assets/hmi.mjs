@@ -420,7 +420,6 @@ class AppleBridge {
                 maintenance: this.hasPermission("maintenance")
             })
         };
-        window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true });
         window.addEventListener("block-hmi-public-navigation", () => {
             if (!this.authPanel().hidden) {
                 this.becomeGuest();
@@ -446,7 +445,7 @@ class AppleBridge {
             this.openSocket();
         }
         if (this.authPreview !== null) {
-            this.showAuthentication(this.authPreview);
+            this.openAuthWithKeyboard(this.authPreview);
         }
     }
     backend() {
@@ -505,7 +504,9 @@ class AppleBridge {
         this.updateAccountControl();
         this.emitPermissionChange();
     }
-    showAuthentication(screen, message = "") {
+    openAuthWithKeyboard(screen, message = "") {
+        const keyboard = window.HMISoftKeyboard;
+        keyboard?.init();
         this.endAuthenticationKeyboard();
         const panel = this.authPanel();
         panel.hidden = false;
@@ -515,48 +516,23 @@ class AppleBridge {
         this.loginSection().hidden = screen !== "login";
         this.bootstrapSection().hidden = screen !== "bootstrap";
         this.setAuthNotice(message);
-        this.openAuthenticationKeyboard(screen);
+        const form = document.querySelector(screen === "bootstrap" ? "#initial-admin-form" : "#login-form");
+        const input = form.querySelector("[data-soft-keyboard]");
+        if (keyboard !== undefined) {
+            if (this.authKeyboardOriginalMode === null) {
+                this.authKeyboardOriginalMode = keyboard.getMode();
+            }
+            keyboard.setPinned(true);
+            keyboard.setMode("soft", false);
+            keyboard.open(input, { immediate: true });
+        }
+        input.focus({ preventScroll: true });
     }
     showLogin(message = "") {
-        this.showAuthentication("login", message);
+        this.openAuthWithKeyboard("login", message);
     }
     showBootstrap(message = "") {
-        this.showAuthentication("bootstrap", message);
-    }
-    openAuthenticationKeyboard(screen) {
-        const form = document.querySelector(screen === "bootstrap" ? "#initial-admin-form" : "#login-form");
-        const input = form.querySelector("[data-soft-keyboard]");
-        window.requestAnimationFrame(() => {
-            if (this.authPanel().hidden || this.authPanel().getAttribute("data-auth-mode") !== screen) {
-                return;
-            }
-            input.focus();
-            this.openAuthenticationKeyboardInput(input);
-        });
-    }
-    openFocusedAuthenticationKeyboard() {
-        const panel = this.authPanel();
-        const screen = panel.getAttribute("data-auth-mode");
-        if (panel.hidden || (screen !== "login" && screen !== "bootstrap")) {
-            return;
-        }
-        const form = document.querySelector(screen === "bootstrap" ? "#initial-admin-form" : "#login-form");
-        const input = form.querySelector("[data-soft-keyboard]");
-        if (document.activeElement === input) {
-            this.openAuthenticationKeyboardInput(input);
-        }
-    }
-    openAuthenticationKeyboardInput(input) {
-        const keyboard = window.HMISoftKeyboard;
-        if (keyboard === undefined) {
-            return;
-        }
-        if (this.authKeyboardOriginalMode === null) {
-            this.authKeyboardOriginalMode = keyboard.getMode();
-        }
-        keyboard.setMode("soft", false);
-        keyboard.setPinned(true);
-        keyboard.open(input);
+        this.openAuthWithKeyboard("bootstrap", message);
     }
     endAuthenticationKeyboard() {
         const keyboard = window.HMISoftKeyboard;
@@ -934,7 +910,7 @@ class AppleBridge {
             this.logout();
             return;
         }
-        this.showAuthentication(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+        this.openAuthWithKeyboard(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
     }
     hasPermission(permission) {
         return this.signedIn && this.session !== null && this.session.permissions[permission];
@@ -943,7 +919,7 @@ class AppleBridge {
         if (this.hasPermission(permission)) {
             return true;
         }
-        this.showAuthentication(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+        this.openAuthWithKeyboard(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
         return false;
     }
     updateAccountControl() {

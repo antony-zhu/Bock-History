@@ -120,7 +120,8 @@ type SoftKeyboardMode = "soft" | "native";
 type HMISoftKeyboard = {
   close(action?: "cancel" | "commit" | "keep"): boolean;
   getMode(): SoftKeyboardMode;
-  open(input: HTMLInputElement | HTMLTextAreaElement): boolean;
+  init(): boolean;
+  open(input: HTMLInputElement | HTMLTextAreaElement, options?: { immediate?: boolean }): boolean;
   setMode(mode: SoftKeyboardMode, persist?: boolean): SoftKeyboardMode;
   setPinned(pinned: boolean): void;
 };
@@ -639,7 +640,6 @@ class AppleBridge {
         maintenance: this.hasPermission("maintenance")
       })
     };
-    window.addEventListener("hmi-soft-keyboard-ready", () => this.openFocusedAuthenticationKeyboard(), { once: true });
     window.addEventListener("block-hmi-public-navigation", () => {
       if (!this.authPanel().hidden) {
         this.becomeGuest();
@@ -664,7 +664,7 @@ class AppleBridge {
       this.openSocket();
     }
     if (this.authPreview !== null) {
-      this.showAuthentication(this.authPreview);
+      this.openAuthWithKeyboard(this.authPreview);
     }
   }
 
@@ -731,7 +731,9 @@ class AppleBridge {
     this.emitPermissionChange();
   }
 
-  private showAuthentication(screen: AuthScreen, message = ""): void {
+  private openAuthWithKeyboard(screen: AuthScreen, message = ""): void {
+    const keyboard = window.HMISoftKeyboard;
+    keyboard?.init();
     this.endAuthenticationKeyboard();
     const panel = this.authPanel();
     panel.hidden = false;
@@ -741,53 +743,25 @@ class AppleBridge {
     this.loginSection().hidden = screen !== "login";
     this.bootstrapSection().hidden = screen !== "bootstrap";
     this.setAuthNotice(message);
-    this.openAuthenticationKeyboard(screen);
+    const form = document.querySelector<HTMLFormElement>(screen === "bootstrap" ? "#initial-admin-form" : "#login-form")!;
+    const input = form.querySelector<HTMLInputElement>("[data-soft-keyboard]")!;
+    if (keyboard !== undefined) {
+      if (this.authKeyboardOriginalMode === null) {
+        this.authKeyboardOriginalMode = keyboard.getMode();
+      }
+      keyboard.setPinned(true);
+      keyboard.setMode("soft", false);
+      keyboard.open(input, { immediate: true });
+    }
+    input.focus({ preventScroll: true });
   }
 
   private showLogin(message = ""): void {
-    this.showAuthentication("login", message);
+    this.openAuthWithKeyboard("login", message);
   }
 
   private showBootstrap(message = ""): void {
-    this.showAuthentication("bootstrap", message);
-  }
-
-  private openAuthenticationKeyboard(screen: AuthScreen): void {
-    const form = document.querySelector<HTMLFormElement>(screen === "bootstrap" ? "#initial-admin-form" : "#login-form")!;
-    const input = form.querySelector<HTMLInputElement>("[data-soft-keyboard]")!;
-    window.requestAnimationFrame(() => {
-      if (this.authPanel().hidden || this.authPanel().getAttribute("data-auth-mode") !== screen) {
-        return;
-      }
-      input.focus();
-      this.openAuthenticationKeyboardInput(input);
-    });
-  }
-
-  private openFocusedAuthenticationKeyboard(): void {
-    const panel = this.authPanel();
-    const screen = panel.getAttribute("data-auth-mode");
-    if (panel.hidden || (screen !== "login" && screen !== "bootstrap")) {
-      return;
-    }
-    const form = document.querySelector<HTMLFormElement>(screen === "bootstrap" ? "#initial-admin-form" : "#login-form")!;
-    const input = form.querySelector<HTMLInputElement>("[data-soft-keyboard]")!;
-    if (document.activeElement === input) {
-      this.openAuthenticationKeyboardInput(input);
-    }
-  }
-
-  private openAuthenticationKeyboardInput(input: HTMLInputElement): void {
-    const keyboard = window.HMISoftKeyboard;
-    if (keyboard === undefined) {
-      return;
-    }
-    if (this.authKeyboardOriginalMode === null) {
-      this.authKeyboardOriginalMode = keyboard.getMode();
-    }
-    keyboard.setMode("soft", false);
-    keyboard.setPinned(true);
-    keyboard.open(input);
+    this.openAuthWithKeyboard("bootstrap", message);
   }
 
   private endAuthenticationKeyboard(): void {
@@ -1194,7 +1168,7 @@ class AppleBridge {
       this.logout();
       return;
     }
-    this.showAuthentication(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+    this.openAuthWithKeyboard(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
   }
 
   private hasPermission(permission: "operate" | "maintenance"): boolean {
@@ -1205,7 +1179,7 @@ class AppleBridge {
     if (this.hasPermission(permission)) {
       return true;
     }
-    this.showAuthentication(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
+    this.openAuthWithKeyboard(readLocalAdministrator(() => window.localStorage) === null ? "bootstrap" : "login");
     return false;
   }
 

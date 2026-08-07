@@ -195,6 +195,10 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   transform: translateY(-50%) scale(1);
 }
 
+.soft-keyboard-dock[data-open-immediate="true"] {
+  transition: none;
+}
+
 .soft-keyboard-dock[data-layout="full"] {
   top: auto;
   right: 28px;
@@ -252,6 +256,7 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 
 #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
   background: #f8fafc;
+  transition: none;
 }
 
 #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-foot,

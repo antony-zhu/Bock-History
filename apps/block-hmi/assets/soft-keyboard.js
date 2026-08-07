@@ -412,9 +412,17 @@
     return defaultFootText;
   }
 
-  function showDock() {
+  function showDock(immediate) {
     window.clearTimeout(hideTimer);
     hideTimer = 0;
+    if (immediate) {
+      dock.setAttribute("data-open-immediate", "true");
+      dock.hidden = false;
+      dock.classList.add("is-open");
+      syncAuthKeyboardLayout(true);
+      return;
+    }
+    dock.removeAttribute("data-open-immediate");
     dock.hidden = false;
     window.requestAnimationFrame(function () {
       dock.classList.add("is-open");
@@ -423,6 +431,7 @@
   }
 
   function hideDock() {
+    dock.removeAttribute("data-open-immediate");
     dock.classList.remove("is-open");
     window.clearTimeout(hideTimer);
     hideTimer = window.setTimeout(function () {
@@ -438,7 +447,7 @@
     authPanel.style.removeProperty("--auth-keyboard-top");
   }
 
-  function syncAuthKeyboardLayout() {
+  function syncAuthKeyboardLayout(immediate) {
     var authPanel = document.getElementById("auth-panel");
     if (!authPanel || !isOpen || !activeInput || authPanel.hidden || !authPanel.contains(activeInput) || !dock || dock.hidden) {
       clearAuthKeyboardLayout();
@@ -448,14 +457,16 @@
     if (!Number.isFinite(keyboardTop) || keyboardTop <= 0) return;
     authPanel.style.setProperty("--auth-keyboard-top", Math.floor(keyboardTop) + "px");
     authPanel.setAttribute("data-keyboard-open", "true");
-    window.requestAnimationFrame(function () {
-      if (isOpen && activeInput && authPanel.contains(activeInput) && typeof activeInput.scrollIntoView === "function") {
-        activeInput.scrollIntoView({ block: "nearest", inline: "nearest" });
-      }
-    });
+    if (!immediate) {
+      window.requestAnimationFrame(function () {
+        if (isOpen && activeInput && authPanel.contains(activeInput) && typeof activeInput.scrollIntoView === "function") {
+          activeInput.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+      });
+    }
   }
 
-  function openForInput(input) {
+  function openForInput(input, options) {
     if (!enabled || mode !== "soft" || !available || !input) return false;
     if (isOpen && activeInput === input) return true;
     var previousInput = activeInput;
@@ -481,7 +492,7 @@
     isOpen = true;
     root.setAttribute("data-soft-keyboard-open", "true");
     root.setAttribute("data-soft-keyboard-layout", activeLayout);
-    showDock();
+    showDock(options && options.immediate === true);
     return true;
   }
 
