@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -71,8 +72,9 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 			}
 		}
 	})})
-	server := httptest.NewServer(mux)
+	server := httptest.NewTLSServer(mux)
 	defer server.Close()
+	caPath := writeServerCA(t, server)
 
 	pointsPath := writePoints(t, `{
   "scanIntervalMs": 50,
@@ -86,7 +88,7 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 }`)
 	var output bytes.Buffer
 	err := run(context.Background(), options{
-		baseURL: server.URL, pointsPath: pointsPath, scanCIDR: "127.0.0.1/32",
+		baseURL: server.URL, caPath: caPath, pointsPath: pointsPath, scanCIDR: "127.0.0.1/32",
 		observeScanDuration: 5 * time.Millisecond,
 		username:            "admin", password: "do-not-print-this-password", output: &output,
 	})
@@ -156,14 +158,18 @@ func TestAuthenticateCreatesInitialAdmin(t *testing.T) {
 		writer.WriteHeader(http.StatusCreated)
 	})
 	mux.HandleFunc("/api/v2/auth/login", func(http.ResponseWriter, *http.Request) { loginCalled = true })
-	server := httptest.NewServer(mux)
+	server := httptest.NewTLSServer(mux)
 	defer server.Close()
 	base, err := parseBaseURL(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
+	tlsConfig, err := loadTLSConfig(writeServerCA(t, server), base.Hostname())
+	if err != nil {
+		t.Fatal(err)
+	}
 	var output bytes.Buffer
-	workflow := &workflow{base: base, client: &http.Client{Timeout: time.Second}, output: json.NewEncoder(&output)}
+	workflow := &workflow{base: base, client: &http.Client{Timeout: time.Second, Transport: &http.Transport{TLSClientConfig: tlsConfig}}, tls: tlsConfig, output: json.NewEncoder(&output)}
 	if err := workflow.authenticate(context.Background(), "admin", "secret"); err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +180,20 @@ func TestAuthenticateCreatesInitialAdmin(t *testing.T) {
 		t.Fatal("JSONL output exposed the password")
 	}
 	assertJSONL(t, output.Bytes())
+}
+
+func TestParseBaseURLRequiresHTTPS(t *testing.T) {
+	for _, raw := range []string{"http://127.0.0.1:8080", "ws://127.0.0.1:8444", "https:///missing-host"} {
+		if _, err := parseBaseURL(raw); err == nil {
+			t.Fatalf("parseBaseURL(%q) unexpectedly succeeded", raw)
+		}
+	}
+}
+
+func TestLoadTLSConfigRejectsMissingCA(t *testing.T) {
+	if _, err := loadTLSConfig(filepath.Join(t.TempDir(), "missing-ca.crt"), "127.0.0.1"); err == nil {
+		t.Fatal("loadTLSConfig accepted a missing CA")
+	}
 }
 
 func TestFailureResultPreservesServerContextWithoutPassword(t *testing.T) {
@@ -212,6 +232,23 @@ func writePoints(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "points.json")
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeServerCA(t *testing.T, server *httptest.Server) string {
+	t.Helper()
+	certificate := server.Certificate()
+	if certificate == nil {
+		t.Fatal("TLS server has no certificate")
+	}
+	contents := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})
+	if len(contents) == 0 {
+		t.Fatal("could not encode TLS server certificate")
+	}
+	path := filepath.Join(t.TempDir(), "ca.crt")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path

@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,7 +24,8 @@ import (
 )
 
 const (
-	defaultBaseURL    = "http://127.0.0.1:8080"
+	defaultBaseURL    = "https://127.0.0.1:8444"
+	defaultCAPath     = "/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt"
 	defaultPointsPath = "/opt/block/current/web/assets/points.json"
 	defaultScanCIDR   = "192.168.1.0/24"
 	requestTimeout    = 15 * time.Second
@@ -30,6 +33,7 @@ const (
 
 type options struct {
 	baseURL             string
+	caPath              string
 	pointsPath          string
 	scanCIDR            string
 	observeScanDuration time.Duration
@@ -67,6 +71,7 @@ type resultLine struct {
 type workflow struct {
 	base   *url.URL
 	client *http.Client
+	tls    *tls.Config
 	ws     *websocket.Conn
 	output *json.Encoder
 }
@@ -99,7 +104,8 @@ func (e workflowFailure) Unwrap() error {
 }
 
 func main() {
-	baseURL := flag.String("base-url", defaultBaseURL, "Block local base URL")
+	baseURL := flag.String("base-url", defaultBaseURL, "Block local HTTPS base URL")
+	caPath := flag.String("ca-file", defaultCAPath, "public CA PEM used to verify Block local HTTPS/WSS")
 	pointsPath := flag.String("points", defaultPointsPath, "path to HMI points.json")
 	scanCIDR := flag.String("scan-cidr", defaultScanCIDR, "IPv4 CIDR to scan for the PLC")
 	observeScanDuration := flag.Duration("observe-scan-duration", 0, "keep the WebSocket open after the initial PLC snapshot without sending commands")
@@ -113,7 +119,7 @@ func main() {
 	}
 
 	err := run(context.Background(), options{
-		baseURL: *baseURL, pointsPath: *pointsPath, scanCIDR: *scanCIDR, observeScanDuration: *observeScanDuration,
+		baseURL: *baseURL, caPath: *caPath, pointsPath: *pointsPath, scanCIDR: *scanCIDR, observeScanDuration: *observeScanDuration,
 		username: username, password: password, output: os.Stdout,
 	})
 	if err != nil {
@@ -134,13 +140,18 @@ func run(ctx context.Context, options options) error {
 	if err != nil {
 		return atStage("startup", err)
 	}
+	tlsConfig, err := loadTLSConfig(options.caPath, base.Hostname())
+	if err != nil {
+		return atStage("startup", err)
+	}
 	points, definitions, err := loadPoints(options.pointsPath)
 	if err != nil {
 		return atStage("points.load", err)
 	}
 	workflow := &workflow{
 		base:   base,
-		client: &http.Client{Timeout: requestTimeout},
+		client: &http.Client{Timeout: requestTimeout, Transport: &http.Transport{TLSClientConfig: tlsConfig.Clone()}},
+		tls:    tlsConfig,
 		output: json.NewEncoder(options.output),
 	}
 	if err := workflow.authenticate(ctx, options.username, options.password); err != nil {
@@ -192,10 +203,32 @@ func (w *workflow) observe(ctx context.Context, duration time.Duration) error {
 
 func parseBaseURL(raw string) (*url.URL, error) {
 	base, err := url.Parse(raw)
-	if err != nil || base.Scheme != "http" || base.Host == "" {
-		return nil, errors.New("base URL must be an absolute http URL")
+	if err != nil || base.Scheme != "https" || base.Host == "" {
+		return nil, errors.New("base URL must be an absolute https URL")
 	}
 	return base, nil
+}
+
+func loadTLSConfig(caPath, serverName string) (*tls.Config, error) {
+	if caPath == "" {
+		return nil, errors.New("CA file is required")
+	}
+	if serverName == "" {
+		return nil, errors.New("TLS server name is required")
+	}
+	contents, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(contents) {
+		return nil, errors.New("CA file contains no certificate")
+	}
+	return &tls.Config{
+		RootCAs:    roots,
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS12,
+	}, nil
 }
 
 func loadPoints(path string) (json.RawMessage, []pointDefinition, error) {
@@ -248,13 +281,14 @@ func (w *workflow) authenticate(ctx context.Context, username, password string) 
 
 func (w *workflow) openWebSocket() error {
 	location := *w.base
-	location.Scheme = "ws"
+	location.Scheme = "wss"
 	location.Path = strings.TrimRight(location.Path, "/") + "/ws"
 	location.RawQuery = ""
 	config, err := websocket.NewConfig(location.String(), w.base.String())
 	if err != nil {
 		return err
 	}
+	config.TlsConfig = w.tls.Clone()
 	connection, err := websocket.DialConfig(config)
 	if err != nil {
 		return err
