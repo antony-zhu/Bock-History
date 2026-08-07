@@ -29,12 +29,16 @@ systemd 使用以下 flags（路径来自受保护的 `/etc/block/block.env`）�
 
 ```text
 -local-https-address 127.0.0.1:8444
--local-tls-cert /etc/block/certs/maintenance.crt
--local-tls-key /etc/block/certs/maintenance.key
+-local-tls-cert /etc/block/certs/block-hmi.crt
+-local-tls-key /etc/block/certs/block-hmi.key
 ```
 
-当前部署复用维护 HTTPS 的证书/私钥；公开 CA 另供 kiosk 和健康检查使用。证书
-必须带有 `127.0.0.1` 的 SAN。私钥、真实环境文件及证书内容均不得提交。
+本机 HMI 的严格校验 CA 是公开、非私钥的
+`/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt`。它必须可由
+`block` 与 `block-ui` 读取；kiosk 不使用不可读的 `/etc/block/certs/ca.crt`。
+
+本机 HMI 使用单独的 leaf/私钥；公开 CA 另供 kiosk 和健康检查使用。证书必须带有
+`127.0.0.1` 的 SAN。私钥、真实环境文件及证书内容均不得提交。
 
 ## 组件
 
@@ -84,12 +88,24 @@ go build -trimpath -o `
 
 ## 配置与启动
 
-所有配置文件路径必须是绝对路径；未知 JSON 字段会使进程启动失败。
+模拟器配置文件路径必须是绝对路径；未知 JSON 字段会使进程启动失败。
 
 ```bash
 ./plc-simulator -config /etc/block/plc-simulator.json
-./block-agent -config /etc/block/block-agent.json
 ```
+
+`block-agent` 不再支持旧 JSON `-config` 启动方式。真机只由
+`deploy/block/systemd/block.service` 启动，并显式传入本机 `8444` TLS、状态库、
+HMI 静态目录、维护 HTTPS 和可选 MQTTS 参数。不要手工启动明文兼容 listener。
+
+设备侧回归工具默认访问 `https://127.0.0.1:8444` 并严格校验公开 CA：
+
+```bash
+BLOCK_E2E_USERNAME=<approved-local-user> BLOCK_E2E_PASSWORD=<provided-at-runtime> \
+  block-e2e --ca-file /usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt
+```
+
+它拒绝 HTTP 和 `ws://`，并为 `/ws` 使用同源 WSS；不输出密码或保存凭据。
 
 - 真实设备适配器尚未接入；非模拟部署使用 `adapter.type: "disabled"`。
 - 只有实验环境使用

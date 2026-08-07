@@ -21,9 +21,14 @@
 
 `/etc/block/block.env` 必须为本机业务同时提供 `BLOCK_LOCAL_HTTPS_ADDRESS`
 （固定为 `127.0.0.1:8444`）、`BLOCK_LOCAL_TLS_CERT`、`BLOCK_LOCAL_TLS_KEY` 和
-`BLOCK_LOCAL_TLS_CA`。当前实现复用维护 HTTPS 的证书和私钥路径；公开 CA 单独供
-kiosk 与健康检查校验，不能把私钥写入环境文件。证书必须包含 `127.0.0.1` 的 SAN，
-业务 TLS 最低为 1.2。证书、私钥或 CA 缺失均为启动/安装失败，不能回退到明文。
+`BLOCK_LOCAL_TLS_CA`。当前设备候选使用本机 leaf
+`/etc/block/certs/block-hmi.crt` 与私钥
+`/etc/block/certs/block-hmi.key`；公开 CA 为
+`/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt`，单独供 kiosk 和
+健康检查校验，不能把私钥写入环境文件。该公开 CA 必须可由 `block` 和 `block-ui`
+读取；不要让 kiosk 使用不可读的 `/etc/block/certs/ca.crt`。证书必须包含
+`127.0.0.1` 的 SAN，业务 TLS 最低为 1.2。证书、私钥或 CA 缺失、不可读、无效或
+不匹配均为安装失败，不能回退到明文。
 
 短期 HTTPS 发布证书只会映射到非 root 的发布/调试账户。它不能用于 root 安装，
 也不能以 sudo 绕过此限制。真机安装只能由设备管理员使用**已批准的固定安装
@@ -187,6 +192,11 @@ daemon-reload`、enable 两个 service、**明确 `systemctl restart block.servi
 当前版本和 service 状态；不要立刻再次运行默认 rollback，也不要重复安装。自动
 回滚已经执行过时，再执行一次默认 rollback 可能会切换到错误的方向。
 
+安装器会在写入配置、unit 或 `current` 链接之前严格验证本机证书、私钥和公开 CA，
+然后创建安装前快照。切换后的任何失败都会用该快照恢复 `block.service`、
+`block-kiosk.service`、`/etc/block/block.env`、`current`/`previous-release` 状态，
+并以恢复目标自身的健康检查脚本重新启动服务。
+
 ## 5. 发布验收
 
 安装器成功返回后，先验证版本、服务和本地健康检查：
@@ -205,7 +215,7 @@ HMI 静态资源必须返回 `Cache-Control: no-store`。保留原始响应头�
 
 ```bash
 HMI=https://127.0.0.1:8444
-HMI_CA=/etc/block/certs/maintenance-ca.crt
+HMI_CA=/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt
 ROOT_HEADERS="$BACKUP/after-root.headers"
 
 ROOT_STATUS=$(curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error --dump-header "$ROOT_HEADERS" \
@@ -283,7 +293,7 @@ SQLite、BDM 或 Wi-Fi。随后重新执行本节的 HTTPS、稳定 PID/URL 和�
 ### Chromium 对本机 CA 的受控信任（仅必要时）
 
 先执行上面的严格健康检查和 HMI HTTPS 验收；它们必须使用
-`/etc/block/certs/maintenance-ca.crt`，不得使用 `-k`、`--insecure` 或
+`/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt`，不得使用 `-k`、`--insecure` 或
 `--ignore-certificate-errors`。只有这些严格检查已经通过、而 Chromium 仅因
 本机 CA 不受信任无法打开 kiosk 时，才允许设备管理员进行以下一次受控导入：
 
@@ -294,7 +304,7 @@ sudo cp -a --no-dereference -- \
   /home/block-ui/.pki/nssdb "$BACKUP/block-ui-nssdb-before-local-ca"
 sudo -u block-ui certutil -d sql:/home/block-ui/.pki/nssdb \
   -A -n block-local-business-ca -t 'C,,' \
-  -i /etc/block/certs/maintenance-ca.crt
+  -i /usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt
 sudo systemctl start block-kiosk.service
 ```
 
@@ -319,9 +329,10 @@ sudo /opt/block/current/deploy/verify-install.sh
 sudo systemctl is-active block.service block-kiosk.service
 ```
 
-回滚会恢复安装前记录的不可变 release，按同样顺序重启 Block 和 kiosk，并保留
-`/etc/block` 配置和 `/var/lib/block` SQLite 数据。回滚成功后仍要重新验证健康
-检查、HMI HTTPS 规则、稳定 X11 PID/URL 与真实屏幕。
+回滚会恢复安装前记录的不可变 release 和对应的 `block.service`、
+`block-kiosk.service`、本机 TLS 配置与 `current`/`previous-release` 状态；健康检查
+使用恢复目标 release 自带的兼容参数。它不恢复 `/var/lib/block` SQLite 数据。回滚
+成功后仍要重新验证健康检查、HMI HTTPS 规则、稳定 X11 PID/URL 与真实屏幕。
 
 若正式回滚本身失败，才使用第 3 节的备份进行设备管理员控制下的恢复：先停止
 kiosk 和 Block，再恢复记录的 release 链接、release state、配置和 unit；只有

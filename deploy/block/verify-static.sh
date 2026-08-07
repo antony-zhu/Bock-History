@@ -8,7 +8,7 @@ fail() {
   exit 1
 }
 
-for SCRIPT in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh tests/deploy-regression.sh; do
+for SCRIPT in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh tests/deploy-regression.sh tests/install-rollback-regression.sh; do
   bash -n "$SCRIPT_DIR/$SCRIPT"
 done
 
@@ -56,9 +56,11 @@ if any(key == "POINT" or key == "POINTS" or key.startswith("POINT_") or key.star
     raise SystemExit("points and Wi-Fi must not be persisted in deployment configuration")
 if config["BLOCK_LOCAL_HTTPS_ADDRESS"] != "127.0.0.1:8444":
     raise SystemExit("local HTTPS must bind only 127.0.0.1:8444")
-if config["BLOCK_LOCAL_TLS_CERT"] != config["BLOCK_MAINTENANCE_TLS_CERT"] or config["BLOCK_LOCAL_TLS_KEY"] != config["BLOCK_MAINTENANCE_TLS_KEY"]:
-    raise SystemExit("local HMI must reuse the deployed maintenance certificate and private-key paths")
-if config["BLOCK_LOCAL_TLS_CA"] != "/etc/block/certs/maintenance-ca.crt":
+if config["BLOCK_LOCAL_TLS_CERT"] != "/etc/block/certs/block-hmi.crt":
+    raise SystemExit("local HMI must use the verified local leaf certificate path")
+if config["BLOCK_LOCAL_TLS_KEY"] != "/etc/block/certs/block-hmi.key":
+    raise SystemExit("local HMI must use the verified local private-key path")
+if config["BLOCK_LOCAL_TLS_CA"] != "/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt":
     raise SystemExit("local HMI health checks must use the deployed public CA path")
 if config["BLOCK_MAINTENANCE_HTTPS_ADDRESS"] != "0.0.0.0:8443":
     raise SystemExit("maintenance HTTPS must bind 0.0.0.0:8443")
@@ -75,8 +77,9 @@ import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
 steps = (
-    'mv -Tf "$NEXT_LINK" "$CURRENT_LINK"',
     'ROLLBACK_ARMED=true',
+    'install -m 0640 -o root -g block "$CONFIG_FILE" "$CONFIG_ROOT/block.env"',
+    'mv -Tf "$NEXT_LINK" "$CURRENT_LINK"',
     'systemctl daemon-reload',
     'systemctl enable block.service',
     'systemctl enable block-kiosk.service',
@@ -94,10 +97,34 @@ if positions != sorted(positions):
     raise SystemExit("install must enable then restart Block, pass the health gate, then restart kiosk")
 if "systemctl enable --now" in source:
     raise SystemExit("install must restart active services after enabling them")
-if 'trap rollback_install ERR' not in source or '"$CURRENT_LINK/deploy/rollback.sh" --execute' not in source:
+if 'trap rollback_install ERR' not in source or '"$SCRIPT_DIR/rollback.sh" --execute --snapshot "$INSTALL_SNAPSHOT"' not in source:
     raise SystemExit("install failure after current switch must enter rollback")
 if source.rfind("ROLLBACK_ARMED=false") <= positions[-1]:
     raise SystemExit("install rollback must remain armed through the kiosk restart")
+tls_validation = source.rindex('validate_local_tls_material "$BLOCK_LOCAL_TLS_CERT" "$BLOCK_LOCAL_TLS_KEY" "$BLOCK_LOCAL_TLS_CA"')
+snapshot = source.rindex('\nsnapshot_install_state\nROLLBACK_ARMED=true')
+if tls_validation >= source.index('"$SCRIPT_DIR/install-users.sh"'):
+    raise SystemExit("TLS material must be validated before any install-user mutation")
+if snapshot >= source.index('install -m 0640 -o root -g block "$CONFIG_FILE"'):
+    raise SystemExit("install must snapshot the old state before writing the new config")
+PY
+
+python3 - "$SCRIPT_DIR/rollback.sh" <<'PY'
+import sys
+
+source = open(sys.argv[1], encoding="utf-8").read()
+for required in (
+    'restore_snapshot_units',
+    'restore_snapshot_current_link',
+    'install_target_units',
+    'release_health_check',
+    '"$health_check" --help 2>&1 | grep -F -- \'--ca-file\'',
+    '"$health_check" --ca-file "$ca"',
+):
+    if required not in source:
+        raise SystemExit(f"rollback is missing required compatibility behavior: {required}")
+if '"$CURRENT_LINK/deploy/health-check.sh" --ca-file' in source:
+    raise SystemExit("rollback must not impose TLS health arguments on a target release")
 PY
 
 UNIT_COUNT=$(find "$SCRIPT_DIR/systemd" -maxdepth 1 -type f -name '*.service' | wc -l)
@@ -120,11 +147,17 @@ grep -Fx 'User=block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'Group=block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'PermissionsStartOnly=true' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'Environment=DISPLAY=:0' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+if grep -Fq 'EnvironmentFile=' "$SCRIPT_DIR/systemd/block-kiosk.service"; then
+  fail "kiosk must not receive the complete Block environment file"
+fi
 if grep -Fx 'Environment=XAUTHORITY=/home/block-ui/.Xauthority' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null; then
   fail "kiosk must not require the missing block-ui Xauthority file"
 fi
 grep -Fx 'ExecStartPre=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost +SI:localuser:block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
-grep -Fx 'ExecStartPre=/opt/block/current/deploy/health-check.sh --url https://127.0.0.1:8444/healthz --ca-file $BLOCK_LOCAL_TLS_CA --retries 30 --delay 1' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+grep -Fx 'ExecStartPre=/opt/block/current/deploy/health-check.sh --url https://127.0.0.1:8444/healthz --ca-file /usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt --retries 30 --delay 1' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
+if grep -Fq '$BLOCK_' "$SCRIPT_DIR/systemd/block-kiosk.service"; then
+  fail "kiosk must not depend on a Block environment variable"
+fi
 grep -Fx 'ExecStart=/usr/bin/chromium-browser --kiosk --no-first-run --disable-session-crashed-bubble https://127.0.0.1:8444/' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 grep -Fx 'ExecStopPost=/usr/bin/env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 /usr/bin/xhost -SI:localuser:block-ui' "$SCRIPT_DIR/systemd/block-kiosk.service" >/dev/null
 if grep -R -n -E 'network-online|block-hmi|block-plc-simulator' "$SCRIPT_DIR/systemd"; then
@@ -134,7 +167,7 @@ if grep -R -n -E 'local-http-address|http://127\.0\.0\.1|127\.0\.0\.1:8080|127\.
   fail "business units must not retain plaintext local HTTP listeners or URLs"
 fi
 grep -Fx 'URL=https://127.0.0.1:8444/healthz' "$SCRIPT_DIR/health-check.sh" >/dev/null
-grep -Fx 'CA_FILE=/etc/block/certs/maintenance-ca.crt' "$SCRIPT_DIR/health-check.sh" >/dev/null
+grep -Fx 'CA_FILE=/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt' "$SCRIPT_DIR/health-check.sh" >/dev/null
 grep -F -- "--proto '=https'" "$SCRIPT_DIR/health-check.sh" >/dev/null
 grep -F -- '--tlsv1.2' "$SCRIPT_DIR/health-check.sh" >/dev/null
 grep -F -- '--cacert "$CA_FILE"' "$SCRIPT_DIR/health-check.sh" >/dev/null

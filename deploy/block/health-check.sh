@@ -2,7 +2,7 @@
 set -euo pipefail
 
 URL=https://127.0.0.1:8444/healthz
-CA_FILE=/etc/block/certs/maintenance-ca.crt
+CA_FILE=/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt
 EXPECTED_VERSION=
 RETRIES=1
 DELAY_SECONDS=1

@@ -16,6 +16,7 @@ fail() {
 "$DEPLOY_DIR/rollback.sh" --help >/dev/null
 "$DEPLOY_DIR/verify-install.sh" --help >/dev/null
 "$DEPLOY_DIR/health-check.sh" --help >/dev/null
+"$DEPLOY_DIR/tests/install-rollback-regression.sh"
 
 for ENABLED in false true; do
   ARG="-mqtts-v2-enabled=$ENABLED"
@@ -64,9 +65,9 @@ preflight_config() {
 ALLOWED_CONFIG=$TEST_ROOT/allowed.env
 printf '%s\n' \
   'BLOCK_LOCAL_HTTPS_ADDRESS=127.0.0.1:8444' \
-  'BLOCK_LOCAL_TLS_CERT=/etc/block/certs/maintenance.crt' \
-  'BLOCK_LOCAL_TLS_KEY=/etc/block/certs/maintenance.key' \
-  'BLOCK_LOCAL_TLS_CA=/etc/block/certs/maintenance-ca.crt' \
+  'BLOCK_LOCAL_TLS_CERT=/etc/block/certs/block-hmi.crt' \
+  'BLOCK_LOCAL_TLS_KEY=/etc/block/certs/block-hmi.key' \
+  'BLOCK_LOCAL_TLS_CA=/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt' \
   'BLOCK_MQTTS_V2_ENDPOINT=mqtts://bdm.example.invalid:8883' \
   'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' \
   'BLOCK_MAINTENANCE_DEVICE_ID=block-0001' > "$ALLOWED_CONFIG"
@@ -78,19 +79,13 @@ case "$OUTPUT" in
   *'systemctl is required'*) ;;
   *) fail "install preflight did not reach the systemctl guard" ;;
 esac
-grep -Fx 'BLOCK_MAINTENANCE_HTTPS_ADDRESS=0.0.0.0:8443' "$ALLOWED_CONFIG" >/dev/null || fail "install did not migrate the legacy maintenance address"
-grep -Fx 'BLOCK_MAINTENANCE_DEVICE_ID=block-0001' "$ALLOWED_CONFIG" >/dev/null || fail "install changed an unrelated configuration key"
-if grep -Fx 'BLOCK_MAINTENANCE_HTTPS_ADDRESS=127.0.0.1:8443' "$ALLOWED_CONFIG" >/dev/null; then
-  fail "install kept the legacy maintenance address"
-fi
-
 PLAINTEXT_CONFIG=$TEST_ROOT/plaintext.env
 printf '%s\n' \
   'BLOCK_LOCAL_HTTP_ADDRESS=127.0.0.1:8080' \
   'BLOCK_LOCAL_HTTPS_ADDRESS=127.0.0.1:8444' \
-  'BLOCK_LOCAL_TLS_CERT=/etc/block/certs/maintenance.crt' \
-  'BLOCK_LOCAL_TLS_KEY=/etc/block/certs/maintenance.key' \
-  'BLOCK_LOCAL_TLS_CA=/etc/block/certs/maintenance-ca.crt' > "$PLAINTEXT_CONFIG"
+  'BLOCK_LOCAL_TLS_CERT=/etc/block/certs/block-hmi.crt' \
+  'BLOCK_LOCAL_TLS_KEY=/etc/block/certs/block-hmi.key' \
+  'BLOCK_LOCAL_TLS_CA=/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt' > "$PLAINTEXT_CONFIG"
 if OUTPUT=$(preflight_config "$PLAINTEXT_CONFIG"); then
   fail "install accepted plaintext local business configuration"
 fi
