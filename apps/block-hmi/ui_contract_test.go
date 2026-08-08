@@ -40,8 +40,8 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`/api/maintenance/connectivity`,
 		`/api/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`assets/soft-keyboard.css?v=20260808.1`,
-		`assets/soft-keyboard.js?v=20260808.1`,
+		`assets/soft-keyboard.css?v=20260808.3`,
+		`assets/soft-keyboard.js?v=20260808.3`,
 		`import("./assets/hmi.mjs?v=20260808.1")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
@@ -171,6 +171,12 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.wifi-settings-actions \{.*?display: grid;.*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);`).Match(keyboardCSS) ||
 		!regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.wifi-settings-actions button \{.*?min-height: 56px;.*?cursor: pointer;`).Match(keyboardCSS) {
 		t.Fatal("Wi-Fi actions do not have a visible two-button layout")
+	}
+	if !regexp.MustCompile(`(?s)html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] \[data-page="maintenance"\]:not\(\[hidden\]\) \.settings-layout \{.*?height: 332px;`).Match(keyboardCSS) ||
+		!regexp.MustCompile(`(?s)html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] #wifiSettingsPanel \{.*?scroll-padding: 20px 0 92px;`).Match(keyboardCSS) ||
+		!regexp.MustCompile(`(?s)html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] #wifiSettingsPanel \.maintenance-panel-head \{.*?display: none;`).Match(keyboardCSS) ||
+		!regexp.MustCompile(`(?s)html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] #wifiSettingsPanel \.wifi-settings-actions \{.*?margin-top: 10px;`).Match(keyboardCSS) {
+		t.Fatal("full keyboard Wi-Fi layout does not reserve clickable space above the overlay")
 	}
 	if !regexp.MustCompile(`(?s)\.soft-keyboard-dock\[data-open-immediate="true"\] \{.*?transition: none;`).Match(keyboardCSS) ||
 		!regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-dock \{.*?transition: none;`).Match(keyboardCSS) {
@@ -326,8 +332,8 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !strings.Contains(keyboard, `disableButtonHold: true`) ||
 		!regexp.MustCompile(`function ensureKeyboard\(\) \{\s*if \(keyboard\) return true;`).MatchString(keyboard) ||
 		!regexp.MustCompile(`function bindInput\(input\) \{\s*if \(input\.getAttribute\("data-soft-keyboard-bound"\) === "true"\) return;`).MatchString(keyboard) ||
-		!regexp.MustCompile(`(?s)function clearInput\(input\) \{.*?keyboard\.setInput\("", inputName\);.*?dispatchFieldEvent\(input, "input"\);`).MatchString(keyboard) {
-		t.Fatal("soft keyboard does not bind once, suppress held-key repeats, and clear successful secret input")
+		!regexp.MustCompile(`(?s)function clearInput\(input\) \{.*?if \(input === activeInput\) \{\s*originalValue = "";\s*committedValue = "";\s*\}.*?keyboard\.setInput\("", inputName\);.*?dispatchFieldEvent\(input, "input"\);`).MatchString(keyboard) {
+		t.Fatal("soft keyboard does not bind once, suppress held-key repeats, and fully clear successful secret input")
 	}
 	for _, asset := range []string{
 		"assets/demo-shell.mjs",
@@ -335,6 +341,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		"assets/machine-bin.png",
 		"assets/soft-keyboard.css",
 		"assets/soft-keyboard.js",
+		"tools/maintenance-keyboard-layout-probe.mjs",
 		"assets/vendor/simple-keyboard/index.css",
 		"assets/vendor/simple-keyboard/index.js",
 		"THIRD_PARTY_NOTICES.md",

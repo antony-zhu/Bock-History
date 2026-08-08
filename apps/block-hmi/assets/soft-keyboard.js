@@ -523,6 +523,10 @@
     if (!input) return;
     var inputName = getInputName(input);
     input.value = "";
+    if (input === activeInput) {
+      originalValue = "";
+      committedValue = "";
+    }
     if (keyboard) {
       keyboard.setInput("", inputName);
       if (input === activeInput && typeof keyboard.setCaretPosition === "function") {

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import vm from "node:vm";
 import { assertAuthKeyboardLayout, assertAuthSubmitLayout, authKeyboardSafeGap, rectangleIntersectionArea } from "../tools/auth-layout-probe.mjs";
+import { assertMaintenanceFullKeyboardLayout } from "../tools/maintenance-keyboard-layout-probe.mjs";
 import {
   demoDisplayScale,
   demoFrameParameter,
@@ -249,8 +251,8 @@ assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]
 assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
 assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", state\.mode === "manual"\);/);
 for (const asset of [
-  'assets/soft-keyboard.css?v=20260808.1',
-  'assets/soft-keyboard.js?v=20260808.1',
+  'assets/soft-keyboard.css?v=20260808.3',
+  'assets/soft-keyboard.js?v=20260808.3',
   './assets/hmi.mjs?v=20260808.1'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
@@ -285,6 +287,10 @@ assert.match(index, /<div class="settings-actions wifi-settings-actions"><button
 assert.ok(index.indexOf('<div class="settings-actions wifi-settings-actions"') < index.indexOf('<dl class="connection-facts" aria-label="Wi-Fi 与 BDM 当前状态">'));
 assert.match(keyboardCSS, /\.page\[data-page="maintenance"\] \.wifi-settings-actions \{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 assert.match(keyboardCSS, /\.page\[data-page="maintenance"\] \.wifi-settings-actions button \{[\s\S]*?min-height: 56px;[\s\S]*?cursor: pointer;/);
+assert.match(keyboardCSS, /html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] \[data-page="maintenance"\]:not\(\[hidden\]\) \.settings-layout \{[\s\S]*?height: 332px;/);
+assert.match(keyboardCSS, /html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] #wifiSettingsPanel \{[\s\S]*?scroll-padding: 20px 0 92px;/);
+assert.match(keyboardCSS, /html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] #wifiSettingsPanel \.maintenance-panel-head \{[\s\S]*?display: none;/);
+assert.match(keyboardCSS, /html\[data-soft-keyboard-open="true"\]\[data-soft-keyboard-layout="full"\] #wifiSettingsPanel \.wifi-settings-actions \{[\s\S]*?margin-top: 10px;/);
 assert.doesNotMatch(index, /\.line-name::after|html\[data-backend-status="online"\] \.line-name::after/);
 for (const removedMaintenanceCopy of ["选择一项本机配置", "目标、换刀与装箱", "本机无线连接", "只读采集状态", "本机账户与会话"]) {
   assert.equal(index.includes(removedMaintenanceCopy), false, `${removedMaintenanceCopy} should not remain in the maintenance UI`);
@@ -319,7 +325,168 @@ assert.match(keyboardSource, /function clearError\(input\) \{[\s\S]*?input\.hasA
 assert.match(keyboardSource, /disableButtonHold: true/);
 assert.match(keyboardSource, /function ensureKeyboard\(\) \{\s*if \(keyboard\) return true;/);
 assert.match(keyboardSource, /function bindInput\(input\) \{\s*if \(input\.getAttribute\("data-soft-keyboard-bound"\) === "true"\) return;/);
-assert.match(keyboardSource, /function clearInput\(input\) \{[\s\S]*?keyboard\.setInput\("", inputName\);[\s\S]*?dispatchFieldEvent\(input, "input"\);/);
+assert.match(keyboardSource, /function clearInput\(input\) \{[\s\S]*?if \(input === activeInput\) \{\s*originalValue = "";\s*committedValue = "";\s*\}[\s\S]*?keyboard\.setInput\("", inputName\);[\s\S]*?dispatchFieldEvent\(input, "input"\);/);
+
+const keyboardHarnessSource = keyboardSource.replace(
+  "  window.HMISoftKeyboard = {",
+  `  window.__keyboardCancelHarness = {
+    setActive: function (input, nextKeyboard, nextDock, original) {
+      activeInput = input;
+      activeInputName = getInputName(input);
+      keyboard = nextKeyboard;
+      dock = nextDock;
+      isOpen = true;
+      pinned = false;
+      enabled = true;
+      available = true;
+      mode = "soft";
+      originalValue = original;
+      committedValue = original;
+    },
+    state: function () {
+      return { activeInput: activeInput, originalValue: originalValue, committedValue: committedValue };
+    }
+  };
+
+  window.HMISoftKeyboard = {`
+);
+assert.notEqual(keyboardHarnessSource, keyboardSource);
+
+function keyboardTestAttributes() {
+  const values = new Map();
+  return {
+    getAttribute(name) { return values.has(name) ? values.get(name) : null; },
+    setAttribute(name, value) { values.set(name, String(value)); },
+    removeAttribute(name) { values.delete(name); },
+    hasAttribute(name) { return values.has(name); },
+    toggleAttribute(name, force) {
+      const shouldHave = force === undefined ? !values.has(name) : Boolean(force);
+      if (shouldHave) values.set(name, "");
+      else values.delete(name);
+      return shouldHave;
+    }
+  };
+}
+
+function keyboardTestClassList() {
+  return { add() {}, remove() {}, toggle() {}, contains() { return false; } };
+}
+
+function keyboardTestInput(id, value) {
+  return {
+    ...keyboardTestAttributes(),
+    id,
+    name: "",
+    value,
+    disabled: false,
+    hidden: false,
+    type: "password",
+    readOnly: false,
+    required: false,
+    nodeType: 1,
+    tagName: "INPUT",
+    classList: keyboardTestClassList(),
+    style: { setProperty() {}, removeProperty() {} },
+    addEventListener() {},
+    dispatchEvent(event) { this.events = (this.events || []).concat(event.type); },
+    getClientRects() { return [{}]; },
+    focus() {}
+  };
+}
+
+function keyboardTestDock() {
+  return {
+    ...keyboardTestAttributes(),
+    classList: keyboardTestClassList(),
+    hidden: false,
+    addEventListener() {},
+    getBoundingClientRect() { return { top: 1 }; }
+  };
+}
+
+class KeyboardCancelTestKeyboard {
+  constructor() {
+    this.values = new Map();
+    this.options = {};
+  }
+
+  getInput(name) { return this.values.get(name) || ""; }
+  setInput(value, name) { this.values.set(name, String(value)); }
+  setOptions(options) { Object.assign(this.options, options); }
+  setCaretPosition() {}
+}
+
+class KeyboardCancelTestEvent {
+  constructor(type, init = {}) {
+    this.type = type;
+    Object.assign(this, init);
+  }
+}
+
+const keyboardTestRoot = {
+  ...keyboardTestAttributes(),
+  classList: keyboardTestClassList(),
+  style: { setProperty() {}, removeProperty() {} }
+};
+const keyboardTestDocument = {
+  documentElement: keyboardTestRoot,
+  readyState: "loading",
+  body: null,
+  getElementById() { return null; },
+  addEventListener() {},
+  dispatchEvent() {},
+  querySelectorAll() { return []; },
+  querySelector() { return null; },
+  createEvent(type) { return new KeyboardCancelTestEvent(type); }
+};
+const keyboardTestWindow = {
+  location: { search: "" },
+  Event: KeyboardCancelTestEvent,
+  CustomEvent: KeyboardCancelTestEvent,
+  setTimeout() { return 0; },
+  clearTimeout() {},
+  requestAnimationFrame(callback) { callback(); },
+  addEventListener() {},
+  dispatchEvent() {},
+  getComputedStyle() { return { display: "block", visibility: "visible" }; }
+};
+vm.runInNewContext(keyboardHarnessSource, { window: keyboardTestWindow, document: keyboardTestDocument }, {
+  filename: "soft-keyboard.js"
+});
+
+const keyboardCancelHarness = keyboardTestWindow.__keyboardCancelHarness;
+const failedWifiPassword = keyboardTestInput("wifiPasswordInput", "failed-password");
+const failedWifiKeyboard = new KeyboardCancelTestKeyboard();
+const failedWifiDock = keyboardTestDock();
+keyboardCancelHarness.setActive(failedWifiPassword, failedWifiKeyboard, failedWifiDock, "failed-password");
+assert.equal(failedWifiPassword.value, "failed-password");
+keyboardTestWindow.HMISoftKeyboard.clearInput(failedWifiPassword);
+assert.equal(failedWifiPassword.value, "");
+assert.equal(failedWifiKeyboard.getInput("wifiPasswordInput"), "");
+assert.equal(keyboardCancelHarness.state().originalValue, "");
+assert.equal(keyboardCancelHarness.state().committedValue, "");
+keyboardTestWindow.HMISoftKeyboard.close("cancel");
+assert.equal(failedWifiPassword.value, "");
+assert.equal(keyboardCancelHarness.state().activeInput, null);
+
+const switchedWifiPassword = keyboardTestInput("wifiPasswordInput", "failed-password");
+const switchedWifiKeyboard = new KeyboardCancelTestKeyboard();
+keyboardCancelHarness.setActive(switchedWifiPassword, switchedWifiKeyboard, keyboardTestDock(), "failed-password");
+keyboardTestWindow.HMISoftKeyboard.clearInput(switchedWifiPassword);
+const switchedWifiSsid = keyboardTestInput("wifiSsidInput", "line-wifi");
+assert.equal(keyboardTestWindow.HMISoftKeyboard.open(switchedWifiSsid), true);
+assert.equal(switchedWifiPassword.value, "");
+keyboardTestWindow.HMISoftKeyboard.close("cancel");
+assert.equal(switchedWifiPassword.value, "");
+assert.equal(switchedWifiSsid.value, "line-wifi");
+
+const ordinaryInput = keyboardTestInput("ordinaryInput", "before");
+const ordinaryKeyboard = new KeyboardCancelTestKeyboard();
+keyboardCancelHarness.setActive(ordinaryInput, ordinaryKeyboard, keyboardTestDock(), "before");
+ordinaryInput.value = "edited";
+ordinaryKeyboard.setInput("edited", "ordinaryInput");
+keyboardTestWindow.HMISoftKeyboard.close("cancel");
+assert.equal(ordinaryInput.value, "before");
 assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: true \}/);
 assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: false \}/);
 assert.match(keyboardCSS, /\.soft-keyboard-dock \{[\s\S]*?box-shadow: none;[\s\S]*?transition: none;/);
@@ -392,6 +559,40 @@ const submitLayoutResult = assertAuthSubmitLayout({ querySelector: (selector) =>
 });
 assert.equal(submitLayoutResult.viewportWidth, 1920);
 assert.equal(submitLayoutResult.viewportHeight, 1080);
+
+const maintenanceKeyboardPanelProbe = probeElement(rectangle(208, 500, 472, 1712), { overflowY: "auto", pointerEvents: "auto" }, {
+  clientHeight: 292,
+  scrollHeight: 764
+});
+const maintenanceKeyboardDockProbe = probeElement(rectangle(516, 830, 188, 1772), { pointerEvents: "auto" }, { visible: true });
+const maintenanceWifiSsidProbe = probeElement(rectangle(266, 320, 650, 1200), { pointerEvents: "auto" });
+const maintenanceWifiPasswordProbe = probeElement(rectangle(332, 386, 650, 1200), { pointerEvents: "auto" });
+const maintenanceWifiActionsProbe = probeElement(rectangle(408, 464, 650, 1200), { pointerEvents: "auto" });
+const maintenanceWifiRefreshProbe = probeElement(rectangle(408, 464, 650, 920), { pointerEvents: "auto" });
+const maintenanceWifiConnectProbe = probeElement(rectangle(408, 464, 930, 1200), { pointerEvents: "auto" });
+const maintenanceKeyboardElements = new Map([
+  ["#wifiSettingsPanel", maintenanceKeyboardPanelProbe],
+  ["#softKeyboardDock", maintenanceKeyboardDockProbe],
+  [".wifi-settings-actions", maintenanceWifiActionsProbe],
+  ["#wifiSsidInput", maintenanceWifiSsidProbe],
+  ["#wifiPasswordInput", maintenanceWifiPasswordProbe],
+  ["#wifiRefreshButton", maintenanceWifiRefreshProbe],
+  ["#saveWifiButton", maintenanceWifiConnectProbe]
+]);
+const maintenanceKeyboardLayout = assertMaintenanceFullKeyboardLayout({
+  documentElement: {
+    getAttribute: (name) => name === "data-soft-keyboard-open" ? "true" : (name === "data-soft-keyboard-layout" ? "full" : null)
+  },
+  querySelector: (selector) => maintenanceKeyboardElements.get(selector)
+}, {
+  innerWidth: 1920,
+  innerHeight: 1080,
+  getComputedStyle: (element) => element.computedStyle
+});
+assert.equal(maintenanceKeyboardLayout.viewportWidth, 1920);
+assert.equal(maintenanceKeyboardLayout.viewportHeight, 1080);
+assert.ok(maintenanceKeyboardLayout.actionRect.bottom <= maintenanceKeyboardLayout.dockRect.top);
+assert.equal(maintenanceKeyboardLayout.actionDockIntersection, 0);
 
 function assertHomeBinScreenshotLayout(performanceMode) {
   const row = rectangle(753, 811, 212, 968);

@@ -434,6 +434,26 @@ html[data-soft-keyboard-open="true"][data-soft-keyboard-layout="numeric"] [data-
   transform: translate(-240px, -10px);
 }
 
+html[data-soft-keyboard-open="true"][data-soft-keyboard-layout="full"] [data-page="maintenance"]:not([hidden]) .settings-layout {
+  height: 332px;
+}
+
+html[data-soft-keyboard-open="true"][data-soft-keyboard-layout="full"] #wifiSettingsPanel {
+  scroll-padding: 20px 0 92px;
+}
+
+html[data-soft-keyboard-open="true"][data-soft-keyboard-layout="full"] #wifiSettingsPanel .maintenance-panel-head {
+  display: none;
+}
+
+html[data-soft-keyboard-open="true"][data-soft-keyboard-layout="full"] #wifiSettingsPanel .settings-row {
+  margin-bottom: 12px;
+}
+
+html[data-soft-keyboard-open="true"][data-soft-keyboard-layout="full"] #wifiSettingsPanel .wifi-settings-actions {
+  margin-top: 10px;
+}
+
 html[data-theme="graphite"] {
   --keyboard-panel: var(--skin-surface);
   --keyboard-panel-border: rgba(255, 255, 255, 0.72);
