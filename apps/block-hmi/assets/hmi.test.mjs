@@ -249,8 +249,8 @@ assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]
 assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
 assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", state\.mode === "manual"\);/);
 for (const asset of [
-  'assets/soft-keyboard.css?v=20260807.6',
-  'assets/soft-keyboard.js?v=20260807.6',
+  'assets/soft-keyboard.css?v=20260808.1',
+  'assets/soft-keyboard.js?v=20260808.1',
   './assets/hmi.mjs?v=20260808.1'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
@@ -275,6 +275,20 @@ assert.match(index, /setTimeout\(\(\) => \{[\s\S]*?saveProductionSettings\(\);[\
 assert.match(index, /"\/api\/maintenance\/production"/);
 assert.match(index, /"\/api\/maintenance\/connectivity"/);
 assert.match(index, /"\/api\/maintenance\/wifi\/connect"/);
+const wifiConnect = index.match(/async function connectWiFi\(\) \{[\s\S]*?\n      \}\n\n      function switchMaintenanceTab/);
+assert.notEqual(wifiConnect, null);
+assert.match(wifiConnect[0], /try \{[\s\S]*?await maintenanceRequest\("\/api\/maintenance\/wifi\/connect", "POST", \{ ssid, password \}\);[\s\S]*?passwordInput\.value = "";\s*window\.HMISoftKeyboard\?\.clearInput\(passwordInput\);[\s\S]*?return true;/);
+assert.match(wifiConnect[0], /catch \(error\) \{[\s\S]*?return false;[\s\S]*?finally \{\s*wifiRequestInFlight = false;/);
+assert.doesNotMatch(wifiConnect[0], /finally \{[\s\S]*?passwordInput\.value/);
+assert.doesNotMatch(wifiConnect[0], /localStorage|sessionStorage|console\./);
+assert.match(index, /<div class="settings-actions wifi-settings-actions"><button id="wifiRefreshButton" type="button">刷新状态<\/button><button id="saveWifiButton" type="submit">连接 Wi-Fi<\/button><\/div>/);
+assert.ok(index.indexOf('<div class="settings-actions wifi-settings-actions"') < index.indexOf('<dl class="connection-facts" aria-label="Wi-Fi 与 BDM 当前状态">'));
+assert.match(keyboardCSS, /\.page\[data-page="maintenance"\] \.wifi-settings-actions \{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+assert.match(keyboardCSS, /\.page\[data-page="maintenance"\] \.wifi-settings-actions button \{[\s\S]*?min-height: 56px;[\s\S]*?cursor: pointer;/);
+assert.doesNotMatch(index, /\.line-name::after|html\[data-backend-status="online"\] \.line-name::after/);
+for (const removedMaintenanceCopy of ["选择一项本机配置", "目标、换刀与装箱", "本机无线连接", "只读采集状态", "本机账户与会话"]) {
+  assert.equal(index.includes(removedMaintenanceCopy), false, `${removedMaintenanceCopy} should not remain in the maintenance UI`);
+}
 assert.doesNotMatch(source + compiledSource + index, /\/api\/v[12]\//);
 assert.doesNotMatch(index, /backend\.updateSettings/);
 assert.doesNotMatch(index, /api-client\.js/);
@@ -302,6 +316,10 @@ assert.match(keyboardSource, /function isAuthenticationInput\(input\) \{[\s\S]*?
 assert.match(keyboardSource, /function validateInput\(input, focusOnError\) \{[\s\S]*?isAuthenticationInput\(input\)/);
 assert.match(keyboardSource, /function syncActiveValue\(value, emitInput\) \{[\s\S]*?if \(activeInput\.value !== nextValue\) activeInput\.value = nextValue;[\s\S]*?clearError\(activeInput\);/);
 assert.match(keyboardSource, /function clearError\(input\) \{[\s\S]*?input\.hasAttribute\("aria-invalid"\)[\s\S]*?validationLine\.textContent !== ""/);
+assert.match(keyboardSource, /disableButtonHold: true/);
+assert.match(keyboardSource, /function ensureKeyboard\(\) \{\s*if \(keyboard\) return true;/);
+assert.match(keyboardSource, /function bindInput\(input\) \{\s*if \(input\.getAttribute\("data-soft-keyboard-bound"\) === "true"\) return;/);
+assert.match(keyboardSource, /function clearInput\(input\) \{[\s\S]*?keyboard\.setInput\("", inputName\);[\s\S]*?dispatchFieldEvent\(input, "input"\);/);
 assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: true \}/);
 assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: false \}/);
 assert.match(keyboardCSS, /\.soft-keyboard-dock \{[\s\S]*?box-shadow: none;[\s\S]*?transition: none;/);

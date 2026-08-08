@@ -1117,30 +1117,8 @@
         inset 0 1px 1px rgba(255, 255, 255, 0.72);
     }
 
-    .line-name::after {
-      margin-left: 4px;
-      padding: 5px 9px;
-      color: #6e6e73;
-      border: 1px solid rgba(29, 29, 31, 0.07);
-      border-radius: 999px;
-      content: "正在连接";
-      background: rgba(255, 255, 255, 0.64);
-      font-size: 11px;
-      font-weight: 560;
-      letter-spacing: 0;
-    }
-
-    html[data-backend-status="online"] .line-name::after {
-      content: "后台联机";
-    }
-
     html[data-backend-status="online"] .line-name::before {
       background: var(--green);
-    }
-
-    html[data-backend-status="offline"] .line-name::after {
-      color: var(--red);
-      content: "后台离线";
     }
 
     html[data-backend-status="offline"] .line-name::before {
@@ -1997,11 +1975,6 @@
         box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
       }
 
-      .line-name::after {
-        padding: 3px 6px;
-        font-size: 8px;
-      }
-
       .top-meta {
         font-size: 11px;
       }
@@ -2391,10 +2364,6 @@
     /* Larger type, preserving the current spacing and component geometry. */
     .line-name {
       font-size: 29px;
-    }
-
-    .line-name::after {
-      font-size: 13px;
     }
 
     .top-meta {
@@ -2856,7 +2825,6 @@
       color: #fff;
     }
 
-    html[data-theme="graphite"] .line-name::after,
     html[data-theme="graphite"] .top-meta time,
     html[data-theme="graphite"] .screen-label,
     html[data-theme="graphite"] .pick-marker {
@@ -2864,10 +2832,6 @@
       border-color: rgba(255, 255, 255, 0.36);
       background: rgba(255, 255, 255, 0.07);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11);
-    }
-
-    html[data-theme="graphite"][data-backend-status="offline"] .line-name::after {
-      color: #ff9a93;
     }
 
     html[data-theme="graphite"] .control-button,
@@ -3043,10 +3007,6 @@
     @media (orientation: landscape) and (max-height: 500px) {
       .line-name {
         font-size: 19px;
-      }
-
-      .line-name::after {
-        font-size: 10px;
       }
 
       .top-meta {
@@ -3238,10 +3198,6 @@
       margin-right: 13px;
     }
 
-    html.no-flex-gap .line-name::after {
-      margin-left: 17px;
-    }
-
     html.no-flex-gap .top-meta > * + *,
     html.no-flex-gap .system-row > * + *,
     html.no-flex-gap .pick-status > * + *,
@@ -3310,10 +3266,6 @@
 
       html.no-flex-gap .line-name::before {
         margin-right: 9px;
-      }
-
-      html.no-flex-gap .line-name::after {
-        margin-left: 13px;
       }
 
       html.no-flex-gap .top-meta > * + * {
@@ -3670,8 +3622,6 @@
       letter-spacing: -0.03em;
     }
 
-    .maintenance-sidebar-heading small,
-    .maintenance-switch small,
     .maintenance-panel-head p,
     .maintenance-section-head small {
       color: #6e6e73;
@@ -3687,9 +3637,9 @@
       color: #515154;
       cursor: pointer;
       display: grid;
-      gap: 2px 10px;
+      gap: 10px;
       grid-template-columns: 28px minmax(0, 1fr);
-      min-height: 68px;
+      min-height: 58px;
       padding: 12px 10px;
       text-align: left;
     }
@@ -3699,18 +3649,12 @@
       color: #86868b;
       font-size: 12px;
       font-variant-numeric: tabular-nums;
-      grid-row: 1 / span 2;
+      grid-row: auto;
     }
 
     .maintenance-switch strong {
       color: inherit;
       font-size: 16px;
-    }
-
-    .maintenance-switch small {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     .maintenance-switch:hover,
@@ -3725,8 +3669,7 @@
       color: #ffffff;
     }
 
-    .maintenance-switch.active > span,
-    .maintenance-switch.active small {
+    .maintenance-switch.active > span {
       color: rgba(255, 255, 255, 0.76);
     }
 
@@ -4072,7 +4015,7 @@
     }
   </style>
   <link rel="stylesheet" href="assets/vendor/simple-keyboard/index.css">
-  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260807.6">
+  <link rel="stylesheet" href="assets/soft-keyboard.css?v=20260808.1">
 </head>
 <body>
   <section class="auth-overlay" id="auth-panel" aria-labelledby="authTitle" role="dialog" hidden>
@@ -4357,14 +4300,11 @@
         <section class="page" data-page="maintenance" hidden>
           <div class="settings-layout">
             <nav class="maintenance-switcher" role="tablist" aria-label="维护功能">
-              <span class="maintenance-sidebar-heading">
-                <strong>维护设置</strong>
-                <small>选择一项本机配置</small>
-              </span>
-              <button class="maintenance-switch active" id="maintenanceProductionTab" type="button" role="tab" aria-selected="true" aria-controls="productionSettingsPanel" data-maintenance-tab="production"><span>01</span><strong>生产参数</strong><small>目标、换刀与装箱</small></button>
-              <button class="maintenance-switch" id="maintenanceWifiTab" type="button" role="tab" aria-selected="false" aria-controls="wifiSettingsPanel" data-maintenance-tab="wifi"><span>02</span><strong>Wi-Fi</strong><small>本机无线连接</small></button>
-              <button class="maintenance-switch" id="maintenancePLCTab" type="button" role="tab" aria-selected="false" aria-controls="plcSettingsPanel" data-maintenance-tab="plc"><span>03</span><strong>PLC 通信</strong><small>只读采集状态</small></button>
-              <button class="maintenance-switch" id="maintenanceAccountsTab" type="button" role="tab" aria-selected="false" aria-controls="accountSettingsPanel" data-maintenance-tab="accounts"><span>04</span><strong>账号管理</strong><small>本机账户与会话</small></button>
+              <span class="maintenance-sidebar-heading"><strong>维护设置</strong></span>
+              <button class="maintenance-switch active" id="maintenanceProductionTab" type="button" role="tab" aria-selected="true" aria-controls="productionSettingsPanel" data-maintenance-tab="production"><span>01</span><strong>生产参数</strong></button>
+              <button class="maintenance-switch" id="maintenanceWifiTab" type="button" role="tab" aria-selected="false" aria-controls="wifiSettingsPanel" data-maintenance-tab="wifi"><span>02</span><strong>Wi-Fi</strong></button>
+              <button class="maintenance-switch" id="maintenancePLCTab" type="button" role="tab" aria-selected="false" aria-controls="plcSettingsPanel" data-maintenance-tab="plc"><span>03</span><strong>PLC 通信</strong></button>
+              <button class="maintenance-switch" id="maintenanceAccountsTab" type="button" role="tab" aria-selected="false" aria-controls="accountSettingsPanel" data-maintenance-tab="accounts"><span>04</span><strong>账号管理</strong></button>
             </nav>
 
             <div class="maintenance-workspace">
@@ -4418,6 +4358,8 @@
                 <form class="settings-form maintenance-form" id="wifiSettingsForm">
                   <div class="settings-row single-field"><label for="wifiSsidInput">Wi-Fi 名称：</label><input id="wifiSsidInput" name="ssid" type="text" autocomplete="off" required data-soft-keyboard="full" data-soft-label="Wi-Fi 名称"></div>
                   <div class="settings-row single-field"><label for="wifiPasswordInput">Wi-Fi 密码：</label><span class="password-field"><input id="wifiPasswordInput" name="password" type="password" autocomplete="off" required data-soft-keyboard="full" data-soft-label="Wi-Fi 密码" aria-describedby="wifiPasswordHint"><button class="password-visibility-toggle" type="button" aria-controls="wifiPasswordInput" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button></span></div>
+                  <div class="settings-actions wifi-settings-actions"><button id="wifiRefreshButton" type="button">刷新状态</button><button id="saveWifiButton" type="submit">连接 Wi-Fi</button></div>
+                  <p class="maintenance-save-state" id="networkSaveState" role="status" aria-live="polite" data-state="idle">等待提交</p>
                   <dl class="connection-facts" aria-label="Wi-Fi 与 BDM 当前状态">
                     <div><dt>网卡</dt><dd id="wifiInterfaceValue">—</dd></div>
                     <div><dt>本机 IP</dt><dd id="wifiIpv4Value">—</dd></div>
@@ -4426,9 +4368,7 @@
                     <div><dt>BDM 最近成功</dt><dd id="bdmLastSuccessValue">—</dd></div>
                     <div><dt>BDM 错误</dt><dd id="bdmLastErrorValue">—</dd></div>
                   </dl>
-                  <p class="settings-note" id="wifiPasswordHint">密码只用于本次连接，提交后立即清空且不会回显。</p>
-                  <div class="settings-actions"><button id="wifiRefreshButton" type="button">刷新状态</button><button id="saveWifiButton" type="submit">连接 Wi-Fi</button></div>
-                  <p class="maintenance-save-state" id="networkSaveState" role="status" aria-live="polite" data-state="idle">等待提交</p>
+                  <p class="settings-note" id="wifiPasswordHint">密码只用于本次连接，连接成功后清空且不会回显。</p>
                 </form>
               </section>
 
@@ -4552,7 +4492,7 @@
   </aside>
 
   <script src="assets/vendor/simple-keyboard/index.js"></script>
-  <script src="assets/soft-keyboard.js?v=20260807.6"></script>
+  <script src="assets/soft-keyboard.js?v=20260808.1"></script>
   <script>
     window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.1").then(function (module) {
       return module.installHMIBackend();
@@ -5193,6 +5133,8 @@
         try {
           const connectivity = await maintenanceRequest("/api/maintenance/wifi/connect", "POST", { ssid, password });
           renderConnectivity(connectivity);
+          passwordInput.value = "";
+          window.HMISoftKeyboard?.clearInput(passwordInput);
           setMaintenanceSaveState("#networkSaveState", "Wi-Fi 已提交连接", "saved");
           showToast("Wi-Fi 已提交连接");
           return true;
@@ -5201,7 +5143,6 @@
           showToast(maintenanceErrorMessage(error), "danger");
           return false;
         } finally {
-          passwordInput.value = "";
           wifiRequestInFlight = false;
         }
       }

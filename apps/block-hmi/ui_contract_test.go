@@ -40,8 +40,8 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`/api/maintenance/connectivity`,
 		`/api/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`assets/soft-keyboard.css?v=20260807.6`,
-		`assets/soft-keyboard.js?v=20260807.6`,
+		`assets/soft-keyboard.css?v=20260808.1`,
+		`assets/soft-keyboard.js?v=20260808.1`,
 		`import("./assets/hmi.mjs?v=20260808.1")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
@@ -101,6 +101,32 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!regexp.MustCompile(`(?s)\.maintenance-panel \{.*?overflow-y: auto;.*?overscroll-behavior: contain;`).MatchString(page) {
 		t.Fatal("maintenance panels do not have isolated local scrolling")
 	}
+	if regexp.MustCompile(`\.line-name::after|html\[data-backend-status="online"\] \.line-name::after`).MatchString(page) {
+		t.Fatal("top backend-status badge is still rendered")
+	}
+	for _, removed := range []string{
+		`选择一项本机配置`,
+		`目标、换刀与装箱`,
+		`本机无线连接`,
+		`只读采集状态`,
+		`本机账户与会话`,
+	} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("maintenance sidebar still contains removed copy %q", removed)
+		}
+	}
+	if !strings.Contains(page, `<div class="settings-actions wifi-settings-actions"><button id="wifiRefreshButton" type="button">刷新状态</button><button id="saveWifiButton" type="submit">连接 Wi-Fi</button></div>`) ||
+		strings.Index(page, `<div class="settings-actions wifi-settings-actions"`) > strings.Index(page, `<dl class="connection-facts" aria-label="Wi-Fi 与 BDM 当前状态">`) {
+		t.Fatal("Wi-Fi actions are not rendered ahead of the connection facts")
+	}
+	wifiConnect := regexp.MustCompile(`(?s)async function connectWiFi\(\) \{.*?\n      \}\n\n      function switchMaintenanceTab`).FindString(page)
+	if wifiConnect == "" ||
+		!regexp.MustCompile(`(?s)try \{.*?await maintenanceRequest\("/api/maintenance/wifi/connect", "POST", \{ ssid, password \}\);.*?passwordInput\.value = "";\s*window\.HMISoftKeyboard\?\.clearInput\(passwordInput\);.*?return true;`).MatchString(wifiConnect) ||
+		!regexp.MustCompile(`(?s)catch \(error\) \{.*?return false;.*?finally \{\s*wifiRequestInFlight = false;`).MatchString(wifiConnect) ||
+		regexp.MustCompile(`(?s)finally \{.*?passwordInput\.value`).MatchString(wifiConnect) ||
+		strings.Contains(wifiConnect, "localStorage") || strings.Contains(wifiConnect, "sessionStorage") || strings.Contains(wifiConnect, "console.") {
+		t.Fatal("Wi-Fi connection no longer clears passwords only after success without persisting or logging them")
+	}
 	passwordInputs := regexp.MustCompile(`<input id="([^"]+)"[^>]*type="password"[^>]*>`).FindAllStringSubmatch(page, -1)
 	passwordToggles := regexp.MustCompile(`<button[^>]*aria-controls="([^"]+)"[^>]*data-password-toggle`).FindAllStringSubmatch(page, -1)
 	if len(passwordInputs) != 7 || len(passwordToggles) != len(passwordInputs) {
@@ -141,6 +167,10 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] \.auth-form \.auth-field \{.*?grid-template-columns: 90px minmax\(0, 1fr\);`).Match(keyboardCSS) {
 		t.Fatal("keyboard-open authentication form no longer keeps the two-column submit layout")
+	}
+	if !regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.wifi-settings-actions \{.*?display: grid;.*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);`).Match(keyboardCSS) ||
+		!regexp.MustCompile(`(?s)\.page\[data-page="maintenance"\] \.wifi-settings-actions button \{.*?min-height: 56px;.*?cursor: pointer;`).Match(keyboardCSS) {
+		t.Fatal("Wi-Fi actions do not have a visible two-button layout")
 	}
 	if !regexp.MustCompile(`(?s)\.soft-keyboard-dock\[data-open-immediate="true"\] \{.*?transition: none;`).Match(keyboardCSS) ||
 		!regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-dock \{.*?transition: none;`).Match(keyboardCSS) {
@@ -292,6 +322,12 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if !regexp.MustCompile(`function validateInput\(input, focusOnError\) \{[\s\S]*?isAuthenticationInput\(input\)`).MatchString(keyboard) {
 		t.Fatal("authentication validation can still reserve keyboard error space")
+	}
+	if !strings.Contains(keyboard, `disableButtonHold: true`) ||
+		!regexp.MustCompile(`function ensureKeyboard\(\) \{\s*if \(keyboard\) return true;`).MatchString(keyboard) ||
+		!regexp.MustCompile(`function bindInput\(input\) \{\s*if \(input\.getAttribute\("data-soft-keyboard-bound"\) === "true"\) return;`).MatchString(keyboard) ||
+		!regexp.MustCompile(`(?s)function clearInput\(input\) \{.*?keyboard\.setInput\("", inputName\);.*?dispatchFieldEvent\(input, "input"\);`).MatchString(keyboard) {
+		t.Fatal("soft keyboard does not bind once, suppress held-key repeats, and clear successful secret input")
 	}
 	for _, asset := range []string{
 		"assets/demo-shell.mjs",

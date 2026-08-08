@@ -166,6 +166,7 @@
         display: copyDisplay("完成"),
         mergeDisplay: true,
         useButtonTag: true,
+        disableButtonHold: true,
         preventMouseDownDefault: true,
         preventMouseUpDefault: true,
         onChange: handleKeyboardChange,
@@ -516,6 +517,19 @@
       return;
     }
     keyboard.setInput("", inputName);
+  }
+
+  function clearInput(input) {
+    if (!input) return;
+    var inputName = getInputName(input);
+    input.value = "";
+    if (keyboard) {
+      keyboard.setInput("", inputName);
+      if (input === activeInput && typeof keyboard.setCaretPosition === "function") {
+        keyboard.setCaretPosition(0);
+      }
+    }
+    dispatchFieldEvent(input, "input");
   }
 
   function closeKeyboard(action) {
@@ -873,6 +887,7 @@
     commitActive: commitActive,
     validateInput: validateInput,
     validateForm: validateForm,
+    clearInput: clearInput,
     setMode: setMode,
     setPinned: setPinned,
     getMode: function () { return mode; },

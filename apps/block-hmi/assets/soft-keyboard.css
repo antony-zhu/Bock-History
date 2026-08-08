@@ -28,6 +28,40 @@
   margin-top: 0;
 }
 
+.page[data-page="maintenance"] .wifi-settings-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  justify-content: stretch;
+  margin: 18px 0 0;
+}
+
+.page[data-page="maintenance"] .wifi-settings-actions > * + * {
+  margin-left: 0;
+}
+
+.page[data-page="maintenance"] .wifi-settings-actions button {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 56px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 16px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+#wifiRefreshButton {
+  color: #1d1d1f;
+  background: rgba(120, 120, 128, 0.16);
+}
+
+#saveWifiButton {
+  color: #fff;
+  background: var(--blue);
+}
+
 .soft-keyboard-toggle {
   display: flex;
   align-items: center;

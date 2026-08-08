@@ -42,7 +42,7 @@ PLC 连接状态及安全校验，并对同机 HMI 返回相同的运行时数�
 - 生产参数的目标、换刀件数和抽检间隔在编辑停止 650 ms 后通过本机
   `PATCH /api/maintenance/production` 保存；单框工件数量单独保存。
 - Wi-Fi 状态从本机 `GET /api/maintenance/connectivity` 读取；连接请求发送到
-  `POST /api/maintenance/wifi/connect`。密码只用于当前请求，提交后立即清空，
+  `POST /api/maintenance/wifi/connect`。密码只用于当前请求，连接成功后清空，
   不会回显。
 - PLC 页只显示现有 WebSocket 的连接、最近采样/错误、点数和实时点值，并保留
   既有的扫描、连接、断开和刷新操作；不提供 PLC 网络或点表手工配置。
