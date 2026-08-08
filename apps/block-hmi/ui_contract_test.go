@@ -556,29 +556,64 @@ func TestDemoInputBridgeOnlyRunsInDemoFrame(t *testing.T) {
 	}
 }
 
-func TestPointsJSONKeepsDisplayBindingsOutOfRuntimePoints(t *testing.T) {
-	contents, err := os.ReadFile("assets/points.json")
-	if err != nil {
-		t.Fatal(err)
+func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T) {
+	type binding struct {
+		DisplayPath string  `json:"displayPath"`
+		Description string  `json:"description"`
+		ReadPoint   *string `json:"readPoint"`
+		WritePoint  *string `json:"writePoint"`
+		Action      string  `json:"action"`
+		Permission  string  `json:"permission"`
+		State       string  `json:"state"`
 	}
-	var config struct {
+	type pointsConfig struct {
 		ScanIntervalMs int              `json:"scanIntervalMs"`
 		Points         []map[string]any `json:"points"`
-		Bindings       []struct {
-			DisplayPath string  `json:"displayPath"`
-			Description string  `json:"description"`
-			ReadPoint   *string `json:"readPoint"`
-			WritePoint  *string `json:"writePoint"`
-			Action      string  `json:"action"`
-			Permission  string  `json:"permission"`
-			State       string  `json:"state"`
-		} `json:"bindings"`
+		Bindings       []binding        `json:"bindings"`
 	}
-	if err := json.Unmarshal(contents, &config); err != nil {
-		t.Fatal(err)
+	readConfig := func(path string) pointsConfig {
+		t.Helper()
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config pointsConfig
+		if err := json.Unmarshal(contents, &config); err != nil {
+			t.Fatal(err)
+		}
+		return config
 	}
+
+	defaultConfig := readConfig("assets/points.json")
+	if defaultConfig.ScanIntervalMs != 50 || len(defaultConfig.Points) != 8 || len(defaultConfig.Bindings) == 0 {
+		t.Fatalf("incomplete default points.json: %+v", defaultConfig)
+	}
+	for _, point := range defaultConfig.Points {
+		if point["type"] != "bool" || point["writeMethod"] != "maskWrite" || point["registerCount"] != nil || point["wordOrder"] != nil {
+			t.Fatalf("default profile exposes an unverified numeric point: %+v", point)
+		}
+	}
+	for _, displayPath := range []string{
+		"manual.motion.x.absolute.target.parameter", "manual.motion.z.absolute.target.parameter",
+		"manual.motion.x.relative.distance.parameter", "manual.motion.z.relative.distance.parameter",
+	} {
+		found := false
+		for _, binding := range defaultConfig.Bindings {
+			if binding.DisplayPath == displayPath {
+				found = true
+				if binding.State != "pending" || binding.ReadPoint != nil || binding.WritePoint != nil {
+					t.Fatalf("default profile exposes numeric binding %q: %+v", displayPath, binding)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("default profile omits pending numeric binding %q", displayPath)
+		}
+	}
+
+	config := readConfig("assets/points.simulatorFloat32.json")
 	if config.ScanIntervalMs != 50 || len(config.Points) != 30 || len(config.Bindings) == 0 {
-		t.Fatalf("incomplete points.json: %+v", config)
+		t.Fatalf("incomplete simulator points.json: %+v", config)
 	}
 	wantAddresses := []string{
 		"D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4",
@@ -619,23 +654,15 @@ func TestPointsJSONKeepsDisplayBindingsOutOfRuntimePoints(t *testing.T) {
 		"manual.motion.x.relative.distance.parameter", "manual.motion.x.relative.speed.parameter", "manual.motion.x.relative.acceleration.parameter", "manual.motion.x.relative.deceleration.parameter",
 		"manual.motion.z.relative.distance.parameter", "manual.motion.z.relative.speed.parameter", "manual.motion.z.relative.acceleration.parameter", "manual.motion.z.relative.deceleration.parameter",
 	} {
-		var binding *struct {
-			DisplayPath string  `json:"displayPath"`
-			Description string  `json:"description"`
-			ReadPoint   *string `json:"readPoint"`
-			WritePoint  *string `json:"writePoint"`
-			Action      string  `json:"action"`
-			Permission  string  `json:"permission"`
-			State       string  `json:"state"`
-		}
+		var numericBinding *binding
 		for index := range config.Bindings {
 			if config.Bindings[index].DisplayPath == displayPath {
-				binding = &config.Bindings[index]
+				numericBinding = &config.Bindings[index]
 				break
 			}
 		}
-		if binding == nil || binding.ReadPoint == nil || binding.WritePoint == nil || *binding.ReadPoint != displayPath || *binding.WritePoint != displayPath || binding.Action != "set" || binding.Permission != "maintenance" || binding.State != "configured" {
-			t.Fatalf("numeric binding is incomplete for %q: %+v", displayPath, binding)
+		if numericBinding == nil || numericBinding.ReadPoint == nil || numericBinding.WritePoint == nil || *numericBinding.ReadPoint != displayPath || *numericBinding.WritePoint != displayPath || numericBinding.Action != "set" || numericBinding.Permission != "maintenance" || numericBinding.State != "configured" {
+			t.Fatalf("numeric binding is incomplete for %q: %+v", displayPath, numericBinding)
 		}
 	}
 }

@@ -107,8 +107,11 @@ node assets/hmi.test.mjs
 go test ./...
 ```
 
-`assets/points.json` 是页面、点位和显示绑定的唯一来源。`runtime.configure`
-只发送运行时点位；显示路径和中文说明只在浏览器使用。
+`assets/points.json` 是默认/真实 PLC 使用的安全点表，只包含已确认的 BOOL
+点位。电脑模拟联调的 FLOAT32 点表单独保存在
+`assets/points.simulatorFloat32.json`，只能由发布构建时显式选择；默认页面始终加载
+`points.json`。`runtime.configure` 只发送所选点表的运行时点位；显示路径和中文说明只在
+浏览器使用。
 
 ## 2026-08-08 模式切换与显示文案
 

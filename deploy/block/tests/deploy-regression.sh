@@ -38,6 +38,46 @@ fi
 
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
+
+PROFILE_BIN=$TEST_ROOT/profile-bin
+mkdir -p "$PROFILE_BIN"
+printf '%s\n' \
+  '#!/usr/bin/env sh' \
+  'set -eu' \
+  'output=' \
+  'while [ "$#" -gt 0 ]; do' \
+  '  case "$1" in' \
+  '    -o) output=$2; shift 2 ;;' \
+  '    *) shift ;;' \
+  '  esac' \
+  'done' \
+  '[ -n "$output" ]' \
+  ': > "$output"' > "$PROFILE_BIN/go"
+chmod +x "$PROFILE_BIN/go"
+
+DEFAULT_PROFILE_ARTIFACT=$TEST_ROOT/default-profile-artifact
+PATH="$PROFILE_BIN:$PATH" "$DEPLOY_DIR/build.sh" --output "$DEFAULT_PROFILE_ARTIFACT" --version profile-default >/dev/null
+grep -Fq '"address": "D504.0"' "$DEFAULT_PROFILE_ARTIFACT/web/assets/points.json" || fail "default profile lost verified BOOL points"
+if grep -Eq 'D800|D812|float32|fc10' "$DEFAULT_PROFILE_ARTIFACT/web/assets/points.json"; then
+  fail "default profile includes unverified numeric points"
+fi
+[ ! -e "$DEFAULT_PROFILE_ARTIFACT/web/assets/points.simulatorFloat32.json" ] || fail "default artifact includes simulator point bundle"
+
+SIMULATOR_PROFILE_ARTIFACT=$TEST_ROOT/simulator-profile-artifact
+BLOCK_PLC_PROFILE=simulatorFloat32 PATH="$PROFILE_BIN:$PATH" "$DEPLOY_DIR/build.sh" --output "$SIMULATOR_PROFILE_ARTIFACT" --version profile-simulator >/dev/null
+grep -Fq '"address": "D800"' "$SIMULATOR_PROFILE_ARTIFACT/web/assets/points.json" || fail "simulator profile omitted D800"
+grep -Fq '"address": "D812"' "$SIMULATOR_PROFILE_ARTIFACT/web/assets/points.json" || fail "simulator profile omitted D812"
+grep -Fq '"writeMethod": "fc10"' "$SIMULATOR_PROFILE_ARTIFACT/web/assets/points.json" || fail "simulator profile omitted FC10"
+[ ! -e "$SIMULATOR_PROFILE_ARTIFACT/web/assets/points.simulatorFloat32.json" ] || fail "simulator artifact retains its source bundle"
+
+if OUTPUT=$(BLOCK_PLC_PROFILE=unknown PATH="$PROFILE_BIN:$PATH" "$DEPLOY_DIR/build.sh" --output "$TEST_ROOT/unknown-profile-artifact" --version profile-unknown 2>&1); then
+  fail "build accepted an unknown PLC profile"
+fi
+case "$OUTPUT" in
+  *'unknown BLOCK_PLC_PROFILE: unknown'*) ;;
+  *) fail "unknown PLC profile did not produce the expected error" ;;
+esac
+
 ARTIFACT_DIR=$TEST_ROOT/artifact
 mkdir -p "$ARTIFACT_DIR/bin" "$ARTIFACT_DIR/web/assets"
 touch "$ARTIFACT_DIR/web/index.html" "$ARTIFACT_DIR/web/assets/points.json"

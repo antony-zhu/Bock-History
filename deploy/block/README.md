@@ -64,7 +64,9 @@ export GOTMPDIR="$CACHE_ROOT/go-tmp"
 ```
 
 生成不可变制品。开发阶段可运行仓库已有的发布回归检查，但 rollback/transaction
-相关测试不是发布前置门禁。`build.sh` 要求制品目录尚不存在。
+相关测试不是发布前置门禁。`build.sh` 要求制品目录尚不存在。下列命令使用安全默认
+点表；只有电脑模拟 PLC 联调才在同一命令前显式加
+`BLOCK_PLC_PROFILE=simulatorFloat32`，该 FLOAT32 制品不得用于真实 Easy521 发布。
 
 ```bash
 cd "$BLOCK_REPO"

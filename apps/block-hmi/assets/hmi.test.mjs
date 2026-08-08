@@ -167,7 +167,24 @@ const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
-const pointsConfiguration = JSON.parse(readFileSync(new URL("./points.json", import.meta.url), "utf8"));
+const defaultPointsConfiguration = JSON.parse(readFileSync(new URL("./points.json", import.meta.url), "utf8"));
+const simulatorPointsConfiguration = JSON.parse(readFileSync(new URL("./points.simulatorFloat32.json", import.meta.url), "utf8"));
+assert.deepEqual(defaultPointsConfiguration.points.map((point) => point.address), [
+  "D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4"
+]);
+assert.ok(defaultPointsConfiguration.points.every((point) => point.type === "bool" && point.writeMethod === "maskWrite"));
+assert.doesNotMatch(JSON.stringify(defaultPointsConfiguration), /D800|D812|float32|fc10/);
+for (const displayPath of [
+  "manual.motion.x.absolute.target.parameter", "manual.motion.z.absolute.target.parameter",
+  "manual.motion.x.relative.distance.parameter", "manual.motion.z.relative.distance.parameter"
+]) {
+  const binding = defaultPointsConfiguration.bindings.find((item) => item.displayPath === displayPath);
+  assert.deepEqual({ readPoint: binding.readPoint, writePoint: binding.writePoint, state: binding.state }, {
+    readPoint: null, writePoint: null, state: "pending"
+  });
+}
+assert.match(source, /fetch\(new URL\("\.\/points\.json", import\.meta\.url\)/);
+const pointsConfiguration = simulatorPointsConfiguration;
 assert.deepEqual(pointsConfiguration.numericProfiles.simulatorFloat32, {
   scope: "电脑模拟联调",
   dataType: "float32",
@@ -178,9 +195,11 @@ assert.deepEqual(pointsConfiguration.numericProfiles.simulatorFloat32, {
   writeFunction: "FC10",
   verification: "真实 Easy521 投用前，必须用已知浮点基准值核验寄存器跨度和字序；本约定不是现场事实。"
 });
-for (const binding of pointsConfiguration.bindings) {
-  assert.match(binding.displayPath, /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/);
-  assert.match(binding.description, /[\u3400-\u9fff]/);
+for (const configuration of [defaultPointsConfiguration, simulatorPointsConfiguration]) {
+  for (const binding of configuration.bindings) {
+    assert.match(binding.displayPath, /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/);
+    assert.match(binding.description, /[\u3400-\u9fff]/);
+  }
 }
 const xSpeed = pointsConfiguration.points.find((point) => point.pointId === "manual.motion.x.jog.speed.parameter");
 assert.deepEqual(xSpeed, {
