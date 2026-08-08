@@ -334,6 +334,25 @@ func TestDemoShellUsesFixedIndustrialViewport(t *testing.T) {
 	}
 }
 
+func TestHomeRendersOnlyTwoHorizontalBins(t *testing.T) {
+	contents, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(contents)
+	if !regexp.MustCompile(`(?s)\.bin-row \{.*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);.*?align-items:\s*stretch;`).MatchString(page) {
+		t.Fatal("home bins are not a two-column equal-height grid")
+	}
+	bins := regexp.MustCompile(`<div class="bin [^"]+" data-bin="([0-9]+)">`).FindAllStringSubmatch(page, -1)
+	if len(bins) != 2 || bins[0][1] != "0" || bins[1][1] != "1" {
+		t.Fatalf("home must render only bins 0 and 1, got %#v", bins)
+	}
+	renderBins := regexp.MustCompile(`(?s)function renderBins\(\) \{.*?\n      \}`).FindString(page)
+	if renderBins == "" || !strings.Contains(renderBins, `state.bins[index]`) {
+		t.Fatal("home bin rendering no longer preserves the existing state binding")
+	}
+}
+
 func TestDemoInputBridgeOnlyRunsInDemoFrame(t *testing.T) {
 	contents, err := os.ReadFile("index.html")
 	if err != nil {

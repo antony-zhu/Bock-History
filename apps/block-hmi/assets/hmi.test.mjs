@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { assertAuthKeyboardLayout, assertAuthSubmitLayout, authKeyboardSafeGap } from "../tools/auth-layout-probe.mjs";
+import { assertAuthKeyboardLayout, assertAuthSubmitLayout, authKeyboardSafeGap, rectangleIntersectionArea } from "../tools/auth-layout-probe.mjs";
 import {
   demoDisplayScale,
   demoFrameParameter,
@@ -235,6 +235,11 @@ assert.match(index, /id="operatorName">登录<\/div>/);
 assert.doesNotMatch(index, /<span class="nav-en">/);
 assert.doesNotMatch(index, /<div class="meta-en">Operator<\/div>/);
 assert.doesNotMatch(index, /id="modeEn"|id="modeState"|远程联机/);
+assert.match(index, /\.bin-row \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);[\s\S]*?align-items: stretch;/);
+assert.deepEqual([...index.matchAll(/<div class="bin [^"]+" data-bin="(\d+)">/g)].map((match) => match[1]), ["0", "1"]);
+const renderBins = index.match(/function renderBins\(\) \{[\s\S]*?\n      \}/);
+assert.notEqual(renderBins, null);
+assert.match(renderBins[0], /state\.bins\[index\]/);
 assert.match(index, /#hmi-footer \{[\s\S]*?--footer-control-height: 102px;[\s\S]*?grid-template-columns: 220px minmax\(0, 1fr\) 220px;/);
 assert.match(index, /#hmi-footer \.nav-button,[\s\S]*?#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\S]*?height: var\(--footer-control-height\);[\s\S]*?min-height: var\(--footer-control-height\);/);
 assert.match(index, /#hmi-footer \.operator \{[\s\S]*?height: var\(--footer-control-height\);/);
@@ -369,3 +374,35 @@ const submitLayoutResult = assertAuthSubmitLayout({ querySelector: (selector) =>
 });
 assert.equal(submitLayoutResult.viewportWidth, 1920);
 assert.equal(submitLayoutResult.viewportHeight, 1080);
+
+function assertHomeBinScreenshotLayout(performanceMode) {
+  const row = rectangle(753, 811, 212, 968);
+  const bins = [rectangle(753, 811, 212, 582), rectangle(753, 811, 598, 968)];
+  const homeLeft = rectangle(188, 830, 184, 996);
+  const protectedRegions = [
+    rectangle(294, 694, 202, 978),
+    rectangle(188, 830, 1016, 1736),
+    rectangle(848, 990, 160, 1760)
+  ];
+  assert.equal(typeof performanceMode, "boolean");
+  if (performanceMode) {
+    const performanceRule = index.match(/html\[data-performance="low"\] \*,[\s\S]*?\n    \}/);
+    assert.notEqual(performanceRule, null);
+    assert.doesNotMatch(performanceRule[0], /\b(?:grid|width|height|position|top|right|bottom|left)\b/);
+  }
+  assert.equal(bins.length, 2);
+  assert.equal(bins[0].top, bins[1].top);
+  assert.equal(bins[0].bottom, bins[1].bottom);
+  assert.equal(bins[0].width, bins[1].width);
+  assert.equal(bins[0].height, bins[1].height);
+  assert.ok(bins[0].right < bins[1].left);
+  assert.equal(bins[0].left, row.left);
+  assert.equal(bins[1].right, row.right);
+  assert.ok(row.left >= homeLeft.left && row.right <= homeLeft.right && row.bottom <= homeLeft.bottom);
+  for (const protectedRegion of protectedRegions) {
+    assert.equal(rectangleIntersectionArea(row, protectedRegion), 0);
+  }
+}
+
+assertHomeBinScreenshotLayout(false);
+assertHomeBinScreenshotLayout(true);

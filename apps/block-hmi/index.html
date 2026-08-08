@@ -302,7 +302,8 @@
       bottom: 0;
       left: 8px;
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: stretch;
       gap: 26px;
     }
 
@@ -4251,11 +4252,6 @@
                   <div class="bin-name">库位2</div>
                   <div class="bin-bar" aria-hidden="true"></div>
                   <div class="bin-state">需换料</div>
-                </div>
-                <div class="bin fault" data-bin="2">
-                  <div class="bin-name">库位3</div>
-                  <div class="bin-bar" aria-hidden="true"></div>
-                  <div class="bin-state">异常</div>
                 </div>
               </div>
             </div>
