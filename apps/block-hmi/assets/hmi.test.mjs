@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { assertAuthKeyboardLayout, authKeyboardSafeGap } from "../tools/auth-layout-probe.mjs";
+import { assertAuthKeyboardLayout, assertAuthSubmitLayout, authKeyboardSafeGap } from "../tools/auth-layout-probe.mjs";
 import {
   demoDisplayScale,
   demoFrameParameter,
@@ -136,19 +136,20 @@ assert.equal(values.size, 0);
 assert.equal(devices.length, 0);
 
 const source = readFileSync(new URL("./hmi.mts", import.meta.url), "utf8");
+const compiledSource = readFileSync(new URL("./hmi.mjs", import.meta.url), "utf8");
 const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
-const userVisibleCopy = (source + index).replace(/\/api\/v2(?:\/[a-z-]+)+/gi, "");
+const userVisibleCopy = (source + index).replace(/\/api(?:\/[a-z-]+)+/gi, "");
 assert.doesNotMatch(userVisibleCopy, /\bv2\b/i);
 assert.doesNotMatch(source, /localStorage|sessionStorage|crypto\.subtle|passwordDigest|block-hmi-local-/);
 assert.match(source, /this\.prepareGuestHMI\(\);[\s\S]*?await this\.loadAuthenticationState\(\);[\s\S]*?this\.openSocket\(\);/);
-assert.match(source, /authRequest\("\/api\/v2\/auth\/initial-admin", "GET"\)/);
-assert.match(source, /authRequest\("\/api\/v2\/config\/session", "GET"\)/);
-assert.match(source, /authRequest\("\/api\/v2\/auth\/login", "POST"/);
-assert.match(source, /authRequest\("\/api\/v2\/auth\/password", "POST"/);
-assert.match(source, /authRequest\("\/api\/v2\/config\/session", "PUT"/);
+assert.match(source, /authRequest\("\/api\/auth\/initial-admin", "GET"\)/);
+assert.match(source, /authRequest\("\/api\/config\/session", "GET"\)/);
+assert.match(source, /authRequest\("\/api\/auth\/login", "POST"/);
+assert.match(source, /authRequest\("\/api\/auth\/password", "POST"/);
+assert.match(source, /authRequest\("\/api\/config\/session", "PUT"/);
 assert.match(source, /private moveLocalAdministrationToMaintenance\(\): void/);
 assert.match(source, /private bindPasswordVisibilityToggles\(\): void/);
 assert.match(source, /toggle\.addEventListener\("pointerdown", \(event\) => event\.preventDefault\(\)\)/);
@@ -160,7 +161,7 @@ const bootstrapAttempt = source.match(/private async createInitialAdmin\(usernam
 assert.notEqual(bootstrapAttempt, null);
 assert.match(bootstrapAttempt[0], /if \(this\.initialAdminInFlight\) \{\s*return;\s*\}[\s\S]*?this\.initialAdminInFlight = true;[\s\S]*?this\.setAuthSubmitBusy\(form, true\);/);
 assert.match(bootstrapAttempt[0], /this\.beginSession\(identity\);\s*this\.emitPageNotice\("管理员创建成功"\);/);
-assert.doesNotMatch(bootstrapAttempt[0], /authRequest\("\/api\/v2\/auth\/login"/);
+assert.doesNotMatch(bootstrapAttempt[0], /authRequest\("\/api\/auth\/login"/);
 const authKeyboardOpen = source.match(/private openAuthWithKeyboard\(screen: AuthScreen, message = ""\): void \{[\s\S]*?\n  \}\n\n  private showLogin/);
 assert.notEqual(authKeyboardOpen, null);
 assert.match(authKeyboardOpen[0], /const keyboard = window\.HMISoftKeyboard;[\s\S]*?keyboard\?\.init\(\);/);
@@ -198,8 +199,8 @@ assert.notEqual(productionPolicy, null);
 assert.match(productionPolicy[0], /const available = runtimeEnabled && \(button === start \|\| button\.dataset\.action === "custom"\);/);
 assert.match(productionPolicy[0], /mode\.dataset\.backendUnavailable = runtimeEnabled \? "false" : "true";/);
 assert.doesNotMatch(productionPolicy[0], /mode\.dataset\.backendUnavailable = "true"/);
-assert.doesNotMatch(source, /\/api\/v2\/auth\/status/);
-assert.doesNotMatch(source, /\/api\/v2\/auth\/(activity|logout)/);
+assert.doesNotMatch(source, /\/api\/auth\/status/);
+assert.doesNotMatch(source, /\/api\/auth\/(activity|logout)/);
 assert.match(source, /private refreshFrontendSession\(\): boolean \{[\s\S]*?renewFrontendSession\(this\.session, this\.idleTimeoutSeconds\)[\s\S]*?this\.becomeGuest\(\)/);
 assert.match(source, /const report = \(\) => \{[\s\S]*?if \(!this\.refreshFrontendSession\(\)\) \{[\s\S]*?return;/);
 assert.match(source, /document\.addEventListener\("pointerdown", report/);
@@ -226,6 +227,10 @@ assert.match(index, /target\.matches\("\.hg-button"\)/);
 assert.match(index, /\.auth-sheet \{[\s\S]*?max-height: min\(800px, calc\(100vh - 48px\)\);[\s\S]*?padding: 60px 32px;[\s\S]*?width: min\(500px, 100%\);/);
 assert.match(index, /<div class="auth-sheet">[\s\S]*?id="authLogin"[\s\S]*?id="authBootstrap"/);
 assert.match(index, /#auth-panel \.auth-form \{[\s\S]*?gap: 22px;/);
+assert.match(index, /id="login-form"[\s\S]*?<div class="auth-field auth-actions">[\s\S]*?<button type="submit">/);
+assert.match(index, /id="initial-admin-form"[\s\S]*?<div class="auth-field auth-actions">[\s\S]*?<button type="submit">/);
+assert.match(index, /#authLogin \.auth-form \.auth-actions,[\s\S]*?#authBootstrap \.auth-form \.auth-actions \{[\s\S]*?justify-self: stretch;[\s\S]*?width: 100%;/);
+assert.match(index, /#authLogin \.auth-form \.auth-actions > button\[type="submit"\],[\s\S]*?#authBootstrap \.auth-form \.auth-actions > button\[type="submit"\] \{[\s\S]*?grid-column: 1 \/ -1;[\s\S]*?justify-self: stretch;[\s\S]*?width: 100%;/);
 assert.match(index, /id="operatorName">登录<\/div>/);
 assert.doesNotMatch(index, /<span class="nav-en">/);
 assert.doesNotMatch(index, /<div class="meta-en">Operator<\/div>/);
@@ -262,9 +267,10 @@ assert.match(index, /async function saveProductionSettings\(manual = false\) \{[
 assert.match(index, /data-maintenance-tab="production"[\s\S]*?data-maintenance-tab="wifi"[\s\S]*?data-maintenance-tab="plc"[\s\S]*?data-maintenance-tab="accounts"/);
 assert.match(index, /data-maintenance-panel="production"[\s\S]*?data-maintenance-panel="wifi"[\s\S]*?data-maintenance-panel="plc"[\s\S]*?data-maintenance-panel="accounts"/);
 assert.match(index, /setTimeout\(\(\) => \{[\s\S]*?saveProductionSettings\(\);[\s\S]*?\}, 650\)/);
-assert.match(index, /"\/api\/v2\/maintenance\/production"/);
-assert.match(index, /"\/api\/v2\/maintenance\/connectivity"/);
-assert.match(index, /"\/api\/v2\/maintenance\/wifi\/connect"/);
+assert.match(index, /"\/api\/maintenance\/production"/);
+assert.match(index, /"\/api\/maintenance\/connectivity"/);
+assert.match(index, /"\/api\/maintenance\/wifi\/connect"/);
+assert.doesNotMatch(source + compiledSource + index, /\/api\/v[12]\//);
 assert.doesNotMatch(index, /backend\.updateSettings/);
 assert.doesNotMatch(index, /api-client\.js/);
 const passwordInputIDs = [...index.matchAll(/<input id="([^"]+)"[^>]*type="password"/g)].map((match) => match[1]);
@@ -274,6 +280,7 @@ assert.deepEqual(passwordToggleIDs.sort(), passwordInputIDs.sort());
 assert.match(index, /class="password-visibility-toggle" type="button"[^>]*aria-label="显示密码"[^>]*aria-pressed="false"/);
 assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] \{[\s\S]*?--auth-sheet-top-gap:[\s\S]*?padding-bottom: calc\(100vh - var\(--auth-keyboard-top/);
 assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] \.auth-sheet \{[\s\S]*?max-height: calc\(var\(--auth-keyboard-top[\s\S]*?overflow-y: auto;/);
+assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] \.auth-form \.auth-field \{[\s\S]*?grid-template-columns: 90px minmax\(0, 1fr\);/);
 assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-foot[\s\S]*?display: none;/);
 assert.match(keyboardCSS, /\.soft-keyboard-dock\[data-open-immediate="true"\] \{[\s\S]*?transition: none;/);
 assert.match(keyboardCSS, /#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-dock \{[\s\S]*?transition: none;/);
@@ -323,23 +330,42 @@ function probeElement(rect, computedStyle, options = {}) {
 }
 
 const visualStyle = { backgroundColor: "rgb(1, 2, 3)", filter: "none", opacity: "1", backdropFilter: "none" };
-const authPanelProbe = probeElement(rectangle(0, 900), {
+const authPanelProbe = probeElement(rectangle(0, 1080, 0, 1920), {
   backgroundColor: "rgba(0, 0, 0, 0)", filter: "none", opacity: "1", overflow: "hidden", pointerEvents: "none"
 }, { getAttribute: (name) => name === "data-keyboard-open" ? "true" : null });
-const authSheetProbe = probeElement(rectangle(16, 386), { overflowY: "auto", pointerEvents: "auto" }, { clientHeight: 370, scrollHeight: 430 });
-const keyboardDockProbe = probeElement(rectangle(402, 740, 28, 1572), {}, { visible: true });
+const authSheetProbe = probeElement(rectangle(16, 526, 710, 1210), { overflowY: "auto", pointerEvents: "auto" }, { clientHeight: 510, scrollHeight: 570 });
+const keyboardDockProbe = probeElement(rectangle(542, 1000, 28, 1892), {}, { visible: true });
+const loginFormProbe = probeElement(rectangle(120, 350, 742, 1178), {});
+const loginActionsProbe = probeElement(rectangle(360, 422, 742, 1178), {});
+const loginSubmitProbe = probeElement(rectangle(370, 422, 742, 1178), {});
+const bootstrapFormProbe = probeElement(rectangle(120, 430, 742, 1178), {});
+const bootstrapActionsProbe = probeElement(rectangle(440, 502, 742, 1178), {});
+const bootstrapSubmitProbe = probeElement(rectangle(450, 502, 742, 1178), {});
 const probeElements = new Map([
   ["#auth-panel", authPanelProbe],
   ["#auth-panel .auth-sheet", authSheetProbe],
   ["#softKeyboardDock", keyboardDockProbe],
-  ["#hmi", probeElement(rectangle(0, 900), visualStyle)],
+  ["#login-form", loginFormProbe],
+  ["#login-form .auth-actions", loginActionsProbe],
+  ["#login-form button[type=\"submit\"]", loginSubmitProbe],
+  ["#initial-admin-form", bootstrapFormProbe],
+  ["#initial-admin-form .auth-actions", bootstrapActionsProbe],
+  ["#initial-admin-form button[type=\"submit\"]", bootstrapSubmitProbe],
+  ["#hmi", probeElement(rectangle(0, 1080, 0, 1920), visualStyle)],
   ["#hmi-topbar", probeElement(rectangle(0, 66), visualStyle)],
-  ["#hmi-pages", probeElement(rectangle(66, 758), visualStyle)],
-  ["#hmi-footer", probeElement(rectangle(758, 900), visualStyle)]
+  ["#hmi-pages", probeElement(rectangle(66, 958, 0, 1920), visualStyle)],
+  ["#hmi-footer", probeElement(rectangle(958, 1080, 0, 1920), visualStyle)]
 ]);
 const layoutResult = assertAuthKeyboardLayout({ querySelector: (selector) => probeElements.get(selector) }, {
-  innerHeight: 900,
+  innerWidth: 1920,
+  innerHeight: 1080,
   getComputedStyle: (element) => element.computedStyle
 });
 assert.equal(layoutResult.sheetTopGap, authKeyboardSafeGap);
 assert.equal(layoutResult.sheetKeyboardGap, authKeyboardSafeGap);
+const submitLayoutResult = assertAuthSubmitLayout({ querySelector: (selector) => probeElements.get(selector) }, {
+  innerWidth: 1920,
+  innerHeight: 1080
+});
+assert.equal(submitLayoutResult.viewportWidth, 1920);
+assert.equal(submitLayoutResult.viewportHeight, 1080);

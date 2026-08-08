@@ -3498,6 +3498,19 @@
       margin-top: 4px;
     }
 
+    #authLogin .auth-form .auth-actions,
+    #authBootstrap .auth-form .auth-actions {
+      justify-self: stretch;
+      width: 100%;
+    }
+
+    #authLogin .auth-form .auth-actions > button[type="submit"],
+    #authBootstrap .auth-form .auth-actions > button[type="submit"] {
+      grid-column: 1 / -1;
+      justify-self: stretch;
+      width: 100%;
+    }
+
     .auth-form button:disabled,
     .plc-actions button:disabled {
       cursor: not-allowed;
@@ -4079,7 +4092,9 @@
               <button class="password-visibility-toggle" type="button" aria-controls="login-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
-          <button type="submit">登录</button>
+          <div class="auth-field auth-actions">
+            <button type="submit">登录</button>
+          </div>
         </form>
       </section>
 
@@ -4103,7 +4118,9 @@
               <button class="password-visibility-toggle" type="button" aria-controls="initial-admin-confirm-password" aria-label="显示密码" aria-pressed="false" data-password-toggle><span class="password-eye" aria-hidden="true"></span></button>
             </span>
           </div>
-          <button type="submit">创建管理员</button>
+          <div class="auth-field auth-actions">
+            <button type="submit">创建管理员</button>
+          </div>
         </form>
       </section>
 
@@ -4981,14 +4998,14 @@
 
       async function maintenanceRequest(path, method = "GET", body = null) {
         if (demoMode) {
-          if (path === "/api/v2/maintenance/production") {
+          if (path === "/api/maintenance/production") {
             if (method === "PATCH" && body) Object.assign(demoMaintenance.production, body);
             return cloneDemoValue(demoMaintenance.production);
           }
-          if (path === "/api/v2/maintenance/connectivity") {
+          if (path === "/api/maintenance/connectivity") {
             return cloneDemoValue(demoMaintenance.connectivity);
           }
-          if (path === "/api/v2/maintenance/wifi/connect" && method === "POST" && body) {
+          if (path === "/api/maintenance/wifi/connect" && method === "POST" && body) {
             demoMaintenance.connectivity.wifi = {
               state: "connected",
               interface: "wlan0",
@@ -5057,7 +5074,7 @@
 
       async function loadProductionSettings() {
         try {
-          const production = await maintenanceRequest("/api/v2/maintenance/production");
+          const production = await maintenanceRequest("/api/maintenance/production");
           updateProductionInputs(production);
           setMaintenanceSaveState("#productionSaveState", "已读取本机生产参数", "saved");
           setMaintenanceSaveState("#piecesPerBoxSaveState", "已读取当前单框数量", "saved");
@@ -5095,7 +5112,7 @@
         updateControlAvailability();
         setMaintenanceSaveState("#productionSaveState", "正在保存生产参数…", "saving");
         try {
-          const production = await maintenanceRequest("/api/v2/maintenance/production", "PATCH", patch);
+          const production = await maintenanceRequest("/api/maintenance/production", "PATCH", patch);
           updateProductionInputs(production, true);
           settingsDirty = false;
           setMaintenanceSaveState("#productionSaveState", "生产参数已保存", "saved");
@@ -5125,7 +5142,7 @@
         $("#piecesPerBoxValidation").textContent = "";
         setMaintenanceSaveState("#piecesPerBoxSaveState", "正在保存单框数量…", "saving");
         try {
-          const production = await maintenanceRequest("/api/v2/maintenance/production", "PATCH", { piecesPerBox });
+          const production = await maintenanceRequest("/api/maintenance/production", "PATCH", { piecesPerBox });
           updateProductionInputs(production, true);
           setMaintenanceSaveState("#piecesPerBoxSaveState", "单框数量已保存", "saved");
           if (window.HMISoftKeyboard) window.HMISoftKeyboard.close("commit");
@@ -5157,7 +5174,7 @@
         if (wifiRequestInFlight) return false;
         setMaintenanceSaveState("#networkSaveState", "正在读取本机连接状态…", "saving");
         try {
-          const connectivity = await maintenanceRequest("/api/v2/maintenance/connectivity");
+          const connectivity = await maintenanceRequest("/api/maintenance/connectivity");
           renderConnectivity(connectivity);
           setMaintenanceSaveState("#networkSaveState", "已读取当前连接状态", "saved");
           return true;
@@ -5178,7 +5195,7 @@
         wifiRequestInFlight = true;
         setMaintenanceSaveState("#networkSaveState", "正在连接 Wi-Fi…", "saving");
         try {
-          const connectivity = await maintenanceRequest("/api/v2/maintenance/wifi/connect", "POST", { ssid, password });
+          const connectivity = await maintenanceRequest("/api/maintenance/wifi/connect", "POST", { ssid, password });
           renderConnectivity(connectivity);
           setMaintenanceSaveState("#networkSaveState", "Wi-Fi 已提交连接", "saved");
           showToast("Wi-Fi 已提交连接");

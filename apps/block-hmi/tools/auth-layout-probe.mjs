@@ -68,6 +68,40 @@ export function assertAuthKeyboardLayout(documentRef = document, windowRef = win
   return result;
 }
 
+const authSubmitSelectors = [
+  { form: "#login-form", actions: "#login-form .auth-actions", submit: "#login-form button[type=\"submit\"]" },
+  { form: "#initial-admin-form", actions: "#initial-admin-form .auth-actions", submit: "#initial-admin-form button[type=\"submit\"]" }
+];
+
+export function inspectAuthSubmitLayout(documentRef = document, windowRef = window) {
+  const sheetRect = documentRef.querySelector("#auth-panel .auth-sheet").getBoundingClientRect();
+  return {
+    viewportWidth: windowRef.innerWidth,
+    viewportHeight: windowRef.innerHeight,
+    forms: authSubmitSelectors.map(({ form, actions, submit }) => {
+      const formRect = documentRef.querySelector(form).getBoundingClientRect();
+      const actionsRect = documentRef.querySelector(actions).getBoundingClientRect();
+      const submitRect = documentRef.querySelector(submit).getBoundingClientRect();
+      return { form, formRect, actionsRect, submitRect, leftInset: formRect.left - sheetRect.left, rightInset: sheetRect.right - formRect.right };
+    })
+  };
+}
+
+export function assertAuthSubmitLayout(documentRef = document, windowRef = window) {
+  const result = inspectAuthSubmitLayout(documentRef, windowRef);
+  for (const layout of result.forms) {
+    const { form, formRect, actionsRect, submitRect, leftInset, rightInset } = layout;
+    if (Math.abs(leftInset - rightInset) > 0.5) throw new Error(form + " is not centered in the auth sheet");
+    if (Math.abs(actionsRect.left - formRect.left) > 0.5 || Math.abs(actionsRect.right - formRect.right) > 0.5) {
+      throw new Error(form + " action row does not span the form");
+    }
+    if (Math.abs(submitRect.left - actionsRect.left) > 0.5 || Math.abs(submitRect.right - actionsRect.right) > 0.5) {
+      throw new Error(form + " submit does not span the label and input columns");
+    }
+  }
+  return result;
+}
+
 export function assertHMIVisualStateMatches(expected, actual) {
   for (const selector of visualSelectors) {
     const baseline = expected[selector];

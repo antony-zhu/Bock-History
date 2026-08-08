@@ -315,10 +315,10 @@ sudo diff -u "$BACKUP/auth-before.txt" \
   <(sudo sed '1{/^ok$/d;}' "$BACKUP/auth-after.txt")
 
 sudo curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error \
-  "$HMI/api/v2/auth/initial-admin" | sudo tee "$BACKUP/bootstrap-after.json" >/dev/null
+  "$HMI/api/auth/initial-admin" | sudo tee "$BACKUP/bootstrap-after.json" >/dev/null
 sudo grep -Eq '"bootstrapRequired"[[:space:]]*:[[:space:]]*false' "$BACKUP/bootstrap-after.json"
 sudo curl --proto '=https' --tlsv1.2 --cacert "$HMI_CA" --fail --silent --show-error \
-  "$HMI/api/v2/config/session" | sudo tee "$BACKUP/idle-after.json" >/dev/null
+  "$HMI/api/config/session" | sudo tee "$BACKUP/idle-after.json" >/dev/null
 sudo grep -Eq '"idleTimeoutSeconds"[[:space:]]*:[[:space:]]*[0-9]+' "$BACKUP/idle-after.json"
 ```
 
@@ -540,8 +540,8 @@ HMI 不再请求浏览器全屏、右键菜单或 `alert`/`confirm`/`prompt` 原
 
 ## 11. 2026-08-08 HMI 模式切换与现场显示验收
 
-本次仅更新 Block HMI：移除了页面中对现场用户可见的 `V2`/`v2` 文案；`/api/v2`、
-MQTTS v2 和其他协议标识仍保留在技术接口、配置和契约中。
+本次更新 Block HMI：移除了页面中对现场用户可见的 `V2`/`v2` 文案；本机认证和维护 HTTP 路径已硬切换为
+`/api/...`。`/api/v1/...` 和 `/api/v2/...` 没有别名、重定向或回退，请求必须被拒绝为 404。MQTTS v2 的协议、配置名称和契约标识保持不变。
 
 模式切换继续使用既有本地 WSS 点位链路。访客点击自动/手动模式时只打开登录，不发送
 运行时命令；ADMIN 或 OPERATOR 登录且 PLC 已连接后，HMI 将

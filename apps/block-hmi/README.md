@@ -17,10 +17,10 @@
 本地账号由 Block Agent 的 SQLite 数据库管理，密码使用 Argon2id 哈希。认证 API 只
 校验请求并返回用户名、角色和前端权限摘要：不签发 Cookie、Token 或后端登录会话。
 
-- 首次安装通过 `POST /api/v2/auth/initial-admin` 创建唯一初始管理员；成功后页面仅在内存中进入当前登录态。
-- `POST /api/v2/auth/login`、`POST /api/v2/auth/password` 都显式提交用户名和密码；改密还必须提交当前密码。
+- 首次安装通过 `POST /api/auth/initial-admin` 创建唯一初始管理员；成功后页面仅在内存中进入当前登录态。
+- `POST /api/auth/login`、`POST /api/auth/password` 都显式提交用户名和密码；改密还必须提交当前密码。
 - 页面身份、角色、权限和空闲倒计时都不写浏览器持久化存储。刷新、关闭浏览器或设备重启后回到访客态。
-- `GET`/`PUT /api/v2/config/session` 持久化 60 到 3600 秒的页面空闲时长，默认 300 秒；指针、触控和键盘活动只重置本地计时器，不访问活动续期接口。
+- `GET`/`PUT /api/config/session` 持久化 60 到 3600 秒的页面空闲时长，默认 300 秒；指针、触控和键盘活动只重置本地计时器，不访问活动续期接口。
 - 角色映射只服务 HMI 交互门禁：ADMIN 可操作和维护，OPERATOR 可操作，VIEWER 只读；Block Agent 不用该前端状态拦截业务或 PLC API。
 - 退出或超时后立即回到访客态，但不会关闭 WebSocket 或清空已显示的现场数据。左下角显示“登录”或当前用户名；登录后点击当前用户名直接退出。
 
@@ -40,9 +40,9 @@ PLC 连接状态及安全校验，并对同机 HMI 返回相同的运行时数�
 独立滚动，所有输入都可使用软键盘。
 
 - 生产参数的目标、换刀件数和抽检间隔在编辑停止 650 ms 后通过本机
-  `PATCH /api/v2/maintenance/production` 保存；单框工件数量单独保存。
-- Wi-Fi 状态从本机 `GET /api/v2/maintenance/connectivity` 读取；连接请求发送到
-  `POST /api/v2/maintenance/wifi/connect`。密码只用于当前请求，提交后立即清空，
+  `PATCH /api/maintenance/production` 保存；单框工件数量单独保存。
+- Wi-Fi 状态从本机 `GET /api/maintenance/connectivity` 读取；连接请求发送到
+  `POST /api/maintenance/wifi/connect`。密码只用于当前请求，提交后立即清空，
   不会回显。
 - PLC 页只显示现有 WebSocket 的连接、最近采样/错误、点数和实时点值，并保留
   既有的扫描、连接、断开和刷新操作；不提供 PLC 网络或点表手工配置。
@@ -112,8 +112,8 @@ go test ./...
 
 ## 2026-08-08 模式切换与显示文案
 
-- 页面不再向现场用户展示 `V2` 或 `v2` 标识；`/api/v2` 仍是内部认证和维护 API
-  的技术路由，不作为界面文案。
+- 页面不再向现场用户展示 `V2` 或 `v2` 标识；认证和维护统一使用 `/api/...`。
+  `/api/v1/...` 和 `/api/v2/...` 不保留兼容层，也不重定向；MQTTS v2 不受此路由切换影响。
 - 访客点击自动/手动模式会打开本地登录。ADMIN、OPERATOR 登录且 PLC 已连接后，HMI
   通过 `home.machine.enabled` 绑定的 `machine.enabled` toggle 发送既有 WSS
   `point.command`；不新增后端命令或 PLC 写入路径。

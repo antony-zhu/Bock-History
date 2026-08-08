@@ -86,8 +86,6 @@ func writeAgentConfig(t *testing.T, bdm string) string {
   "blockId":"block-001",
   "deviceId":"device-001",
   "adapter":{"type":"disabled","ioSocket":"/run/block-plc/io/io.sock"},
-  "localApiSocket":"/run/block-agent/api/block-agent.sock",
-  "localApiSocketGroup":"block-hmi-api",
   "databasePath":"/var/lib/block/block.db",
   "samplePeriod":"1s",
   "staleAfter":"5s",

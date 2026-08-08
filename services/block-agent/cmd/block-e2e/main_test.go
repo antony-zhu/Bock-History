@@ -25,14 +25,14 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 	wsDone := make(chan struct{})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v2/auth/initial-admin", func(writer http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc("/api/auth/initial-admin", func(writer http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
 		if err := json.NewDecoder(request.Body).Decode(&initialAdmin); err != nil {
 			t.Error(err)
 		}
 		writer.WriteHeader(http.StatusConflict)
 	})
-	mux.HandleFunc("/api/v2/auth/login", func(writer http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc("/api/auth/login", func(writer http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
 		if err := json.NewDecoder(request.Body).Decode(&login); err != nil {
 			t.Error(err)
@@ -154,10 +154,10 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 func TestAuthenticateCreatesInitialAdmin(t *testing.T) {
 	var loginCalled bool
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v2/auth/initial-admin", func(writer http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc("/api/auth/initial-admin", func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusCreated)
 	})
-	mux.HandleFunc("/api/v2/auth/login", func(http.ResponseWriter, *http.Request) { loginCalled = true })
+	mux.HandleFunc("/api/auth/login", func(http.ResponseWriter, *http.Request) { loginCalled = true })
 	server := httptest.NewTLSServer(mux)
 	defer server.Close()
 	base, err := parseBaseURL(server.URL)

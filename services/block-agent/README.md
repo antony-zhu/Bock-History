@@ -15,7 +15,7 @@ Agent 的 HMI 业务仅监听 loopback TLS，且不读取 Wi-Fi 配置。
 
 ## 本机 HMI TLS 边界
 
-`block-agent` 的嵌入式 HMI、`/healthz`、`/api/v2/*` 和 `/ws` 只在
+`block-agent` 的嵌入式 HMI、`/healthz`、`/api/*` 和 `/ws` 只在
 `127.0.0.1:8444` 的 HTTPS/WSS listener 上提供。`/ws` 不接受 `ws://` 降级；
 前端必须使用同源 `wss://127.0.0.1:8444/ws`。8080、8081 与任何明文 HTTP 兼容
 监听均不存在，也不做重定向。
@@ -144,42 +144,39 @@ Simulator 控制 socket（仅实验故障注入）：
 门禁打开、严重报警、命令拒绝、命令失败以及“已执行但响应超时”。控制
 socket 不暴露给 HMI。
 
-Agent 本地 API socket：
-
-- `GET /healthz`
-- `GET /api/v1/state`
-- `PUT /api/v1/settings`
-- `POST /api/v1/commands`
-- `POST /api/v1/alarms/{id}/ack`
-- `GET /api/v1/audit`
-
 本机 HMI 维护接口：
 
-- `GET` / `PATCH /api/v2/maintenance/production`：读取或更新目标产能、换刀件数、
+- `GET` / `PATCH /api/maintenance/production`：读取或更新目标产能、换刀件数、
   抽检间隔和单框工件数量；数据以原子 JSON 文件保存在 Agent 本地状态目录。
-- `GET /api/v2/maintenance/connectivity`：即时读取本机网卡、Wi-Fi 和 BDM 连接
+- `GET /api/maintenance/connectivity`：即时读取本机网卡、Wi-Fi 和 BDM 连接
   状态。BDM 只返回 `not_configured` 或 `unknown`，不维护额外状态缓存。
-- `POST /api/v2/maintenance/wifi/connect`：仅接受本机 HMI 的 SSID 和当前密码，
+- `POST /api/maintenance/wifi/connect`：仅接受本机 HMI 的 SSID 和当前密码，
   通过 NetworkManager 的 mode `0600` 临时 keyfile 应用连接。密码不会进入响应、
   日志或命令行参数，临时 keyfile 在调用结束后删除。
 
 这些维护接口不实现 Cookie、角色或多账户认证；HMI 使用同机无状态认证 API 的
 页面内存交互门禁。它们不提供 PLC 写入、BDM 控制、远程配置或任何 Pad 写接口。
 
-## 本地认证 v2
+## 本地认证
 
 本地认证以 Common `contracts/block-local-api/v2` 为准。SQLite 是账号和页面空闲
 时长的唯一来源：保存 username、Argon2id password hash、role 和 60–3600 秒的
 `idleTimeoutSeconds`（默认 300）。不新增会话表。
 
-- `GET` / `POST /api/v2/auth/initial-admin`：读取首次管理员状态或创建首个 ADMIN。
-- `POST /api/v2/auth/login`：校验 username/password，返回 username、role、permissions。
-- `POST /api/v2/auth/password`：显式提交 username/currentPassword/newPassword 后改密。
-- `GET` / `PUT /api/v2/config/session`：读取或保存页面本地空闲时长。
+- `GET` / `POST /api/auth/initial-admin`：读取首次管理员状态或创建首个 ADMIN。
+- `POST /api/auth/login`：校验 username/password，返回 username、role、permissions。
+- `POST /api/auth/password`：显式提交 username/currentPassword/newPassword 后改密。
+- `GET` / `PUT /api/config/session`：读取或保存页面本地空闲时长。
 
 这些接口不签发 Cookie、Token、JWT、`expiresAt` 或服务器登录会话；
-`/api/v2/auth/activity` 和 `/api/v2/auth/logout` 不注册。角色映射只供 HMI 前端
+`/api/auth/activity` 和 `/api/auth/logout` 不注册。角色映射只供 HMI 前端
 控制按钮显示，Agent 不用其过滤业务、PLC 或维护接口。
+
+### 2026-08-08 API 路径硬切换
+
+本机 HMI 认证和维护只使用 `/api/...`。`/api/v1/...` 和
+`/api/v2/...` 不提供别名、重定向或回退，请求统一返回 404。Common
+`contracts/block-local-api/v2` 仍是契约制品的版本目录，不代表 HTTP 路径版本。MQTTS v2 的协议、配置名称和运行语义不受此变更影响。
 
 这些写操作只属于 Block 现场本地接口，不会从 BDM 或 Pad 调用。请求必须带
 稳定 `Idempotency-Key`；Agent 在发送前写入 SQLite，按单队列执行，并在

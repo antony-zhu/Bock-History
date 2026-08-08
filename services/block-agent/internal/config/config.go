@@ -22,17 +22,15 @@ var (
 )
 
 type Agent struct {
-	SiteID              string       `json:"siteId"`
-	BlockID             string       `json:"blockId"`
-	DeviceID            string       `json:"deviceId"`
-	Adapter             AgentAdapter `json:"adapter"`
-	LocalAPISocket      string       `json:"localApiSocket"`
-	LocalAPISocketGroup string       `json:"localApiSocketGroup"`
-	DatabasePath        string       `json:"databasePath"`
-	SamplePeriod        string       `json:"samplePeriod"`
-	StaleAfter          string       `json:"staleAfter"`
-	CommandTimeout      string       `json:"commandTimeout"`
-	BDM                 BDM          `json:"bdm"`
+	SiteID         string       `json:"siteId"`
+	BlockID        string       `json:"blockId"`
+	DeviceID       string       `json:"deviceId"`
+	Adapter        AgentAdapter `json:"adapter"`
+	DatabasePath   string       `json:"databasePath"`
+	SamplePeriod   string       `json:"samplePeriod"`
+	StaleAfter     string       `json:"staleAfter"`
+	CommandTimeout string       `json:"commandTimeout"`
+	BDM            BDM          `json:"bdm"`
 }
 
 type AgentAdapter struct {
@@ -90,12 +88,6 @@ func LoadAgent(path string) (Agent, error) {
 		if err := requireAbsolute("adapter.ioSocket", value.Adapter.IOSocket); err != nil {
 			return Agent{}, err
 		}
-	}
-	if err := requireAbsolute("localApiSocket", value.LocalAPISocket); err != nil {
-		return Agent{}, err
-	}
-	if err := requireGroup("localApiSocketGroup", value.LocalAPISocketGroup); err != nil {
-		return Agent{}, err
 	}
 	if err := requireAbsolute("databasePath", value.DatabasePath); err != nil {
 		return Agent{}, err

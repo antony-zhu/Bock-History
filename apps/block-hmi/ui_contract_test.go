@@ -36,9 +36,9 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`data-maintenance-panel="wifi"`,
 		`data-maintenance-panel="plc"`,
 		`data-maintenance-panel="accounts"`,
-		`/api/v2/maintenance/production`,
-		`/api/v2/maintenance/connectivity`,
-		`/api/v2/maintenance/wifi/connect`,
+		`/api/maintenance/production`,
+		`/api/maintenance/connectivity`,
+		`/api/maintenance/wifi/connect`,
 		`id="operatorName"`,
 		`assets/soft-keyboard.css?v=20260807.6`,
 		`assets/soft-keyboard.js?v=20260807.6`,
@@ -87,6 +87,12 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)<div class="auth-sheet">.*?id="authLogin".*?id="authBootstrap"`).MatchString(page) {
 		t.Fatal("login and bootstrap do not share the same authentication sheet")
 	}
+	if !regexp.MustCompile(`(?s)id="login-form".*?<div class="auth-field auth-actions">.*?<button type="submit">`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)id="initial-admin-form".*?<div class="auth-field auth-actions">.*?<button type="submit">`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)#authLogin \.auth-form \.auth-actions,.*?#authBootstrap \.auth-form \.auth-actions \{.*?justify-self: stretch;.*?width: 100%;`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)#authLogin \.auth-form \.auth-actions > button\[type="submit"\],.*?#authBootstrap \.auth-form \.auth-actions > button\[type="submit"\] \{.*?grid-column: 1 / -1;.*?justify-self: stretch;.*?width: 100%;`).MatchString(page) {
+		t.Fatal("login and bootstrap submit buttons do not span the centered two-column form")
+	}
 	if !strings.Contains(page, `query.get("demo") !== "1" || query.get("__demoFrame") === "1"`) ||
 		!strings.Contains(page, `new URL("demo-shell.html", window.location.href)`) {
 		t.Fatal("demo entry does not route through the fixed viewport shell")
@@ -133,6 +139,9 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] \{.*?--auth-sheet-top-gap:.*?padding-bottom: calc\(100vh - var\(--auth-keyboard-top`).Match(keyboardCSS) {
 		t.Fatal("auth keyboard layout does not reserve a bounded area above the keyboard")
 	}
+	if !regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] \.auth-form \.auth-field \{.*?grid-template-columns: 90px minmax\(0, 1fr\);`).Match(keyboardCSS) {
+		t.Fatal("keyboard-open authentication form no longer keeps the two-column submit layout")
+	}
 	if !regexp.MustCompile(`(?s)\.soft-keyboard-dock\[data-open-immediate="true"\] \{.*?transition: none;`).Match(keyboardCSS) ||
 		!regexp.MustCompile(`(?s)#auth-panel\[data-keyboard-open="true"\] ~ #hmi \.soft-keyboard-dock \{.*?transition: none;`).Match(keyboardCSS) {
 		t.Fatal("authentication keyboard entrance still animates after the sheet is visible")
@@ -157,11 +166,11 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`this.openSocket();`,
 		`buildRuntimeConfigure(this.config.points)`,
 		`private async authRequest(path: string, method: "GET" | "POST" | "PUT"`,
-		`authRequest("/api/v2/auth/initial-admin", "GET")`,
-		`authRequest("/api/v2/config/session", "GET")`,
-		`authRequest("/api/v2/auth/login", "POST"`,
-		`authRequest("/api/v2/auth/password", "POST"`,
-		`authRequest("/api/v2/config/session", "PUT"`,
+		`authRequest("/api/auth/initial-admin", "GET")`,
+		`authRequest("/api/config/session", "GET")`,
+		`authRequest("/api/auth/login", "POST"`,
+		`authRequest("/api/auth/password", "POST"`,
+		`authRequest("/api/config/session", "PUT"`,
 		`await this.loadAuthenticationState();`,
 		`this.refreshFrontendSession();`,
 		`export function renewFrontendSession(session: FrontendSession | null, idleTimeoutSeconds: number, now = Date.now()): FrontendSession | null`,
@@ -178,9 +187,11 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
-		`/api/v2/auth/status`,
-		`/api/v2/auth/activity`,
-		`/api/v2/auth/logout`,
+		`/api/v1/`,
+		`/api/v2/`,
+		`/api/auth/status`,
+		`/api/auth/activity`,
+		`/api/auth/logout`,
 		`localStorage`,
 		`sessionStorage`,
 		`crypto.subtle`,
@@ -227,7 +238,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)async function runBackendMutation\(factory, options = \{\}\) \{.*?showToast\(\s*backendErrorMessage\(mutationError\)`).MatchString(page) {
 		t.Fatal("mode command failures are not surfaced through the HMI toast")
 	}
-	visibleCopy := regexp.MustCompile(`/api/v2(?:/[a-z-]+)+`).ReplaceAllString(page+source, "")
+	visibleCopy := regexp.MustCompile(`/api(?:/[a-z-]+)+`).ReplaceAllString(page+source, "")
 	if regexp.MustCompile(`(?i)\bv2\b`).MatchString(visibleCopy) {
 		t.Fatal("user-visible HMI copy still exposes a v2 label")
 	}
@@ -240,7 +251,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!strings.Contains(bootstrap, `this.initialAdminInFlight = true;`) ||
 		!strings.Contains(bootstrap, `this.beginSession(identity);`) ||
 		!strings.Contains(bootstrap, `this.emitPageNotice("管理员创建成功");`) ||
-		strings.Contains(bootstrap, `/api/v2/auth/login`) {
+		strings.Contains(bootstrap, `/api/auth/login`) {
 		t.Fatal("initial-admin completion must be single-flight and enter the in-memory admin session without a second login")
 	}
 	if !regexp.MustCompile(`(?s)message\.type === "points\.changed".*?this\.publishLiveState\(\);`).MatchString(source) {

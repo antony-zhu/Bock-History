@@ -49,7 +49,9 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	address := "http://" + listener.Addr().String()
 	client := &http.Client{}
 
-	response, err := client.Get(address + "/api/v2/auth/initial-admin")
+	assertLegacyAPIRejected(t, address)
+
+	response, err := client.Get(address + "/api/auth/initial-admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,14 +61,14 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 		t.Fatalf("bootstrap status=%d body=%+v", response.StatusCode, bootstrap)
 	}
 
-	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/initial-admin", map[string]string{
 		"username": strings.Repeat("u", auth.MaxUsernameLength+1), "password": "one", "confirmPassword": "one",
 	})
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("long initial username status=%d", response.StatusCode)
 	}
 	response.Body.Close()
-	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/initial-admin", map[string]string{
 		"username": "admin", "password": strings.Repeat("p", auth.MaxPasswordLength+1), "confirmPassword": "one",
 	})
 	if response.StatusCode != http.StatusBadRequest {
@@ -74,7 +76,7 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	response.Body.Close()
 
-	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/initial-admin", map[string]string{
 		"username": "admin", "password": "one",
 	})
 	if response.StatusCode != http.StatusBadRequest || response.Header.Get("Cache-Control") != "no-store" {
@@ -82,7 +84,7 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	response.Body.Close()
 
-	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/initial-admin", map[string]string{
 		"username": "admin", "password": "one", "confirmPassword": "one",
 	})
 	var identity identityResponse
@@ -92,7 +94,7 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	assertStatelessAuthResponse(t, response, payload)
 
-	response = postJSON(t, client, address+"/api/v2/auth/initial-admin", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/initial-admin", map[string]string{
 		"username": "again", "password": "one", "confirmPassword": "one",
 	})
 	if response.StatusCode != http.StatusConflict {
@@ -100,14 +102,14 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	response.Body.Close()
 
-	response = postJSON(t, client, address+"/api/v2/auth/login", map[string]string{"username": "admin", "password": "bad"})
+	response = postJSON(t, client, address+"/api/auth/login", map[string]string{"username": "admin", "password": "bad"})
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong login status=%d", response.StatusCode)
 	}
 	payload = readHTTPBody(t, response)
 	assertStatelessAuthResponse(t, response, payload)
 	response.Body.Close()
-	response = postJSON(t, client, address+"/api/v2/auth/login", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/login", map[string]string{
 		"username": strings.Repeat("u", auth.MaxUsernameLength+1), "password": "one",
 	})
 	if response.StatusCode != http.StatusBadRequest {
@@ -115,7 +117,7 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	response.Body.Close()
 
-	response = postJSON(t, client, address+"/api/v2/auth/login", map[string]string{"username": "admin", "password": "one"})
+	response = postJSON(t, client, address+"/api/auth/login", map[string]string{"username": "admin", "password": "one"})
 	identity = identityResponse{}
 	payload = decodeHTTPJSON(t, response, &identity)
 	if response.StatusCode != http.StatusOK || identity.Username != "admin" || identity.Role != auth.RoleAdmin {
@@ -123,7 +125,7 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	}
 	assertStatelessAuthResponse(t, response, payload)
 
-	response, err = client.Get(address + "/api/v2/config/session")
+	response, err = client.Get(address + "/api/config/session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,38 +134,38 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	if response.StatusCode != http.StatusOK || idle.IdleTimeoutSeconds != 300 {
 		t.Fatalf("initial idle timeout status=%d response=%+v", response.StatusCode, idle)
 	}
-	response = putJSON(t, client, address+"/api/v2/config/session", map[string]int{"idleTimeoutSeconds": 59})
+	response = putJSON(t, client, address+"/api/config/session", map[string]int{"idleTimeoutSeconds": 59})
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("short idle timeout status=%d", response.StatusCode)
 	}
 	response.Body.Close()
-	response = putJSON(t, client, address+"/api/v2/config/session", map[string]int{"idleTimeoutSeconds": 120})
+	response = putJSON(t, client, address+"/api/config/session", map[string]int{"idleTimeoutSeconds": 120})
 	idle = idleTimeoutResponse{}
 	decodeHTTPJSON(t, response, &idle)
 	if response.StatusCode != http.StatusOK || idle.IdleTimeoutSeconds != 120 {
 		t.Fatalf("updated idle timeout status=%d response=%+v", response.StatusCode, idle)
 	}
 
-	response = postJSON(t, client, address+"/api/v2/auth/password", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/password", map[string]string{
 		"username": "admin", "currentPassword": "wrong", "newPassword": "two",
 	})
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong current password status=%d", response.StatusCode)
 	}
 	response.Body.Close()
-	response = postJSON(t, client, address+"/api/v2/auth/password", map[string]string{
+	response = postJSON(t, client, address+"/api/auth/password", map[string]string{
 		"username": "admin", "currentPassword": "one", "newPassword": "two",
 	})
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatalf("password change status=%d", response.StatusCode)
 	}
 	response.Body.Close()
-	response = postJSON(t, client, address+"/api/v2/auth/login", map[string]string{"username": "admin", "password": "one"})
+	response = postJSON(t, client, address+"/api/auth/login", map[string]string{"username": "admin", "password": "one"})
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("old password login status=%d", response.StatusCode)
 	}
 	response.Body.Close()
-	response = postJSON(t, client, address+"/api/v2/auth/login", map[string]string{"username": "admin", "password": "two"})
+	response = postJSON(t, client, address+"/api/auth/login", map[string]string{"username": "admin", "password": "two"})
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("new password login status=%d", response.StatusCode)
 	}
@@ -171,7 +173,7 @@ func TestLocalStatelessAuthAndStaticHMI(t *testing.T) {
 	assertStatelessAuthResponse(t, response, payload)
 	response.Body.Close()
 
-	for _, endpoint := range []string{"/api/v2/auth/activity", "/api/v2/auth/logout"} {
+	for _, endpoint := range []string{"/api/auth/activity", "/api/auth/logout"} {
 		response = postJSON(t, client, address+endpoint, map[string]string{})
 		if response.StatusCode != http.StatusNotFound {
 			t.Fatalf("retired endpoint %s status=%d", endpoint, response.StatusCode)
@@ -245,6 +247,41 @@ func TestStatelessAuthSurvivesStoreRebuild(t *testing.T) {
 	}
 }
 
+func assertLegacyAPIRejected(t *testing.T, address string) {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/"},
+		{method: http.MethodGet, path: "/api/v1/auth/initial-admin"},
+		{method: http.MethodPost, path: "/api/v1/auth/login"},
+		{method: http.MethodGet, path: "/api/v1/maintenance/production"},
+		{method: http.MethodGet, path: "/api/v2/"},
+		{method: http.MethodGet, path: "/api/v2/auth/initial-admin"},
+		{method: http.MethodPost, path: "/api/v2/auth/login"},
+		{method: http.MethodGet, path: "/api/v2/maintenance/production"},
+	} {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			request, err := http.NewRequest(test.method, address+test.path, strings.NewReader(`{}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusNotFound || response.Header.Get("Location") != "" {
+				t.Fatalf("legacy endpoint status=%d location=%q, want 404 without redirect", response.StatusCode, response.Header.Get("Location"))
+			}
+		})
+	}
+}
+
 func TestStaticHMICacheControlExcludesAPIRoutes(t *testing.T) {
 	handler := staticHMI(fstest.MapFS{
 		"index.html":               {Data: []byte("<main>Block HMI</main>")},
@@ -258,6 +295,7 @@ func TestStaticHMICacheControlExcludesAPIRoutes(t *testing.T) {
 	}{
 		{path: "/", cacheControl: "no-store", status: http.StatusOK},
 		{path: "/assets/hmi.mjs", cacheControl: "no-store", status: http.StatusOK},
+		{path: "/api/v1/maintenance/production", cacheControl: "", status: http.StatusNotFound},
 		{path: "/api/v2/maintenance/production", cacheControl: "", status: http.StatusNotFound},
 		{path: "/downloads/diagnostic.zip", cacheControl: "", status: http.StatusOK},
 	} {
@@ -323,7 +361,7 @@ func TestWebSocketAllowsGuestRuntimeAndRejectsForeignOrigin(t *testing.T) {
 		t.Fatalf("guest PLC maintenance message = %#v", disconnectResult)
 	}
 
-	response, err := strictRuntimeTLSClient(material.ca, "127.0.0.1", tls.VersionTLS13).Get("https://" + host + "/api/v2/auth/initial-admin")
+	response, err := strictRuntimeTLSClient(material.ca, "127.0.0.1", tls.VersionTLS13).Get("https://" + host + "/api/auth/initial-admin")
 	if err != nil {
 		t.Fatal(err)
 	}

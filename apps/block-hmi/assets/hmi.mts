@@ -691,8 +691,8 @@ class AppleBridge {
   private async loadAuthenticationState(): Promise<void> {
     try {
       const [bootstrap, policy] = await Promise.all([
-        this.authRequest("/api/v2/auth/initial-admin", "GET"),
-        this.authRequest("/api/v2/config/session", "GET")
+        this.authRequest("/api/auth/initial-admin", "GET"),
+        this.authRequest("/api/config/session", "GET")
       ]);
       const idleTimeoutSeconds = idleTimeoutFrom(policy.value);
       if (!bootstrap.response.ok || !policy.response.ok || !isRecord(bootstrap.value) ||
@@ -940,7 +940,7 @@ class AppleBridge {
     const form = document.querySelector<HTMLFormElement>("#login-form")!;
     this.setAuthSubmitBusy(form, true);
     try {
-      const { response, value } = await this.authRequest("/api/v2/auth/login", "POST", {
+      const { response, value } = await this.authRequest("/api/auth/login", "POST", {
         username: username.trim(), password
       });
       const identity = backendIdentityFrom(value);
@@ -988,7 +988,7 @@ class AppleBridge {
     const form = document.querySelector<HTMLFormElement>("#initial-admin-form")!;
     this.setAuthSubmitBusy(form, true);
     try {
-      const { response, value } = await this.authRequest("/api/v2/auth/initial-admin", "POST", {
+      const { response, value } = await this.authRequest("/api/auth/initial-admin", "POST", {
         username: normalizedUsername, password, confirmPassword
       });
       if (this.signedIn) {
@@ -1031,7 +1031,7 @@ class AppleBridge {
       if (this.session === null) {
         return;
       }
-      const { response } = await this.authRequest("/api/v2/auth/password", "POST", {
+      const { response } = await this.authRequest("/api/auth/password", "POST", {
         username: this.session.username, currentPassword, newPassword
       });
       if (response.status === 401) {
@@ -1057,7 +1057,7 @@ class AppleBridge {
       return;
     }
     try {
-      const { response, value } = await this.authRequest("/api/v2/config/session", "PUT", { idleTimeoutSeconds });
+      const { response, value } = await this.authRequest("/api/config/session", "PUT", { idleTimeoutSeconds });
       const savedTimeout = idleTimeoutFrom(value);
       if (!response.ok || savedTimeout === null) {
         this.setAuthNotice("无法保存会话时长");

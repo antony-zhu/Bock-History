@@ -248,7 +248,7 @@ func loadPoints(path string) (json.RawMessage, []pointDefinition, error) {
 }
 
 func (w *workflow) authenticate(ctx context.Context, username, password string) error {
-	response, err := w.postJSON(ctx, "/api/v2/auth/initial-admin", map[string]string{
+	response, err := w.postJSON(ctx, "/api/auth/initial-admin", map[string]string{
 		"username": username, "password": password, "confirmPassword": password,
 	})
 	if err != nil {
@@ -267,7 +267,7 @@ func (w *workflow) authenticate(ctx context.Context, username, password string) 
 		return atStage("auth.initial-admin", httpStatusError{status: status})
 	}
 
-	response, err = w.postJSON(ctx, "/api/v2/auth/login", map[string]string{"username": username, "password": password})
+	response, err = w.postJSON(ctx, "/api/auth/login", map[string]string{"username": username, "password": password})
 	if err != nil {
 		return atStage("auth.login", err)
 	}
