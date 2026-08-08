@@ -1,4 +1,4 @@
-# Block Agent、PLC Simulator 与可选 BDM 上行
+# Block Agent、PLC Simulator 与可选 MQTTS v2 只读同步
 
 `block-agent` 是一台 Block 对应一台设备的本地运行核心。没有 Wi-Fi、路由器
 或 BDM 时，采集、状态、本地 HMI、报警、历史、审计和允许的现场操作仍须
@@ -8,10 +8,10 @@
 plc-simulator -- /run/block-plc/io/io.sock -- block-agent
 ```
 
-启用 `bdm.enabled=true` 后，Agent 另起后台上行分支，主动通过 MQTTS 把本地
-数据副本发送给 BDM。BDM 只是可选只读数据平台；证书错误、网络中断、Broker
-不可达或应用确认延迟都不会终止本地采样和 HMI。Simulator 不监听业务 TCP；
-Agent 的 HMI 业务仅监听 loopback TLS，且不读取 Wi-Fi 配置。
+启用 `BLOCK_MQTTS_V2_ENABLED=true` 后，Agent 通过 MQTTS v2 向 BDM 提供当前
+状态和报警历史只读同步。BDM 只是可选数据平台；证书错误、网络中断或 Broker
+不可达都不会终止本地采样和 HMI。Simulator 不监听业务 TCP；Agent 的 HMI 业务
+仅监听 loopback TLS，且不读取 Wi-Fi 配置。
 
 ## 本机 HMI TLS 边界
 
@@ -46,15 +46,15 @@ systemd 使用以下 flags（路径来自受保护的 `/etc/block/block.env`）�
   料仓、报警、安全联锁、命令执行、故障注入和重启持久化；不模拟厂商寄存器
   或现场总线。
 - `cmd/block-agent`：采样、数据新鲜度、单写命令队列、`commandId` 幂等、
-  SQLite WAL、本地报警/历史/审计、HMI 兼容适配层和可选 BDM 上行。
+  SQLite WAL、本地报警/历史/审计、HMI 兼容适配层和可选 MQTTS v2 当前状态、
+  报警历史只读同步。
 - `cmd/ssh-bootstrapd`：独立 HTTPS `9443/tcp` 管理服务，严格实现 Common
   `contracts/ssh-bootstrap/v1` 的 SuperToken ED25519 验签、SQLite nonce
   唯一登记和五分钟 OpenSSH 用户证书签发；同一 HTTPS listener 的精确
   `GET /` 提供无需认证的冻结只读状态/使用页；不进入 Block 本地业务依赖。
-- `internal/bdm`、`internal/mqtt5`：MQTT 5 持久会话、重连、MQTTS/mTLS、
-  上行发布和唯一允许的 `/down/sync` 处理。
-- `internal/storage`、`internal/uplink`：稳定 `messageId`、可靠流 Epoch/序号、
-  SQLite Outbox、Gap 账本、Replay 和应用层确认事务。
+- `internal/mqttv2`：MQTTS/mTLS、QoS 0 发布、两个只读订阅和简单重连；
+  不维护可靠投递状态。
+- `internal/storage`：SQLite 本地快照、账号、报警历史、命令和审计数据。
 - `internal/plccontract`：仅在 Block 仓库内部使用的私有语义协议
   `block-plc-private/v1`，不是 Common 公共契约。
 
@@ -110,22 +110,13 @@ BLOCK_E2E_USERNAME=<approved-local-user> BLOCK_E2E_PASSWORD=<provided-at-runtime
 - 真实设备适配器尚未接入；非模拟部署使用 `adapter.type: "disabled"`。
 - 只有实验环境使用
   `deploy/block/config/block-agent-simulator.example.json` 并启动 Simulator。
-- `bdm.enabled=false` 是独立运行默认值：不新建 uplink Epoch、不生成 Outbox、
-  不拨号；已经存在的 Epoch、Outbox 和确认水位不会被删除。
-- 启用 BDM 时，由 Release 从
-  `deploy/block/config/block-agent-simulator-bdm.example.json` 或
-  `block-agent-bdm.example.json` 生成现场配置，并注入端点、opaque principal、
-  服务端 CA、Block 客户端证书/私钥、软件/OS/架构/硬件版本事实和
-  `streamGeneration`。样例中的 `replace-at-release` 不能直接部署。
-- 当前实验路由是 `mqtts://192.168.1.105:8883`；该地址只用于路由和证书
-  IP SAN 校验，不是业务身份。业务身份始终是配置中的
-  `siteId`、`blockId`、`deviceId`。
-
-启用配置只接受 `mqtts://HOST:8883`，不接受 URL 凭据、路径、查询或明文
-`mqtt://...:1883`。客户端固定 TLS 1.2/1.3，校验 BDM CA、完整服务端链、
-有效期和主机名/IP SAN；客户端证书必须有效、具有 `clientAuth` EKU，且
-CN 精确等于 `blk-<32 位小写十六进制>` principal。代码没有证书校验绕过或
-明文降级路径。
+- `BLOCK_MQTTS_V2_ENABLED=false` 是独立运行默认值：不连接 BDM，本地采集、
+  HMI、报警、历史和现场操作照常运行。
+- 启用 MQTTS v2 时，仅通过 `deploy/block/config/block.env.example` 中的
+  `BLOCK_MQTTS_V2_*` 环境变量传入端点、CA、Block 客户端证书/私钥、principal
+  和稳定业务 ID。
+- MQTTS v2 仅接受 `mqtts://HOST:8883`，使用 TLS 1.2/1.3，校验 CA、服务端
+  主机名和客户端证书有效期、`clientAuth` EKU 及 CN 与 principal 的一致性。
 
 ## Unix socket 本地 API
 
@@ -148,8 +139,8 @@ socket 不暴露给 HMI。
 
 - `GET` / `PATCH /api/maintenance/production`：读取或更新目标产能、换刀件数、
   抽检间隔和单框工件数量；数据以原子 JSON 文件保存在 Agent 本地状态目录。
-- `GET /api/maintenance/connectivity`：即时读取本机网卡、Wi-Fi 和 BDM 连接
-  状态。BDM 只返回 `not_configured` 或 `unknown`，不维护额外状态缓存。
+- `GET /api/maintenance/connectivity`：即时读取本机网卡、Wi-Fi 和 MQTTS v2
+  连接状态。BDM 只返回 `not_configured` 或 `unknown`，不维护额外状态缓存。
 - `POST /api/maintenance/wifi/connect`：仅接受本机 HMI 的 SSID 和当前密码，
   通过 NetworkManager 的 mode `0600` 临时 keyfile 应用连接。密码不会进入响应、
   日志或命令行参数，临时 keyfile 在调用结束后删除。
@@ -183,30 +174,19 @@ socket 不暴露给 HMI。
 独立读回确认后才标记 `EXECUTED`。传输结果不确定时记录 `UNKNOWN`，不会
 盲目重发。报警确认只改变本地确认状态，不绕过急停、门禁或安全联锁。
 
-## MQTTS v1 可靠上行
+## MQTTS v2 当前状态与报警历史
 
-实现以 Common `contracts/mqtt/v1` 为准：
-
-- 上行仅有 Presence、Hello、Heartbeat、Snapshot、Event、Alarm、Replay
-  和 Sync Status；Telemetry 当前未启用。
-- 唯一 BDM→Block Topic 是精确的非 Retain QoS 1 `/down/sync`。配置、任务、
-  命令、更新和告警确认均不接受。
-- 证书 CN、MQTT Client ID 和 username 使用同一个 opaque principal；
-  Topic 和消息 `source` 使用稳定业务 ID，不能由 IP 或主机名推导。
-- Snapshot、Event、Alarm 在保存本地状态的同一个 SQLite 事务中获得稳定
-  `messageId`、持久 Epoch 和严格递增序号并进入 Outbox。
-- MQTT PUBACK 只确认 Broker 收包，不删除 Outbox。只有 BDM 数据库事务
-  提交后发布的 `/down/sync` 连续应用确认，才能在一个 SQLite 事务中推进
-  水位、处理 Gap 并删除已确认记录。
-- 断线期间继续积压可靠 Outbox；MQTT 会话和 in-flight QoS 1 状态也持久化。
-  恢复后先完成 Presence/Hello/Sync Status，再按序直发或 Replay，且不会
-  因迟到确认降低水位。
+- MQTTS v2 仅用于当前状态和报警历史的只读同步；不接受远程控制、配置、升级
+  或告警确认。
+- 所有发布和订阅均为 QoS 0，且不使用 Retain、Outbox、应用层 ACK、Replay、
+  Gap 账本或持久化 MQTT 会话状态。
+- 网络断开时只保留内存中的最新当前状态；简单重连后重新发布最新状态，不补传
+  中间状态。报警历史由 BDM 按查询接口读取。
 
 ## 持久化、失联和当前限制
 
 - SQLite 使用 WAL、`synchronous=FULL` 和单连接串行写入。
-- 保存最新快照、当前报警、报警历史、操作历史、命令结果、审计、可靠
-  Outbox、Gap 账本、同步水位和 MQTT in-flight 状态。
+- 保存最新快照、当前报警、报警历史、操作历史、命令结果和审计。
 - Simulator 保存计数器、设置和已处理命令 ID；重启生成新会话 ID，序号在
   会话内单调递增。
 - Simulator 断开后 Agent 继续存活并保留最后快照；超过 `staleAfter` 后

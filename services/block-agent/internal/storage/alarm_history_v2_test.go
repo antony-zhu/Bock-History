@@ -65,7 +65,7 @@ func TestAlarmHistoryV2AppendAndList(t *testing.T) {
 		t.Fatalf("listed records = %+v", records)
 	}
 
-	for _, table := range []string{"active_alarms", "current_snapshot", "uplink_outbox"} {
+	for _, table := range []string{"active_alarms", "current_snapshot"} {
 		var count int
 		if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
 			t.Fatal(err)
