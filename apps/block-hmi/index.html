@@ -4111,7 +4111,7 @@
     .manual-layout {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(316px, 0.7fr);
-      gap: 14px;
+      gap: 11px;
       min-height: 0;
     }
 
@@ -4127,8 +4127,8 @@
     .manual-axis-panel {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
-      gap: 12px;
-      padding: 16px;
+      gap: 9px;
+      padding: 12px;
     }
 
     .manual-panel-heading h2 {
@@ -4141,25 +4141,26 @@
 
     .manual-axis-actions {
       display: grid;
-      gap: 10px;
+      align-content: space-evenly;
+      gap: 8px;
       min-height: 0;
     }
 
     .manual-z-actions {
-      grid-template-rows: repeat(2, minmax(72px, 1fr));
+      grid-template-rows: repeat(2, 58px);
     }
 
     .manual-x-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      grid-template-rows: minmax(72px, 1fr);
+      grid-template-rows: 58px;
     }
 
     .manual-action {
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 72px;
+      min-height: 58px;
       padding: 0 14px;
       color: #005fbd;
       border: 1px solid #bfd7f4;
@@ -4179,7 +4180,7 @@
       color: #fff;
       background: #0071e3;
       border-color: #0071e3;
-      font-size: 21px;
+      font-size: 20px;
       font-weight: 680;
     }
 
@@ -4188,13 +4189,14 @@
     }
 
     .manual-tool-action {
+      min-height: 54px;
       font-size: 16px;
     }
 
     .manual-axis-tools {
       display: grid;
       grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 0.85fr));
-      gap: 10px;
+      gap: 8px;
     }
 
     .manual-side-rail {
@@ -4206,10 +4208,11 @@
 
     .manual-claw-panel {
       display: grid;
-      grid-template-rows: auto 72px minmax(72px, 1fr);
+      grid-template-rows: auto 58px 58px;
+      align-content: space-evenly;
       flex: 1 1 auto;
-      gap: 12px;
-      padding: 16px;
+      gap: 9px;
+      padding: 12px;
     }
 
     .manual-input-field {
@@ -4218,8 +4221,8 @@
       align-items: center;
       gap: 8px;
       min-width: 0;
-      min-height: 72px;
-      padding: 0 12px;
+      min-height: 54px;
+      padding: 0 10px;
       border: 1px solid #dce2e8;
       border-radius: 14px;
       background: #fbfcfd;
@@ -4254,8 +4257,8 @@
     .manual-state {
       display: flex;
       align-items: center;
-      min-height: 72px;
-      padding: 0 14px;
+      min-height: 58px;
+      padding: 0 12px;
       color: #005fbd;
       border: 1px solid #bfd7f4;
       border-radius: 14px;
@@ -4267,13 +4270,13 @@
     .manual-claw-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      gap: 8px;
       min-height: 0;
     }
 
     .manual-claw-actions .manual-action {
-      height: 100%;
-      font-size: 20px;
+      height: 58px;
+      font-size: 19px;
     }
 
     .manual-claw-actions [data-manual-action="clamp"] {
@@ -4296,22 +4299,22 @@
     }
 
     .manual-side-rail.has-admin .manual-claw-panel {
-      flex: 0 0 250px;
+      flex: 0 0 224px;
     }
 
     .manual-side-rail.has-admin #manualAdvancedMount {
       display: block;
       flex: 1 1 auto;
       min-height: 0;
-      margin-top: 12px;
+      margin-top: 10px;
     }
 
     .manual-admin-panel {
       display: grid;
-      gap: 10px;
+      gap: 8px;
       height: 100%;
       min-height: 0;
-      padding: 12px 2px 2px;
+      padding: 10px 2px 2px;
       overflow-y: auto;
       overscroll-behavior: contain;
       border-top: 1px solid rgba(255, 159, 10, 0.42);
@@ -4337,8 +4340,8 @@
 
     .manual-admin-group {
       display: grid;
-      gap: 7px;
-      padding: 10px;
+      gap: 6px;
+      padding: 8px;
       border: 1px solid rgba(255, 159, 10, 0.28);
       border-radius: 12px;
       background: #fffdf8;
@@ -4352,14 +4355,14 @@
     .manual-admin-fields {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 7px;
+      gap: 6px;
     }
 
     .manual-admin-field {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 72px;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       min-width: 0;
       color: #5f4b16;
       font-size: 12px;
@@ -4367,8 +4370,8 @@
 
     .manual-admin-input {
       min-width: 0;
-      min-height: 36px;
-      padding: 0 8px;
+      min-height: 52px;
+      padding: 0 7px;
       color: #1d1d1f;
       border: 1px solid #e7d9b2;
       border-radius: 9px;
@@ -4379,11 +4382,11 @@
     .manual-admin-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 7px;
+      gap: 6px;
     }
 
     .manual-admin-actions .manual-action {
-      min-height: 40px;
+      min-height: 52px;
       color: #7b5700;
       border-color: #e8c46b;
       border-radius: 10px;
@@ -4931,7 +4934,7 @@
   <script src="assets/vendor/simple-keyboard/index.js"></script>
   <script src="assets/soft-keyboard.js?v=20260808.3"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.2").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.3").then(function (module) {
       return module.installHMIBackend();
     });
       window.HMIBackend = {

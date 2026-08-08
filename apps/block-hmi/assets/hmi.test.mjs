@@ -259,7 +259,7 @@ assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "
 for (const asset of [
   'assets/soft-keyboard.css?v=20260808.3',
   'assets/soft-keyboard.js?v=20260808.3',
-  './assets/hmi.mjs?v=20260808.2'
+  './assets/hmi.mjs?v=20260808.3'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
 }
@@ -286,7 +286,13 @@ assert.match(index, /id="manualZSpeedInput" type="number" step="any" inputmode="
 assert.match(index, /input\.type = "number";\s*input\.step = "any";\s*input\.inputMode = "decimal";/);
 assert.match(index, /class="manual-status-band" aria-label="轴状态">[\s\S]*?id="manualXPosition"[\s\S]*?id="manualZPosition"[\s\S]*?id="manualXLoad"[\s\S]*?id="manualZLoad"/);
 assert.match(index, /\.manual-status-band \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
-assert.match(index, /\.manual-action \{[\s\S]*?min-height: 72px;/);
+assert.match(index, /\.manual-action \{[\s\S]*?min-height: 58px;/);
+assert.match(index, /\.manual-z-actions \{[\s\S]*?grid-template-rows: repeat\(2, 58px\);/);
+assert.match(index, /\.manual-x-actions \{[\s\S]*?grid-template-rows: 58px;/);
+assert.match(index, /\.manual-tool-action \{[\s\S]*?min-height: 54px;/);
+assert.match(index, /\.manual-input-field \{[\s\S]*?min-height: 54px;/);
+assert.match(index, /\.manual-claw-actions \.manual-action \{[\s\S]*?height: 58px;/);
+assert.match(index, /\.manual-admin-actions \.manual-action \{[\s\S]*?min-height: 52px;/);
 for (const manualAction of [
   'data-manual-action="z-up">↑ Z轴上移</button>',
   'data-manual-action="z-down">↓ Z轴下移</button>',
@@ -303,6 +309,7 @@ assert.match(index, /\.manual-side-rail\.has-admin #manualAdvancedMount \{[\s\S]
 assert.match(index, /\.manual-admin-panel \{[\s\S]*?height: 100%;[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
 const manualStyles = index.slice(index.indexOf('.manual-entry-button'), index.indexOf('</style>', index.indexOf('.manual-entry-button')));
 assert.doesNotMatch(manualStyles, /transition:|box-shadow:|linear-gradient|radial-gradient|backdrop-filter/);
+assert.doesNotMatch(manualStyles, /min-height: 72px;/);
 const manualHandler = index.match(/function handleManualAction\(button\) \{[\s\S]*?\n      \}\n\n      function bindManualPage/);
 assert.notEqual(manualHandler, null);
 assert.match(manualHandler[0], /if \(!requireFrontendPermission\("operate"\)\) return false;/);
