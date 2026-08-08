@@ -4017,7 +4017,7 @@
     /* 手动页只呈现本地演示交互；角色分组和点位写入保持在现有桥接之外。 */
     .manual-entry-button {
       color: #005fbd;
-      border-color: rgba(0, 113, 227, 0.22);
+      border-color: #bfd7f4;
       background: #eef6ff;
     }
 
@@ -4027,7 +4027,7 @@
 
     .manual-shell {
       display: grid;
-      grid-template-rows: 40px minmax(0, 1fr);
+      grid-template-rows: 40px 70px minmax(0, 1fr);
       gap: 10px;
       height: 100%;
       min-height: 0;
@@ -4048,14 +4048,12 @@
       letter-spacing: -0.035em;
     }
 
-    .manual-return,
-    .manual-action {
+    .manual-return {
       border: 1px solid rgba(29, 29, 31, 0.12);
       background: #fff;
       color: #1d1d1f;
       cursor: pointer;
       font-weight: 620;
-      transition: background 90ms ease, border-color 90ms ease, transform 90ms ease;
     }
 
     .manual-return {
@@ -4067,223 +4065,151 @@
       background: #f2f7ff;
     }
 
-    .manual-layout {
-      display: grid;
-      grid-template-columns: minmax(0, 1.08fr) minmax(430px, 0.92fr);
-      gap: 14px;
-      min-height: 0;
-    }
-
-    .manual-plane-card,
-    .manual-control-card {
-      min-width: 0;
-      min-height: 0;
-      border: 1px solid rgba(29, 29, 31, 0.1);
-      border-radius: 22px;
-      background: #fff;
-    }
-
-    .manual-plane-card {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      gap: 12px;
-      padding: 16px;
-    }
-
-    .manual-section-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      min-width: 0;
-    }
-
-    .manual-section-head strong {
-      font-size: 17px;
-      font-weight: 660;
-      letter-spacing: -0.02em;
-    }
-
-    .manual-section-head span {
-      color: #6e6e73;
-      font-size: 13px;
-    }
-
-    .manual-plane {
-      position: relative;
-      min-height: 0;
-      overflow: hidden;
-      border: 1px solid #dbe1e8;
-      border-radius: 16px;
-      background: #f8fafc;
-    }
-
-    .manual-axis-x,
-    .manual-axis-z {
-      position: absolute;
-      background: #a8b2bd;
-    }
-
-    .manual-axis-x {
-      right: 56px;
-      bottom: 42px;
-      left: 56px;
-      height: 1px;
-    }
-
-    .manual-axis-z {
-      top: 36px;
-      bottom: 42px;
-      left: 56px;
-      width: 1px;
-    }
-
-    .manual-axis-label {
-      position: absolute;
-      color: #6e6e73;
-      font-size: 13px;
-      font-weight: 650;
-    }
-
-    .manual-axis-label-x {
-      right: 26px;
-      bottom: 33px;
-    }
-
-    .manual-axis-label-z {
-      top: 22px;
-      left: 48px;
-    }
-
-    .manual-jog-pad {
-      position: absolute;
-      top: 49%;
-      left: 56%;
-      display: grid;
-      grid-template-columns: 72px 116px 72px;
-      grid-template-rows: 44px 56px 44px;
-      align-items: center;
-      justify-items: center;
-      transform: translate(-50%, -50%);
-    }
-
-    .manual-action {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 44px;
-      padding: 0 12px;
-      border-radius: 12px;
-      font-size: 14px;
-    }
-
-    .manual-action:hover,
-    .manual-return:hover {
-      border-color: rgba(0, 113, 227, 0.42);
-      background: #f2f7ff;
-    }
-
-    .manual-action:active,
-    .manual-action.is-pressed,
     .manual-return:active {
-      transform: scale(0.97);
+      transform: scale(0.975);
       background: #e6f1ff;
     }
 
-    .manual-action[data-manual-action="z-up"] {
-      grid-column: 2;
-      grid-row: 1;
-    }
-
-    .manual-action[data-manual-action="x-left"] {
-      grid-column: 1;
-      grid-row: 2;
-    }
-
-    .manual-action[data-manual-action="x-right"] {
-      grid-column: 3;
-      grid-row: 2;
-    }
-
-    .manual-action[data-manual-action="z-down"] {
-      grid-column: 2;
-      grid-row: 3;
-    }
-
-    .manual-carriage {
-      display: grid;
-      grid-column: 2;
-      grid-row: 2;
-      place-items: center;
-      width: 84px;
-      height: 56px;
-      color: #fff;
-      border-radius: 14px;
-      background: #0071e3;
-      font-size: 13px;
-      font-weight: 700;
-      pointer-events: none;
-    }
-
-    .manual-readouts {
+    .manual-status-band {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
+      min-width: 0;
+      border: 1px solid #dce2e8;
+      border-radius: 16px;
+      background: #fff;
+      overflow: hidden;
     }
 
     .manual-readout {
       min-width: 0;
-      padding: 9px 10px;
-      border-top: 1px solid rgba(29, 29, 31, 0.08);
+      padding: 10px 16px;
+      border-left: 1px solid #e6ebf0;
+    }
+
+    .manual-readout:first-child {
+      border-left: 0;
     }
 
     .manual-readout span {
       display: block;
-      margin-bottom: 3px;
+      margin-bottom: 4px;
       color: #6e6e73;
-      font-size: 12px;
+      font-size: 13px;
     }
 
     .manual-readout output {
       display: block;
       overflow: hidden;
       color: #1d1d1f;
-      font-size: 20px;
+      font-size: 22px;
       font-weight: 660;
       font-variant-numeric: tabular-nums;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    .manual-control-card {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      justify-content: space-between;
-      padding: 16px;
-      overflow: hidden;
-    }
-
-    .manual-control-card.has-admin {
-      justify-content: flex-start;
-    }
-
-    .manual-control-section {
+    .manual-layout {
       display: grid;
-      gap: 8px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid rgba(29, 29, 31, 0.08);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(316px, 0.7fr);
+      gap: 14px;
+      min-height: 0;
     }
 
-    .manual-control-section:last-of-type {
-      border-bottom: 0;
+    .manual-axis-panel,
+    .manual-claw-panel {
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid rgba(29, 29, 31, 0.1);
+      border-radius: 18px;
+      background: #fff;
     }
 
-    .manual-speed-list,
-    .manual-command-grid,
-    .manual-status-grid {
+    .manual-axis-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 16px;
+    }
+
+    .manual-panel-heading h2 {
+      margin: 0;
+      color: #1d1d1f;
+      font-size: 18px;
+      font-weight: 660;
+      letter-spacing: -0.02em;
+    }
+
+    .manual-axis-actions {
+      display: grid;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .manual-z-actions {
+      grid-template-rows: repeat(2, minmax(72px, 1fr));
+    }
+
+    .manual-x-actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
+      grid-template-rows: minmax(72px, 1fr);
+    }
+
+    .manual-action {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 72px;
+      padding: 0 14px;
+      color: #005fbd;
+      border: 1px solid #bfd7f4;
+      border-radius: 14px;
+      background: #f6faff;
+      cursor: pointer;
+      font-weight: 650;
+      text-align: center;
+    }
+
+    .manual-action:active {
+      transform: scale(0.975);
+      background: #e6f1ff;
+    }
+
+    .manual-primary-action {
+      color: #fff;
+      background: #0071e3;
+      border-color: #0071e3;
+      font-size: 21px;
+      font-weight: 680;
+    }
+
+    .manual-primary-action:active {
+      background: #005bb8;
+    }
+
+    .manual-tool-action {
+      font-size: 16px;
+    }
+
+    .manual-axis-tools {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 0.85fr));
+      gap: 10px;
+    }
+
+    .manual-side-rail {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .manual-claw-panel {
+      display: grid;
+      grid-template-rows: auto 72px minmax(72px, 1fr);
+      flex: 1 1 auto;
+      gap: 12px;
+      padding: 16px;
     }
 
     .manual-input-field {
@@ -4292,14 +4218,14 @@
       align-items: center;
       gap: 8px;
       min-width: 0;
-      min-height: 44px;
-      padding: 0 10px;
+      min-height: 72px;
+      padding: 0 12px;
       border: 1px solid #dce2e8;
-      border-radius: 12px;
+      border-radius: 14px;
       background: #fbfcfd;
     }
 
-    .manual-input-field label {
+    .manual-input-field span {
       color: #515154;
       font-size: 13px;
       font-weight: 590;
@@ -4326,29 +4252,66 @@
     }
 
     .manual-state {
-      min-height: 44px;
-      padding: 12px;
-      color: #515154;
-      border: 1px solid #dce2e8;
-      border-radius: 12px;
-      background: #fbfcfd;
-      font-size: 13px;
-      line-height: 1.35;
+      display: flex;
+      align-items: center;
+      min-height: 72px;
+      padding: 0 14px;
+      color: #005fbd;
+      border: 1px solid #bfd7f4;
+      border-radius: 14px;
+      background: #f6faff;
+      font-size: 17px;
+      font-weight: 650;
+    }
+
+    .manual-claw-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .manual-claw-actions .manual-action {
+      height: 100%;
+      font-size: 20px;
+    }
+
+    .manual-claw-actions [data-manual-action="clamp"] {
+      color: #fff;
+      border-color: #0071e3;
+      background: #0071e3;
+    }
+
+    .manual-claw-actions [data-manual-action="clamp"]:active {
+      background: #005bb8;
     }
 
     #manualAdvancedMount {
       min-height: 0;
+      overflow: hidden;
     }
 
     #manualAdvancedMount:empty {
       display: none;
     }
 
+    .manual-side-rail.has-admin .manual-claw-panel {
+      flex: 0 0 250px;
+    }
+
+    .manual-side-rail.has-admin #manualAdvancedMount {
+      display: block;
+      flex: 1 1 auto;
+      min-height: 0;
+      margin-top: 12px;
+    }
+
     .manual-admin-panel {
       display: grid;
       gap: 10px;
-      max-height: 196px;
-      padding: 12px 0 0;
+      height: 100%;
+      min-height: 0;
+      padding: 12px 2px 2px;
       overflow-y: auto;
       overscroll-behavior: contain;
       border-top: 1px solid rgba(255, 159, 10, 0.42);
@@ -4419,24 +4382,17 @@
       gap: 7px;
     }
 
-    html[data-performance="low"] .manual-action,
-    html[data-performance="low"] .manual-return {
-      transition: none;
+    .manual-admin-actions .manual-action {
+      min-height: 40px;
+      color: #7b5700;
+      border-color: #e8c46b;
+      border-radius: 10px;
+      background: #fffaf0;
+      font-size: 14px;
     }
 
-    @media (max-width: 1100px) {
-      .manual-layout {
-        grid-template-columns: minmax(0, 1fr) minmax(340px, 0.9fr);
-      }
-
-      .manual-jog-pad {
-        left: 59%;
-        transform: translate(-50%, -50%) scale(0.88);
-      }
-
-      .manual-readouts {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
+    .manual-admin-actions .manual-action:active {
+      background: #fff0cf;
     }
   </style>
   <link rel="stylesheet" href="assets/vendor/simple-keyboard/index.css">
@@ -4674,67 +4630,51 @@
               <button class="manual-return" id="manualReturnHome" type="button">返回主页</button>
             </header>
 
+            <div class="manual-status-band" aria-label="轴状态">
+              <div class="manual-readout"><span>X 当前位置</span><output id="manualXPosition">—</output></div>
+              <div class="manual-readout"><span>Z 当前位置</span><output id="manualZPosition">—</output></div>
+              <div class="manual-readout"><span>X 平均负载</span><output id="manualXLoad">—</output></div>
+              <div class="manual-readout"><span>Z 平均负载</span><output id="manualZLoad">—</output></div>
+            </div>
+
             <div class="manual-layout">
-              <section class="manual-plane-card" aria-labelledby="manualPlaneTitle">
-                <header class="manual-section-head">
-                  <strong id="manualPlaneTitle">X–Z 平面</strong>
-                  <span>X 水平 · Z 垂直</span>
-                </header>
-
-                <div class="manual-plane" aria-label="X–Z 手动移动">
-                  <span class="manual-axis-x" aria-hidden="true"></span>
-                  <span class="manual-axis-z" aria-hidden="true"></span>
-                  <span class="manual-axis-label manual-axis-label-x" aria-hidden="true">X</span>
-                  <span class="manual-axis-label manual-axis-label-z" aria-hidden="true">Z</span>
-                  <div class="manual-jog-pad">
-                    <button class="manual-action" type="button" data-manual-action="z-up">Z 上移</button>
-                    <button class="manual-action" type="button" data-manual-action="x-left">X 左移</button>
-                    <span class="manual-carriage" id="manualCarriage">当前位置</span>
-                    <button class="manual-action" type="button" data-manual-action="x-right">X 右移</button>
-                    <button class="manual-action" type="button" data-manual-action="z-down">Z 下移</button>
-                  </div>
+              <section class="manual-axis-panel" aria-labelledby="manualZTitle">
+                <header class="manual-panel-heading"><h2 id="manualZTitle">Z轴</h2></header>
+                <div class="manual-axis-actions manual-z-actions">
+                  <button class="manual-action manual-primary-action" type="button" data-manual-action="z-up">↑ Z轴上移</button>
+                  <button class="manual-action manual-primary-action" type="button" data-manual-action="z-down">↓ Z轴下移</button>
                 </div>
-
-                <div class="manual-readouts" aria-label="轴状态">
-                  <div class="manual-readout"><span>X 当前位置</span><output id="manualXPosition">—</output></div>
-                  <div class="manual-readout"><span>Z 当前位置</span><output id="manualZPosition">—</output></div>
-                  <div class="manual-readout"><span>X 平均负载</span><output id="manualXLoad">—</output></div>
-                  <div class="manual-readout"><span>Z 平均负载</span><output id="manualZLoad">—</output></div>
+                <div class="manual-axis-tools">
+                  <label class="manual-input-field" for="manualZSpeedInput"><span>Z 速度</span><input id="manualZSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="Z 手动速度" data-manual-speed="z" aria-label="Z 手动速度"></label>
+                  <button class="manual-action manual-tool-action" type="button" data-manual-action="z-relative">相对移动</button>
+                  <button class="manual-action manual-tool-action" type="button" data-manual-action="home">回原</button>
                 </div>
               </section>
 
-              <section class="manual-control-card" id="manualControlCard" aria-label="手动控制">
-                <section class="manual-control-section" aria-labelledby="manualSpeedTitle">
-                  <header class="manual-section-head"><strong id="manualSpeedTitle">手动速度</strong></header>
-                  <div class="manual-speed-list">
-                    <label class="manual-input-field" for="manualXSpeedInput"><span>X 速度</span><input id="manualXSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="X 手动速度" data-manual-speed="x" aria-label="X 手动速度"></label>
-                    <label class="manual-input-field" for="manualZSpeedInput"><span>Z 速度</span><input id="manualZSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="Z 手动速度" data-manual-speed="z" aria-label="Z 手动速度"></label>
-                  </div>
-                </section>
+              <section class="manual-axis-panel" aria-labelledby="manualXTitle">
+                <header class="manual-panel-heading"><h2 id="manualXTitle">X轴</h2></header>
+                <div class="manual-axis-actions manual-x-actions">
+                  <button class="manual-action manual-primary-action" type="button" data-manual-action="x-left">← X轴左移</button>
+                  <button class="manual-action manual-primary-action" type="button" data-manual-action="x-right">X轴右移 →</button>
+                </div>
+                <div class="manual-axis-tools">
+                  <label class="manual-input-field" for="manualXSpeedInput"><span>X 速度</span><input id="manualXSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="X 手动速度" data-manual-speed="x" aria-label="X 手动速度"></label>
+                  <button class="manual-action manual-tool-action" type="button" data-manual-action="x-relative">相对移动</button>
+                  <button class="manual-action manual-tool-action" type="button" data-manual-action="home">回原</button>
+                </div>
+              </section>
 
-                <section class="manual-control-section" aria-labelledby="manualCommandTitle">
-                  <header class="manual-section-head"><strong id="manualCommandTitle">相对移动</strong></header>
-                  <div class="manual-command-grid">
-                    <button class="manual-action" type="button" data-manual-action="x-relative">X 相对移动</button>
-                    <button class="manual-action" type="button" data-manual-action="z-relative">Z 相对移动</button>
-                    <button class="manual-action" type="button" data-manual-action="home">回原</button>
-                  </div>
-                </section>
-
-                <section class="manual-control-section" aria-labelledby="manualClawTitle">
-                  <header class="manual-section-head"><strong id="manualClawTitle">夹爪</strong></header>
-                  <div class="manual-command-grid">
+              <div class="manual-side-rail manual-control-card" id="manualControlCard" aria-label="夹爪和高级参数">
+                <section class="manual-claw-panel" aria-labelledby="manualClawTitle">
+                  <header class="manual-panel-heading"><h2 id="manualClawTitle">夹爪</h2></header>
+                  <div class="manual-state" id="manualClawState" aria-live="polite">夹爪状态：未确认</div>
+                  <div class="manual-claw-actions">
                     <button class="manual-action" type="button" data-manual-action="clamp">夹紧</button>
                     <button class="manual-action" type="button" data-manual-action="release">松开</button>
                   </div>
-                  <div class="manual-status-grid" aria-live="polite">
-                    <div class="manual-state" id="manualClawState">夹爪状态：未确认</div>
-                    <div class="manual-state" id="manualHomeState">回原状态：未确认</div>
-                  </div>
                 </section>
-
                 <div id="manualAdvancedMount"></div>
-              </section>
+              </div>
             </div>
           </div>
         </section>
@@ -4991,7 +4931,7 @@
   <script src="assets/vendor/simple-keyboard/index.js"></script>
   <script src="assets/soft-keyboard.js?v=20260808.3"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.1").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.2").then(function (module) {
       return module.installHMIBackend();
     });
       window.HMIBackend = {
@@ -5127,8 +5067,7 @@
         zLoad: demoMode ? "0" : "",
         xSpeed: demoMode ? "0" : "",
         zSpeed: demoMode ? "0" : "",
-        claw: "未确认",
-        home: "未确认"
+        claw: "未确认"
       };
       const demoMaintenance = {
         production: { targetProduction: 30, toolChangePieces: 100, inspectionInterval: 30, piecesPerBox: 12 },
@@ -5976,11 +5915,7 @@
         $("#manualZPosition").textContent = manualDisplayValue(manualState.z);
         $("#manualXLoad").textContent = manualDisplayValue(manualState.xLoad);
         $("#manualZLoad").textContent = manualDisplayValue(manualState.zLoad);
-        $("#manualCarriage").textContent = manualState.x === "" || manualState.z === ""
-          ? "当前位置"
-          : `X ${manualState.x} · Z ${manualState.z}`;
         $("#manualClawState").textContent = `夹爪状态：${manualState.claw}`;
-        $("#manualHomeState").textContent = `回原状态：${manualState.home}`;
         const writableDemo = demoMode && frontendPermissions.operate;
         let keyboardRefreshNeeded = false;
         [["#manualXSpeedInput", "xSpeed"], ["#manualZSpeedInput", "zSpeed"]].forEach(([selector, key]) => {
@@ -5994,15 +5929,9 @@
         if (keyboardRefreshNeeded) window.HMISoftKeyboard?.refresh?.();
       }
 
-      function pulseManualButton(button) {
-        button.classList.add("is-pressed");
-        window.setTimeout(() => button.classList.remove("is-pressed"), 120);
-      }
-
       function handleManualAction(button) {
         // 普通控制按钮的角色归属权限来自当前产品设计；本页不发送 PLC 命令。
         if (!requireFrontendPermission("operate")) return false;
-        pulseManualButton(button);
         const action = button.dataset.manualAction;
         if (!demoMode) {
           showToast("当前页面未绑定现场写入", "info");

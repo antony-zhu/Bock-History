@@ -43,7 +43,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`id="operatorName"`,
 		`assets/soft-keyboard.css?v=20260808.3`,
 		`assets/soft-keyboard.js?v=20260808.3`,
-		`import("./assets/hmi.mjs?v=20260808.1")`,
+		`import("./assets/hmi.mjs?v=20260808.2")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -406,6 +406,19 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 		`id="manualXSpeedInput" type="number" step="any" inputmode="decimal"`,
 		`id="manualZSpeedInput" type="number" step="any" inputmode="decimal"`,
 		`input.step = "any";`,
+		`class="manual-status-band" aria-label="轴状态"`,
+		`data-manual-action="z-up">↑ Z轴上移</button>`,
+		`data-manual-action="z-down">↓ Z轴下移</button>`,
+		`data-manual-action="x-left">← X轴左移</button>`,
+		`data-manual-action="x-right">X轴右移 →</button>`,
+		`id="manualClawState"`,
+		`data-manual-action="clamp">夹紧</button>`,
+		`data-manual-action="release">松开</button>`,
+		`.manual-status-band {`,
+		`grid-template-columns: repeat(4, minmax(0, 1fr));`,
+		`.manual-side-rail.has-admin #manualAdvancedMount {`,
+		`.manual-admin-panel {`,
+		`overflow-y: auto;`,
 	} {
 		if !strings.Contains(page, required) {
 			t.Fatalf("manual page is missing %q", required)
@@ -418,6 +431,20 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 	markup := strings.Split(page, `<script src="assets/vendor/simple-keyboard/index.js"></script>`)[0]
 	if strings.Contains(markup, `data-manual-admin=`) {
 		t.Fatal("operator and guest markup still contains prebuilt administrator nodes")
+	}
+	for _, removed := range []string{
+		`manual-plane`,
+		`manual-jog-pad`,
+		`manual-axis-x`,
+		`manual-axis-z`,
+		`manual-carriage`,
+		`manualCarriage`,
+		`manualHomeState`,
+		`manualState.home`,
+	} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("obsolete coordinate control remains: %q", removed)
+		}
 	}
 	manualHandler := regexp.MustCompile(`(?s)function handleManualAction\(button\) \{.*?\n      \}\n\n      function bindManualPage`).FindString(page)
 	if manualHandler == "" ||

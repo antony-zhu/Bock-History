@@ -259,7 +259,7 @@ assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "
 for (const asset of [
   'assets/soft-keyboard.css?v=20260808.3',
   'assets/soft-keyboard.js?v=20260808.3',
-  './assets/hmi.mjs?v=20260808.1'
+  './assets/hmi.mjs?v=20260808.2'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
 }
@@ -284,6 +284,25 @@ assert.match(index, /\.control-button:not\(\.manual-entry-button\)/);
 assert.match(index, /id="manualXSpeedInput" type="number" step="any" inputmode="decimal"/);
 assert.match(index, /id="manualZSpeedInput" type="number" step="any" inputmode="decimal"/);
 assert.match(index, /input\.type = "number";\s*input\.step = "any";\s*input\.inputMode = "decimal";/);
+assert.match(index, /class="manual-status-band" aria-label="轴状态">[\s\S]*?id="manualXPosition"[\s\S]*?id="manualZPosition"[\s\S]*?id="manualXLoad"[\s\S]*?id="manualZLoad"/);
+assert.match(index, /\.manual-status-band \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+assert.match(index, /\.manual-action \{[\s\S]*?min-height: 72px;/);
+for (const manualAction of [
+  'data-manual-action="z-up">↑ Z轴上移</button>',
+  'data-manual-action="z-down">↓ Z轴下移</button>',
+  'data-manual-action="x-left">← X轴左移</button>',
+  'data-manual-action="x-right">X轴右移 →</button>',
+  'id="manualClawState"',
+  'data-manual-action="clamp">夹紧</button>',
+  'data-manual-action="release">松开</button>'
+]) {
+  assert.ok(index.includes(manualAction), `manual control is missing ${manualAction}`);
+}
+assert.doesNotMatch(index, /manual-plane|manual-jog-pad|manual-axis-x|manual-axis-z|manual-carriage|manualCarriage|manualHomeState|manualState\.home/);
+assert.match(index, /\.manual-side-rail\.has-admin #manualAdvancedMount \{[\s\S]*?flex: 1 1 auto;[\s\S]*?min-height: 0;/);
+assert.match(index, /\.manual-admin-panel \{[\s\S]*?height: 100%;[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
+const manualStyles = index.slice(index.indexOf('.manual-entry-button'), index.indexOf('</style>', index.indexOf('.manual-entry-button')));
+assert.doesNotMatch(manualStyles, /transition:|box-shadow:|linear-gradient|radial-gradient|backdrop-filter/);
 const manualHandler = index.match(/function handleManualAction\(button\) \{[\s\S]*?\n      \}\n\n      function bindManualPage/);
 assert.notEqual(manualHandler, null);
 assert.match(manualHandler[0], /if \(!requireFrontendPermission\("operate"\)\) return false;/);
