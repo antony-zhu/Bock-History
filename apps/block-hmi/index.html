@@ -4650,7 +4650,7 @@
                 <div class="manual-axis-tools">
                   <label class="manual-input-field" for="manualZSpeedInput"><span>Z 速度</span><input id="manualZSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="Z 手动速度" data-manual-speed="z" aria-label="Z 手动速度"></label>
                   <button class="manual-action manual-tool-action" type="button" data-manual-action="z-relative">相对移动</button>
-                  <button class="manual-action manual-tool-action" type="button" data-manual-action="home">回原</button>
+                  <button class="manual-action manual-tool-action" type="button" data-manual-action="z-home">回原</button>
                 </div>
               </section>
 
@@ -4663,7 +4663,7 @@
                 <div class="manual-axis-tools">
                   <label class="manual-input-field" for="manualXSpeedInput"><span>X 速度</span><input id="manualXSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="X 手动速度" data-manual-speed="x" aria-label="X 手动速度"></label>
                   <button class="manual-action manual-tool-action" type="button" data-manual-action="x-relative">相对移动</button>
-                  <button class="manual-action manual-tool-action" type="button" data-manual-action="home">回原</button>
+                  <button class="manual-action manual-tool-action" type="button" data-manual-action="x-home">回原</button>
                 </div>
               </section>
 
@@ -4934,15 +4934,22 @@
   <script src="assets/vendor/simple-keyboard/index.js"></script>
   <script src="assets/soft-keyboard.js?v=20260808.3"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.3").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260808.4").then(function (module) {
       return module.installHMIBackend();
     });
-      window.HMIBackend = {
-        getState: function () { return window.BlockHMIReady.then(function (backend) { return backend.getState(); }); },
-        sendCommand: function (command, payload, context) { return window.BlockHMIReady.then(function (backend) { return backend.sendCommand(command, payload, context); }); },
+    const hmiBackendProxy = {
+      getState: function () { return window.BlockHMIReady.then(function (backend) { return backend.getState(); }); },
+      sendCommand: function (command, payload, context) { return window.BlockHMIReady.then(function (backend) { return backend.sendCommand(command, payload, context); }); },
       acknowledgeAlarm: function (alarmId, context) { return window.BlockHMIReady.then(function (backend) { return backend.acknowledgeAlarm(alarmId, context); }); },
-      getAudit: function (options) { return window.BlockHMIReady.then(function (backend) { return backend.getAudit(options); }); }
+      getAudit: function (options) { return window.BlockHMIReady.then(function (backend) { return backend.getAudit(options); }); },
+      manual: {
+        binding: function (displayPath) { return window.HMIBackend && window.HMIBackend !== hmiBackendProxy ? window.HMIBackend.manual.binding(displayPath) : null; },
+        value: function (displayPath) { return window.HMIBackend && window.HMIBackend !== hmiBackendProxy ? window.HMIBackend.manual.value(displayPath) : undefined; },
+        canWrite: function (displayPath) { return Boolean(window.HMIBackend && window.HMIBackend !== hmiBackendProxy && window.HMIBackend.manual.canWrite(displayPath)); },
+        command: function (displayPath, value) { return window.BlockHMIReady.then(function (backend) { return backend.manual.command(displayPath, value); }); }
+      }
     };
+    window.HMIBackend = hmiBackendProxy;
   </script>
   <script>
     (() => {
@@ -5792,11 +5799,87 @@
         `).join("");
       }
 
+      const manualActionPaths = Object.freeze({
+        "z-up": "manual.motion.z.jog.up.action",
+        "z-down": "manual.motion.z.jog.down.action",
+        "x-left": "manual.motion.x.jog.left.action",
+        "x-right": "manual.motion.x.jog.right.action",
+        "z-relative": "manual.motion.z.relative.trigger.action",
+        "x-relative": "manual.motion.x.relative.trigger.action",
+        "z-home": "manual.homing.start.action",
+        "x-home": "manual.homing.start.action",
+        clamp: "manual.gripper.close.action",
+        release: "manual.gripper.open.action"
+      });
+      const manualSpeedPaths = Object.freeze({
+        x: "manual.motion.x.jog.speed.parameter",
+        z: "manual.motion.z.jog.speed.parameter"
+      });
+
+      function manualRuntime() {
+        const runtime = window.HMIBackend && window.HMIBackend.manual;
+        return runtime && typeof runtime.binding === "function" ? runtime : null;
+      }
+
+      function manualBinding(displayPath) {
+        const runtime = manualRuntime();
+        return runtime ? runtime.binding(displayPath) : null;
+      }
+
+      function manualValue(displayPath) {
+        const runtime = manualRuntime();
+        return runtime ? runtime.value(displayPath) : undefined;
+      }
+
+      function manualCanWrite(displayPath) {
+        const runtime = manualRuntime();
+        return Boolean(runtime && runtime.canWrite(displayPath));
+      }
+
+      function manualPermission(displayPath) {
+        const binding = manualBinding(displayPath);
+        return binding && binding.permission === "maintenance" ? "maintenance" : "operate";
+      }
+
       function manualDisplayValue(value) {
         return value === "" || value == null ? "—" : String(value);
       }
 
-      function createManualAdminInput(label, key) {
+      function manualInputValue(displayPath, fallback = "") {
+        const value = manualValue(displayPath);
+        return value === undefined || value == null ? fallback : String(value);
+      }
+
+      function updateManualNumberInput(input, displayPath, fallback = "") {
+        const binding = manualBinding(displayPath);
+        const pending = !binding || binding.state === "pending";
+        const writable = !pending && manualCanWrite(displayPath);
+        const changed = input.readOnly !== !writable || input.disabled !== pending;
+        input.readOnly = !writable;
+        input.disabled = pending;
+        input.dataset.manualBinding = displayPath;
+        input.setAttribute("aria-readonly", String(!writable));
+        input.setAttribute("aria-disabled", String(pending));
+        input.setAttribute("aria-label", pending ? "点位读写映射待确认" : binding.description);
+        input.title = pending ? "点位读写映射待确认" : binding.description;
+        if (document.activeElement !== input) input.value = manualInputValue(displayPath, fallback);
+        return changed;
+      }
+
+      function manualPathForButton(button) {
+        return button.dataset.manualPath || manualActionPaths[button.dataset.manualAction] || "";
+      }
+
+      function updateManualButton(button) {
+        const displayPath = manualPathForButton(button);
+        const binding = displayPath ? manualBinding(displayPath) : null;
+        const pending = !binding || binding.state === "pending";
+        button.disabled = pending;
+        button.setAttribute("aria-disabled", String(pending));
+        button.title = pending ? "点位读写映射待确认" : binding.description;
+      }
+
+      function createManualAdminInput(label, displayPath) {
         const field = document.createElement("label");
         field.className = "manual-admin-field";
         field.textContent = label;
@@ -5807,35 +5890,39 @@
         input.inputMode = "decimal";
         input.autocomplete = "off";
         input.placeholder = "—";
-        input.readOnly = !demoMode;
+        input.readOnly = true;
+        input.disabled = true;
         input.dataset.softKeyboard = "numeric";
         input.dataset.softLabel = label;
-        input.dataset.manualAdminInput = key;
-        input.setAttribute("aria-label", label);
+        input.dataset.manualAdminInput = displayPath;
+        input.dataset.manualBinding = displayPath;
+        input.setAttribute("aria-label", `${label}，读写映射待确认`);
         field.append(input);
         return field;
       }
 
-      function createManualAdminAction(action, label) {
+      function createManualAdminAction(displayPath, label) {
         const button = document.createElement("button");
         button.className = "manual-action";
         button.type = "button";
-        button.dataset.manualAction = action;
+        button.dataset.manualAction = "pending";
+        button.dataset.manualPath = displayPath;
         button.textContent = label;
+        updateManualButton(button);
         return button;
       }
 
-      function createManualAdminGroup(title, fields, action, actionLabel) {
+      function createManualAdminGroup(title, fields, actionPath, actionLabel) {
         const group = document.createElement("section");
         group.className = "manual-admin-group";
         const heading = document.createElement("strong");
         heading.textContent = title;
         const fieldGrid = document.createElement("div");
         fieldGrid.className = "manual-admin-fields";
-        fields.forEach(([label, key]) => fieldGrid.append(createManualAdminInput(label, key)));
+        fields.forEach(([label, displayPath]) => fieldGrid.append(createManualAdminInput(label, displayPath)));
         const actions = document.createElement("div");
         actions.className = "manual-admin-actions";
-        actions.append(createManualAdminAction(action, actionLabel));
+        actions.append(createManualAdminAction(actionPath, actionLabel));
         group.append(heading, fieldGrid, actions);
         return group;
       }
@@ -5855,7 +5942,7 @@
           renderedManualAdminRole = manualRole;
           return true;
         }
-        // 权限来自当前产品设计：源点位表没有管理员角色列。
+        // 权限来自当前产品会话；绝对执行 BOOL 未确认，数值参数按已配置点位读写。
 
         const panel = document.createElement("section");
         panel.className = "manual-admin-panel";
@@ -5875,8 +5962,8 @@
         const originActions = document.createElement("div");
         originActions.className = "manual-admin-actions";
         originActions.append(
-          createManualAdminAction("x-origin", "设定 X 原点"),
-          createManualAdminAction("z-origin", "设定 Z 原点")
+          createManualAdminAction("manual.origin.x.set.action", "设定 X 原点"),
+          createManualAdminAction("manual.origin.z.set.action", "设定 Z 原点")
         );
         origin.append(originTitle, originActions);
 
@@ -5885,26 +5972,26 @@
           origin,
           createManualAdminGroup(
             "X 绝对移动",
-            [["目标位置", "x-absolute-position"], ["速度", "x-absolute-speed"], ["加速度", "x-absolute-acceleration"], ["减速度", "x-absolute-deceleration"]],
-            "x-absolute",
+            [["目标位置", "manual.motion.x.absolute.target.parameter"], ["速度", "manual.motion.x.absolute.speed.parameter"], ["加速度", "manual.motion.x.absolute.acceleration.parameter"], ["减速度", "manual.motion.x.absolute.deceleration.parameter"]],
+            "manual.motion.x.absolute.trigger.action",
             "执行 X 绝对移动"
           ),
           createManualAdminGroup(
             "Z 绝对移动",
-            [["目标位置", "z-absolute-position"], ["速度", "z-absolute-speed"], ["加速度", "z-absolute-acceleration"], ["减速度", "z-absolute-deceleration"]],
-            "z-absolute",
+            [["目标位置", "manual.motion.z.absolute.target.parameter"], ["速度", "manual.motion.z.absolute.speed.parameter"], ["加速度", "manual.motion.z.absolute.acceleration.parameter"], ["减速度", "manual.motion.z.absolute.deceleration.parameter"]],
+            "manual.motion.z.absolute.trigger.action",
             "执行 Z 绝对移动"
           ),
           createManualAdminGroup(
             "X 相对参数",
-            [["相对位置", "x-relative-position"], ["速度", "x-relative-speed"], ["加速度", "x-relative-acceleration"], ["减速度", "x-relative-deceleration"]],
-            "x-relative-admin",
+            [["相对位置", "manual.motion.x.relative.distance.parameter"], ["速度", "manual.motion.x.relative.speed.parameter"], ["加速度", "manual.motion.x.relative.acceleration.parameter"], ["减速度", "manual.motion.x.relative.deceleration.parameter"]],
+            "manual.motion.x.relative.trigger.action",
             "执行 X 相对移动"
           ),
           createManualAdminGroup(
             "Z 相对参数",
-            [["相对位置", "z-relative-position"], ["速度", "z-relative-speed"], ["加速度", "z-relative-acceleration"], ["减速度", "z-relative-deceleration"]],
-            "z-relative-admin",
+            [["相对位置", "manual.motion.z.relative.distance.parameter"], ["速度", "manual.motion.z.relative.speed.parameter"], ["加速度", "manual.motion.z.relative.acceleration.parameter"], ["减速度", "manual.motion.z.relative.deceleration.parameter"]],
+            "manual.motion.z.relative.trigger.action",
             "执行 Z 相对移动"
           )
         );
@@ -5914,37 +6001,84 @@
       }
 
       function renderManual() {
-        $("#manualXPosition").textContent = manualDisplayValue(manualState.x);
-        $("#manualZPosition").textContent = manualDisplayValue(manualState.z);
-        $("#manualXLoad").textContent = manualDisplayValue(manualState.xLoad);
-        $("#manualZLoad").textContent = manualDisplayValue(manualState.zLoad);
-        $("#manualClawState").textContent = `夹爪状态：${manualState.claw}`;
-        const writableDemo = demoMode && frontendPermissions.operate;
+        $("#manualXPosition").textContent = manualDisplayValue(manualValue("manual.motion.x.position.feedback") ?? manualState.x);
+        $("#manualZPosition").textContent = manualDisplayValue(manualValue("manual.motion.z.position.feedback") ?? manualState.z);
+        $("#manualXLoad").textContent = manualDisplayValue(manualValue("manual.motion.x.load.feedback") ?? manualState.xLoad);
+        $("#manualZLoad").textContent = manualDisplayValue(manualValue("manual.motion.z.load.feedback") ?? manualState.zLoad);
+        const clawBinding = manualBinding("manual.gripper.clamped.feedback") || manualBinding("manual.gripper.opened.feedback");
+        $("#manualClawState").textContent = `夹爪状态：${clawBinding && clawBinding.state !== "pending" ? manualState.claw : "映射待确认"}`;
         let keyboardRefreshNeeded = false;
-        [["#manualXSpeedInput", "xSpeed"], ["#manualZSpeedInput", "zSpeed"]].forEach(([selector, key]) => {
+        [["#manualXSpeedInput", "x"], ["#manualZSpeedInput", "z"]].forEach(([selector, axis]) => {
           const input = $(selector);
-          if (input.readOnly !== !writableDemo) keyboardRefreshNeeded = true;
-          input.readOnly = !writableDemo;
-          input.setAttribute("aria-readonly", String(!writableDemo));
-          if (document.activeElement !== input) input.value = manualState[key];
+          const displayPath = manualSpeedPaths[axis];
+          if (updateManualNumberInput(input, displayPath, manualState[axis + "Speed"])) keyboardRefreshNeeded = true;
         });
+        $$("[data-manual-action]").forEach(updateManualButton);
         if (renderManualAdmin()) keyboardRefreshNeeded = true;
+        $$("input[data-manual-admin-input]").forEach(input => {
+          const displayPath = input.dataset.manualBinding;
+          if (displayPath && updateManualNumberInput(input, displayPath)) keyboardRefreshNeeded = true;
+        });
         if (keyboardRefreshNeeded) window.HMISoftKeyboard?.refresh?.();
       }
 
       function handleManualAction(button) {
-        // 普通控制按钮的角色归属权限来自当前产品设计；本页不发送 PLC 命令。
-        if (!requireFrontendPermission("operate")) return false;
-        const action = button.dataset.manualAction;
-        if (!demoMode) {
-          showToast("当前页面未绑定现场写入", "info");
+        const displayPath = manualPathForButton(button);
+        const binding = displayPath ? manualBinding(displayPath) : null;
+        if (!binding || binding.state === "pending") {
+          showToast("点位读写映射待确认", "info");
           return false;
         }
+        if (!requireFrontendPermission(manualPermission(displayPath))) return false;
+        const runtime = manualRuntime();
+        if (!runtime || !manualCanWrite(displayPath)) {
+          showToast("PLC 尚未连接", "info");
+          return false;
+        }
+        button.disabled = true;
+        Promise.resolve(runtime.command(displayPath)).then(() => {
+          if (demoMode) showToast("电脑预览，不发送 PLC 指令", "info");
+          else showToast("PLC 指令已确认", "success");
+        }).catch(error => {
+          showToast(backendErrorMessage(error), "error");
+        }).finally(() => {
+          renderManual();
+        });
+        return true;
+      }
 
-        if (action === "clamp") manualState.claw = "已夹紧";
-        if (action === "release") manualState.claw = "已松开";
-        if (action !== "clamp" && action !== "release") showToast("电脑预览，不发送 PLC 指令", "info");
-        renderManual();
+      function commitManualNumber(input) {
+        const displayPath = input.dataset.manualBinding || manualSpeedPaths[input.dataset.manualSpeed];
+        const binding = displayPath ? manualBinding(displayPath) : null;
+        if (!binding || binding.state === "pending") {
+          showToast("点位读写映射待确认", "info");
+          return false;
+        }
+        if (!requireFrontendPermission(manualPermission(displayPath))) return false;
+        const value = Number(input.value);
+        if (input.value.trim() === "" || !Number.isFinite(value)) {
+          showToast("请输入有效数值", "error");
+          return false;
+        }
+        const runtime = manualRuntime();
+        if (!runtime || !manualCanWrite(displayPath)) {
+          showToast("PLC 尚未连接", "info");
+          return false;
+        }
+        input.readOnly = true;
+        Promise.resolve(runtime.command(displayPath, value)).then(() => {
+          if (demoMode) {
+            const axis = input.dataset.manualSpeed;
+            if (axis) manualState[axis + "Speed"] = input.value;
+            showToast("电脑预览，不发送 PLC 指令", "info");
+          } else {
+            showToast("参数已写入 PLC", "success");
+          }
+        }).catch(error => {
+          showToast(backendErrorMessage(error), "error");
+        }).finally(() => {
+          renderManual();
+        });
         return true;
       }
 
@@ -5953,26 +6087,37 @@
         manualPage.addEventListener("pointerdown", event => {
           const input = closestElement(event.target, "input[data-manual-speed], input[data-manual-admin-input]");
           if (!input) return;
-          if (!frontendPermissions.operate) {
+          const displayPath = input.dataset.manualBinding || manualSpeedPaths[input.dataset.manualSpeed];
+          const binding = displayPath ? manualBinding(displayPath) : null;
+          if (!binding || binding.state === "pending") {
             event.preventDefault();
             event.stopPropagation();
-            requireFrontendPermission("operate");
+            showToast("点位读写映射待确认", "info");
             return;
           }
-          if (!demoMode) {
+          if (!frontendPermissions[manualPermission(displayPath)]) {
             event.preventDefault();
             event.stopPropagation();
-            showToast("当前页面未绑定现场写入", "info");
+            requireFrontendPermission(manualPermission(displayPath));
+            return;
+          }
+          if (!manualCanWrite(displayPath)) {
+            event.preventDefault();
+            event.stopPropagation();
+            showToast("PLC 尚未连接", "info");
           }
         }, true);
-        manualPage.addEventListener("input", event => {
-          const input = closestElement(event.target, "input[data-manual-speed]");
+        manualPage.addEventListener("change", event => {
+          const input = closestElement(event.target, "input[data-manual-speed], input[data-manual-admin-input]");
           if (!input) return;
-          if (!demoMode || !frontendPermissions.operate) {
-            input.value = manualState[input.dataset.manualSpeed + "Speed"] || "";
-            return;
-          }
-          manualState[input.dataset.manualSpeed + "Speed"] = input.value;
+          commitManualNumber(input);
+        });
+        manualPage.addEventListener("keydown", event => {
+          if (event.key !== "Enter") return;
+          const input = closestElement(event.target, "input[data-manual-speed], input[data-manual-admin-input]");
+          if (!input) return;
+          event.preventDefault();
+          commitManualNumber(input);
         });
         manualPage.addEventListener("click", event => {
           const button = closestElement(event.target, "[data-manual-action]");

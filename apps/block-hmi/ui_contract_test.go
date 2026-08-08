@@ -43,7 +43,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`id="operatorName"`,
 		`assets/soft-keyboard.css?v=20260808.3`,
 		`assets/soft-keyboard.js?v=20260808.3`,
-		`import("./assets/hmi.mjs?v=20260808.3")`,
+		`import("./assets/hmi.mjs?v=20260808.4")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -260,7 +260,8 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		t.Fatal("mode display is not derived from the PLC enabled point")
 	}
 	if !strings.Contains(source, `document.querySelectorAll<HTMLButtonElement>(".control-button:not(.manual-entry-button)")`) ||
-		!strings.Contains(source, `const available = runtimeEnabled && button === start;`) ||
+		!strings.Contains(source, `const startConfigured = this.config.bindings.some`) ||
+		!strings.Contains(source, `const available = runtimeEnabled && startConfigured && button === start;`) ||
 		!strings.Contains(source, `mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";`) ||
 		strings.Contains(source, `mode.dataset.backendUnavailable = "true";`) {
 		t.Fatal("production mode controls are not enabled only while the runtime is writable")
@@ -399,7 +400,8 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 		`function renderManualAdmin()`,
 		`function manualAdminMountAction(previousRole, nextRole, hasAdminNodes)`,
 		`mount.replaceChildren();`,
-		`权限来自当前产品设计：源点位表没有管理员角色列。`,
+		`权限来自当前产品会话；绝对执行 BOOL 未确认，数值参数按已配置点位读写。`,
+		`function updateManualNumberInput(input, displayPath, fallback = "") {`,
 		`if (demoManualStart) switchPage("manual");`,
 		`["home", "manual", "data", "alarm", "history"].includes(name)`,
 		`.control-button:not(.manual-entry-button)`,
@@ -457,19 +459,29 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 			t.Fatalf("obsolete coordinate control remains: %q", removed)
 		}
 	}
-	manualHandler := regexp.MustCompile(`(?s)function handleManualAction\(button\) \{.*?\n      \}\n\n      function bindManualPage`).FindString(page)
+	manualHandler := regexp.MustCompile(`(?s)function handleManualAction\(button\) \{.*?\n      \}\n\n      function commitManualNumber`).FindString(page)
 	if manualHandler == "" ||
-		!strings.Contains(manualHandler, `if (!requireFrontendPermission("operate")) return false;`) ||
-		!strings.Contains(manualHandler, `当前页面未绑定现场写入`) ||
+		!strings.Contains(manualHandler, `const displayPath = manualPathForButton(button);`) ||
+		!strings.Contains(manualHandler, `binding.state === "pending"`) ||
+		!strings.Contains(manualHandler, `requireFrontendPermission(manualPermission(displayPath))`) ||
+		!strings.Contains(manualHandler, `runtime.command(displayPath)`) ||
+		!strings.Contains(manualHandler, `PLC 指令已确认`) ||
 		!strings.Contains(manualHandler, `电脑预览，不发送 PLC 指令`) ||
 		strings.Contains(manualHandler, "sendCommand") ||
 		strings.Contains(manualHandler, "point.command") ||
 		strings.Contains(manualHandler, "WebSocket") ||
-		strings.Contains(manualHandler, "manualDemoNumber") ||
-		strings.Contains(manualHandler, "manualState.x") ||
-		strings.Contains(manualHandler, "manualState.z") ||
 		strings.Contains(page, "function manualDemoNumber") {
-		t.Fatal("manual actions are not an isolated local demo interaction")
+		t.Fatal("manual actions are not routed through configured PLC bindings")
+	}
+	manualNumberCommit := regexp.MustCompile(`(?s)function commitManualNumber\(input\) \{.*?\n      \}\n\n      function bindManualPage`).FindString(page)
+	if manualNumberCommit == "" ||
+		!strings.Contains(manualNumberCommit, `Number(input.value)`) ||
+		!strings.Contains(manualNumberCommit, `input.value.trim() === ""`) ||
+		!strings.Contains(manualNumberCommit, `runtime.command(displayPath, value)`) ||
+		strings.Contains(manualNumberCommit, "sendCommand") ||
+		strings.Contains(manualNumberCommit, "point.command") ||
+		strings.Contains(manualNumberCommit, "WebSocket") {
+		t.Fatal("manual numeric parameters do not use configured PLC set commands")
 	}
 	manualAdminRender := regexp.MustCompile(`(?s)function renderManualAdmin\(\) \{.*?\n      \}\n\n      function renderManual`).FindString(page)
 	if manualAdminRender == "" ||
@@ -490,10 +502,20 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 		`role: () => this.frontendRole()`,
 		`if (this.demo && this.manualRole !== "GUEST")`,
 		`private frontendRole(): FrontendRole`,
+		`private manualCanWrite(displayPath: string): boolean`,
+		`private manualCommand(displayPath: string, value?: number): Promise<void>`,
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("manual role bridge is missing %q", required)
 		}
+	}
+	manualCommand := regexp.MustCompile(`(?s)private manualCommand\(displayPath: string, value\?: number\): Promise<void> \{.*?\n  \}\n\n  private sendCommand`).FindString(source)
+	if manualCommand == "" ||
+		!strings.Contains(manualCommand, `this.hasPermission(permission)`) ||
+		!strings.Contains(manualCommand, `this.pendingPointCommand.dispatch`) ||
+		!strings.Contains(manualCommand, `buildPointCommand(`) ||
+		!strings.Contains(manualCommand, `action === "set" ? value : undefined`) {
+		t.Fatal("manual command bridge does not enforce permissions and dispatch configured PLC writes")
 	}
 }
 
@@ -543,19 +565,38 @@ func TestPointsJSONKeepsDisplayBindingsOutOfRuntimePoints(t *testing.T) {
 		ScanIntervalMs int              `json:"scanIntervalMs"`
 		Points         []map[string]any `json:"points"`
 		Bindings       []struct {
-			DisplayPath string `json:"displayPath"`
-			Description string `json:"description"`
+			DisplayPath string  `json:"displayPath"`
+			Description string  `json:"description"`
+			ReadPoint   *string `json:"readPoint"`
+			WritePoint  *string `json:"writePoint"`
+			Action      string  `json:"action"`
+			Permission  string  `json:"permission"`
+			State       string  `json:"state"`
 		} `json:"bindings"`
 	}
 	if err := json.Unmarshal(contents, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.ScanIntervalMs != 50 || len(config.Points) == 0 || len(config.Bindings) == 0 {
+	if config.ScanIntervalMs != 50 || len(config.Points) != 30 || len(config.Bindings) == 0 {
 		t.Fatalf("incomplete points.json: %+v", config)
 	}
-	for _, point := range config.Points {
-		if point["writeMethod"] != nil && point["writeMethod"] != "maskWrite" {
+	wantAddresses := []string{
+		"D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4",
+		"D800", "D806", "D812", "D814", "D816", "D818", "D820", "D822", "D824", "D826",
+		"D828", "D830", "D832", "D834", "D836", "D840", "D842", "D844", "D846", "D848", "D850", "D852",
+	}
+	for index, point := range config.Points {
+		address, _ := point["address"].(string)
+		if address != wantAddresses[index] {
+			t.Fatalf("point address at %d = %#v, want %q", index, point["address"], wantAddresses[index])
+		}
+		if point["writeMethod"] != nil && point["writeMethod"] != "maskWrite" && point["writeMethod"] != "fc10" {
 			t.Fatalf("point has unexpected write method: %+v", point)
+		}
+		if address >= "D812" && address <= "D844" {
+			if point["type"] != "float32" || point["access"] != "read_write" || point["writeMethod"] != "fc10" || point["registerCount"] != float64(2) || point["wordOrder"] != "low-high" {
+				t.Fatalf("numeric simulator parameter is incomplete: %+v", point)
+			}
 		}
 		if _, ok := point["displayPath"]; ok {
 			t.Fatalf("runtime point leaked displayPath: %+v", point)
@@ -570,6 +611,31 @@ func TestPointsJSONKeepsDisplayBindingsOutOfRuntimePoints(t *testing.T) {
 		}
 		if binding.Description == "" {
 			t.Fatalf("binding description is empty for %q", binding.DisplayPath)
+		}
+	}
+	for _, displayPath := range []string{
+		"manual.motion.x.absolute.target.parameter", "manual.motion.x.absolute.speed.parameter", "manual.motion.x.absolute.acceleration.parameter", "manual.motion.x.absolute.deceleration.parameter",
+		"manual.motion.z.absolute.target.parameter", "manual.motion.z.absolute.speed.parameter", "manual.motion.z.absolute.acceleration.parameter", "manual.motion.z.absolute.deceleration.parameter",
+		"manual.motion.x.relative.distance.parameter", "manual.motion.x.relative.speed.parameter", "manual.motion.x.relative.acceleration.parameter", "manual.motion.x.relative.deceleration.parameter",
+		"manual.motion.z.relative.distance.parameter", "manual.motion.z.relative.speed.parameter", "manual.motion.z.relative.acceleration.parameter", "manual.motion.z.relative.deceleration.parameter",
+	} {
+		var binding *struct {
+			DisplayPath string  `json:"displayPath"`
+			Description string  `json:"description"`
+			ReadPoint   *string `json:"readPoint"`
+			WritePoint  *string `json:"writePoint"`
+			Action      string  `json:"action"`
+			Permission  string  `json:"permission"`
+			State       string  `json:"state"`
+		}
+		for index := range config.Bindings {
+			if config.Bindings[index].DisplayPath == displayPath {
+				binding = &config.Bindings[index]
+				break
+			}
+		}
+		if binding == nil || binding.ReadPoint == nil || binding.WritePoint == nil || *binding.ReadPoint != displayPath || *binding.WritePoint != displayPath || binding.Action != "set" || binding.Permission != "maintenance" || binding.State != "configured" {
+			t.Fatalf("numeric binding is incomplete for %q: %+v", displayPath, binding)
 		}
 	}
 }

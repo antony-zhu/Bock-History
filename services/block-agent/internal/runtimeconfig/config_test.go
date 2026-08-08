@@ -72,3 +72,42 @@ func TestDecodeIgnoresFrontendOnlyPointFields(t *testing.T) {
 		t.Fatalf("decoded configuration = %#v", config)
 	}
 }
+
+func TestNormalizeAcceptsExplicitSimulatorFloat32Profile(t *testing.T) {
+	config, err := Normalize(Config{ScanIntervalMs: RequiredScanIntervalMs, Points: []PointDefinition{
+		{
+			PointID: "manual.motion.x.jog.speed.parameter", Address: "D800", Type: "float32", Access: "read_write",
+			ReadPoint: "manual.motion.x.jog.speed.parameter", WritePoint: "manual.motion.x.jog.speed.parameter", WriteMethod: "fc10",
+			RegisterCount: 2, WordOrder: "low-high", Write: &WriteDefinition{Mode: "set"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if point := config.Points[0]; point.RegisterCount != 2 || point.WordOrder != "low-high" || point.WriteMethod != "fc10" {
+		t.Fatalf("normalized simulator profile = %#v", point)
+	}
+}
+
+func TestNormalizeAllowsWriteOnlyPulseAndRejectsUndeclaredFloat32Layout(t *testing.T) {
+	writeOnly := Config{ScanIntervalMs: RequiredScanIntervalMs, Points: []PointDefinition{{
+		PointID: "manual.motion.x.relative.trigger.action", Address: "D550.3", Type: "bool", Access: "write",
+		WritePoint: "manual.motion.x.relative.trigger.action", WriteMethod: "maskWrite",
+		Write: &WriteDefinition{Mode: "pulse", ActiveValue: true, DefaultValue: false},
+	}}}
+	normalized, err := Normalize(writeOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Points[0].Write.PulseMs != DefaultPulseMs {
+		t.Fatalf("write-only pulse default = %d", normalized.Points[0].Write.PulseMs)
+	}
+
+	invalid := Config{ScanIntervalMs: RequiredScanIntervalMs, Points: []PointDefinition{{
+		PointID: "manual.invalid.float", Address: "D800", Type: "float32", Access: "read",
+		ReadPoint: "manual.invalid.float",
+	}}}
+	if _, err := Normalize(invalid); err == nil {
+		t.Fatal("Normalize unexpectedly accepted float32 without a span and word order")
+	}
+}

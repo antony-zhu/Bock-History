@@ -494,6 +494,22 @@ func (f *runtimeFakeAdapter) MaskWriteBit(_ context.Context, address uint16, bit
 	return nil
 }
 
+func (f *runtimeFakeAdapter) WriteSingleRegister(_ context.Context, address, value uint16) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.registers[address] = value
+	return nil
+}
+
+func (f *runtimeFakeAdapter) WriteMultipleRegisters(_ context.Context, address uint16, values []uint16) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for index, value := range values {
+		f.registers[address+uint16(index)] = value
+	}
+	return nil
+}
+
 func (f *runtimeFakeAdapter) Close() {}
 
 func (f *runtimeFakeAdapter) writeCalls() []runtimeWriteCall {

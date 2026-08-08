@@ -42,6 +42,8 @@ export function buildRuntimeConfigure(points, id = requestID(), timestamp = new 
             readPoint: point.readPoint,
             writePoint: point.writePoint,
             writeMethod: point.writeMethod,
+            registerCount: point.registerCount,
+            wordOrder: point.wordOrder,
             write: point.write === undefined ? undefined : {
                 mode: point.write.mode,
                 activeValue: point.write.activeValue,
@@ -63,8 +65,12 @@ export function buildPLCConnect(deviceID, id = requestID(), timestamp = new Date
 export function buildPLCDisconnect(id = requestID(), timestamp = new Date().toISOString()) {
     return request("plc.disconnect", {}, id, timestamp);
 }
-export function buildPointCommand(pointID, action, id = requestID(), timestamp = new Date().toISOString()) {
-    return request("point.command", { pointId: pointID, action }, id, timestamp);
+export function buildPointCommand(pointID, action, id = requestID(), timestamp = new Date().toISOString(), value) {
+    return request("point.command", {
+        pointId: pointID,
+        action,
+        ...(action === "set" ? { value } : {})
+    }, id, timestamp);
 }
 export function applyAbsoluteValues(target, values) {
     for (const [pointID, pointValue] of Object.entries(values)) {
@@ -191,14 +197,19 @@ function demoConfiguration() {
     };
 }
 async function loadConfiguration(demo) {
-    if (demo) {
-        return demoConfiguration();
+    try {
+        const response = await fetch(new URL("./points.json", import.meta.url), { cache: "no-store" });
+        if (!response.ok) {
+            throw new Error("无法读取 points.json");
+        }
+        return configurationFrom(await response.json());
     }
-    const response = await fetch(new URL("./points.json", import.meta.url), { cache: "no-store" });
-    if (!response.ok) {
-        throw new Error("无法读取 points.json");
+    catch (error) {
+        if (demo) {
+            return demoConfiguration();
+        }
+        throw error;
     }
-    return configurationFrom(await response.json());
 }
 function websocketURL() {
     if (window.location.protocol !== "https:") {
@@ -469,7 +480,13 @@ class AppleBridge {
             getState: () => this.getState(),
             sendCommand: (command, payload) => this.sendCommand(command, payload),
             acknowledgeAlarm: (alarmID) => this.acknowledgeAlarm(alarmID),
-            getAudit: () => Promise.resolve({ events: cloneState(this.currentState()).history })
+            getAudit: () => Promise.resolve({ events: cloneState(this.currentState()).history }),
+            manual: {
+                binding: (displayPath) => this.manualBinding(displayPath),
+                value: (displayPath) => this.manualValue(displayPath),
+                canWrite: (displayPath) => this.manualCanWrite(displayPath),
+                command: (displayPath, value) => this.manualCommand(displayPath, value)
+            }
         };
     }
     authPanel() {
@@ -1140,10 +1157,54 @@ class AppleBridge {
     }
     valueFor(displayPath) {
         const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
-        if (binding === undefined) {
+        if (binding === undefined || binding.readPoint === null) {
             return undefined;
         }
         return this.values.get(binding.readPoint)?.value;
+    }
+    manualBinding(displayPath) {
+        const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
+        return binding === undefined ? null : { ...binding };
+    }
+    manualValue(displayPath) {
+        return this.valueFor(displayPath);
+    }
+    manualCanWrite(displayPath) {
+        const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
+        if (binding === undefined || binding.state === "pending" || binding.writePoint === null || binding.writePoint === undefined ||
+            (binding.action !== "pulse" && binding.action !== "toggle" && binding.action !== "set")) {
+            return false;
+        }
+        if (!this.hasPermission(binding.permission ?? "operate")) {
+            return false;
+        }
+        return this.demo || this.canSendRuntime();
+    }
+    manualCommand(displayPath, value) {
+        const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
+        const action = binding?.action;
+        const writePoint = binding?.writePoint;
+        if (binding === undefined || binding.state === "pending" || writePoint === null || writePoint === undefined ||
+            (action !== "pulse" && action !== "toggle" && action !== "set")) {
+            return Promise.reject(new HMIAPIError("点位读写映射待确认", 501, "point_not_configured"));
+        }
+        const permission = binding.permission ?? "operate";
+        if (!this.hasPermission(permission)) {
+            return Promise.reject(new HMIAPIError(permission === "maintenance" ? "请使用管理员会话执行此操作" : "请登录后执行现场操作", 403, "permission_denied"));
+        }
+        if (action === "set" && (typeof value !== "number" || !Number.isFinite(value))) {
+            return Promise.reject(new HMIAPIError("请输入有效数值", 400, "invalid_value"));
+        }
+        if (this.demo) {
+            return Promise.resolve();
+        }
+        if (!this.canSendRuntime()) {
+            return Promise.reject(new HMIAPIError("PLC 尚未连接", 503, "plc_not_connected"));
+        }
+        const requestId = requestID();
+        return this.pendingPointCommand.dispatch(requestId, () => {
+            this.socket.send(JSON.stringify(buildPointCommand(writePoint, action, requestId, undefined, action === "set" ? value : undefined)));
+        });
     }
     sendCommand(command, payload = {}) {
         if (!this.requirePermission("operate")) {
@@ -1375,8 +1436,9 @@ class AppleBridge {
         window.setTimeout(() => {
             const start = document.querySelector('[data-action="start"]');
             const runtimeEnabled = this.canSendRuntime();
+            const startConfigured = this.config.bindings.some((binding) => binding.displayPath === "home.machine.start" && binding.state !== "pending" && binding.writePoint !== null && binding.action === "pulse");
             document.querySelectorAll(".control-button:not(.manual-entry-button)").forEach((button) => {
-                const available = runtimeEnabled && button === start;
+                const available = runtimeEnabled && startConfigured && button === start;
                 button.dataset.backendUnavailable = available ? "false" : "true";
             });
             const mode = document.querySelector("#modeToggle");

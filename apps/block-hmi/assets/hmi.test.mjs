@@ -88,6 +88,16 @@ const configured = buildRuntimeConfigure([{
 assert.equal(configured.type, "runtime.configure");
 assert.equal(JSON.stringify(configured).includes("displayPath"), false);
 assert.equal(JSON.stringify(configured).includes("description"), false);
+const simulatorConfigured = buildRuntimeConfigure([{
+  pointId: "manual.motion.x.jog.speed.parameter", address: "D800", type: "float32", access: "read_write",
+  readPoint: "manual.motion.x.jog.speed.parameter", writePoint: "manual.motion.x.jog.speed.parameter", writeMethod: "fc10",
+  registerCount: 2, wordOrder: "low-high", write: { mode: "set" }
+}], "numeric-configure", timestamp);
+assert.deepEqual(simulatorConfigured.points[0], {
+  pointId: "manual.motion.x.jog.speed.parameter", address: "D800", type: "float32", access: "read_write",
+  readPoint: "manual.motion.x.jog.speed.parameter", writePoint: "manual.motion.x.jog.speed.parameter", writeMethod: "fc10",
+  registerCount: 2, wordOrder: "low-high", write: { mode: "set", activeValue: undefined, defaultValue: undefined, pulseMs: undefined }
+});
 assert.equal(buildPLCScan("192.168.1.0/24", "scan", timestamp).type, "plc.scan");
 assert.equal(buildPLCConnect("easy521://127.0.0.1:1502?unitId=1", "connect", timestamp).type, "plc.connect");
 assert.equal(buildPLCDisconnect("disconnect", timestamp).type, "plc.disconnect");
@@ -100,6 +110,15 @@ assert.deepEqual(buildPointCommand("machine.enabled", "toggle", "mode", timestam
   timestamp,
   pointId: "machine.enabled",
   action: "toggle"
+});
+assert.deepEqual(buildPointCommand("manual.motion.x.jog.speed.parameter", "set", "speed", timestamp, 8.25), {
+  protocolVersion: "1.0",
+  type: "point.command",
+  requestId: "speed",
+  timestamp,
+  pointId: "manual.motion.x.jog.speed.parameter",
+  action: "set",
+  value: 8.25
 });
 
 const receipt = new PointCommandReceipt(100);
@@ -148,6 +167,58 @@ const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
+const pointsConfiguration = JSON.parse(readFileSync(new URL("./points.json", import.meta.url), "utf8"));
+assert.deepEqual(pointsConfiguration.numericProfiles.simulatorFloat32, {
+  scope: "电脑模拟联调",
+  dataType: "float32",
+  registerCount: 2,
+  singleRegisterByteOrder: "big-endian",
+  wordOrder: "low-high",
+  readFunction: "FC03",
+  writeFunction: "FC10",
+  verification: "真实 Easy521 投用前，必须用已知浮点基准值核验寄存器跨度和字序；本约定不是现场事实。"
+});
+for (const binding of pointsConfiguration.bindings) {
+  assert.match(binding.displayPath, /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/);
+  assert.match(binding.description, /[\u3400-\u9fff]/);
+}
+const xSpeed = pointsConfiguration.points.find((point) => point.pointId === "manual.motion.x.jog.speed.parameter");
+assert.deepEqual(xSpeed, {
+  pointId: "manual.motion.x.jog.speed.parameter", address: "D800", type: "float32", access: "read_write",
+  readPoint: "manual.motion.x.jog.speed.parameter", writePoint: "manual.motion.x.jog.speed.parameter", writeMethod: "fc10",
+  registerCount: 2, wordOrder: "low-high", write: { mode: "set" }
+});
+const xRelative = pointsConfiguration.points.find((point) => point.pointId === "manual.motion.x.relative.trigger.action");
+assert.equal(xRelative.readPoint, null);
+assert.equal(xRelative.writeMethod, "maskWrite");
+const simulatorPointAddresses = [
+  "D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4",
+  "D800", "D806", "D812", "D814", "D816", "D818", "D820", "D822", "D824", "D826",
+  "D828", "D830", "D832", "D834", "D836", "D840", "D842", "D844", "D846", "D848", "D850", "D852"
+];
+assert.equal(pointsConfiguration.points.length, simulatorPointAddresses.length);
+assert.deepEqual(pointsConfiguration.points.map((point) => point.address), simulatorPointAddresses);
+for (const address of ["D812", "D814", "D816", "D818", "D820", "D822", "D824", "D826", "D828", "D830", "D832", "D834", "D836", "D840", "D842", "D844"]) {
+  const point = pointsConfiguration.points.find((item) => item.address === address);
+  assert.deepEqual({ type: point.type, access: point.access, writeMethod: point.writeMethod, registerCount: point.registerCount, wordOrder: point.wordOrder, write: point.write }, {
+    type: "float32", access: "read_write", writeMethod: "fc10", registerCount: 2, wordOrder: "low-high", write: { mode: "set" }
+  });
+}
+for (const displayPath of [
+  "manual.motion.x.absolute.target.parameter", "manual.motion.x.absolute.speed.parameter", "manual.motion.x.absolute.acceleration.parameter", "manual.motion.x.absolute.deceleration.parameter",
+  "manual.motion.z.absolute.target.parameter", "manual.motion.z.absolute.speed.parameter", "manual.motion.z.absolute.acceleration.parameter", "manual.motion.z.absolute.deceleration.parameter",
+  "manual.motion.x.relative.distance.parameter", "manual.motion.x.relative.speed.parameter", "manual.motion.x.relative.acceleration.parameter", "manual.motion.x.relative.deceleration.parameter",
+  "manual.motion.z.relative.distance.parameter", "manual.motion.z.relative.speed.parameter", "manual.motion.z.relative.acceleration.parameter", "manual.motion.z.relative.deceleration.parameter"
+]) {
+  const binding = pointsConfiguration.bindings.find((item) => item.displayPath === displayPath);
+  assert.deepEqual({ component: binding.component, readPoint: binding.readPoint, writePoint: binding.writePoint, action: binding.action, permission: binding.permission, state: binding.state }, {
+    component: "number", readPoint: displayPath, writePoint: displayPath, action: "set", permission: "maintenance", state: "configured"
+  });
+}
+for (const displayPath of ["manual.motion.x.absolute.trigger.action", "manual.motion.z.absolute.trigger.action"]) {
+  const binding = pointsConfiguration.bindings.find((item) => item.displayPath === displayPath);
+  assert.deepEqual({ writePoint: binding.writePoint, state: binding.state }, { writePoint: null, state: "pending" });
+}
 const userVisibleCopy = (source + index).replace(/\/api(?:\/[a-z-]+)+/gi, "");
 assert.doesNotMatch(userVisibleCopy, /\bv2\b/i);
 assert.doesNotMatch(source, /localStorage|sessionStorage|crypto\.subtle|passwordDigest|block-hmi-local-/);
@@ -204,7 +275,8 @@ assert.match(source, /const enabled = this\.valueFor\("home\.machine\.enabled"\)
 const productionPolicy = source.match(/private deferProductionPolicy\(\): void \{[\s\S]*?\n  \}\n\}/);
 assert.notEqual(productionPolicy, null);
 assert.match(productionPolicy[0], /\.control-button:not\(\.manual-entry-button\)/);
-assert.match(productionPolicy[0], /const available = runtimeEnabled && button === start;/);
+assert.match(productionPolicy[0], /const startConfigured = this\.config\.bindings\.some/);
+assert.match(productionPolicy[0], /const available = runtimeEnabled && startConfigured && button === start;/);
 assert.match(productionPolicy[0], /mode\.dataset\.backendUnavailable = runtimeEnabled \? "false" : "true";/);
 assert.doesNotMatch(productionPolicy[0], /mode\.dataset\.backendUnavailable = "true"/);
 assert.doesNotMatch(source, /\/api\/auth\/status/);
@@ -259,7 +331,7 @@ assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "
 for (const asset of [
   'assets/soft-keyboard.css?v=20260808.3',
   'assets/soft-keyboard.js?v=20260808.3',
-  './assets/hmi.mjs?v=20260808.3'
+  './assets/hmi.mjs?v=20260808.4'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
 }
@@ -310,13 +382,21 @@ assert.match(index, /\.manual-admin-panel \{[\s\S]*?height: 100%;[\s\S]*?overflo
 const manualStyles = index.slice(index.indexOf('.manual-entry-button'), index.indexOf('</style>', index.indexOf('.manual-entry-button')));
 assert.doesNotMatch(manualStyles, /transition:|box-shadow:|linear-gradient|radial-gradient|backdrop-filter/);
 assert.doesNotMatch(manualStyles, /min-height: 72px;/);
-const manualHandler = index.match(/function handleManualAction\(button\) \{[\s\S]*?\n      \}\n\n      function bindManualPage/);
+const manualHandler = index.match(/function handleManualAction\(button\) \{[\s\S]*?\n      \}\n\n      function commitManualNumber/);
 assert.notEqual(manualHandler, null);
-assert.match(manualHandler[0], /if \(!requireFrontendPermission\("operate"\)\) return false;/);
-assert.match(manualHandler[0], /if \(!demoMode\) \{[\s\S]*?当前页面未绑定现场写入/);
+assert.match(manualHandler[0], /const displayPath = manualPathForButton\(button\);/);
+assert.match(manualHandler[0], /binding\.state === "pending"/);
+assert.match(manualHandler[0], /requireFrontendPermission\(manualPermission\(displayPath\)\)/);
+assert.match(manualHandler[0], /runtime\.command\(displayPath\)/);
+assert.match(manualHandler[0], /PLC 指令已确认/);
 assert.match(manualHandler[0], /showToast\("电脑预览，不发送 PLC 指令", "info"\)/);
 assert.doesNotMatch(manualHandler[0], /sendCommand|point\.command|WebSocket/);
-assert.doesNotMatch(manualHandler[0], /manualDemoNumber|manualState\.x|manualState\.z/);
+const manualNumberCommit = index.match(/function commitManualNumber\(input\) \{[\s\S]*?\n      \}\n\n      function bindManualPage/);
+assert.notEqual(manualNumberCommit, null);
+assert.match(manualNumberCommit[0], /Number\(input\.value\)/);
+assert.match(manualNumberCommit[0], /input\.value\.trim\(\) === ""/);
+assert.match(manualNumberCommit[0], /runtime\.command\(displayPath, value\)/);
+assert.doesNotMatch(manualNumberCommit[0], /sendCommand|point\.command|WebSocket/);
 assert.doesNotMatch(index, /function manualDemoNumber/);
 const manualAdminMountActionSource = index.match(/function manualAdminMountAction\(previousRole, nextRole, hasAdminNodes\) \{[\s\S]*?\n      \}/);
 assert.notEqual(manualAdminMountActionSource, null);
@@ -330,7 +410,15 @@ assert.notEqual(manualAdminRender, null);
 assert.match(manualAdminRender[0], /if \(mountAction === "retain"\) return false;/);
 assert.match(manualAdminRender[0], /if \(mountAction === "clear"\) \{[\s\S]*?mount\.replaceChildren\(\);[\s\S]*?return true;/);
 assert.match(manualAdminRender[0], /mount\.replaceChildren\(panel\);[\s\S]*?renderedManualAdminRole = manualRole;/);
-assert.match(index, /权限来自当前产品设计：源点位表没有管理员角色列。/);
+assert.match(index, /权限来自当前产品会话；绝对执行 BOOL 未确认，数值参数按已配置点位读写。/);
+assert.match(index, /function updateManualNumberInput\(input, displayPath, fallback = ""\) \{/);
+assert.match(index, /input\[data-manual-speed\], input\[data-manual-admin-input\]/);
+const manualCommand = source.match(/private manualCommand\(displayPath: string, value\?: number\): Promise<void> \{[\s\S]*?\n  \}\n\n  private sendCommand/);
+assert.notEqual(manualCommand, null);
+assert.match(manualCommand[0], /this\.hasPermission\(permission\)/);
+assert.match(manualCommand[0], /this\.pendingPointCommand\.dispatch/);
+assert.match(manualCommand[0], /buildPointCommand\([\s\S]*?writePoint,[\s\S]*?action,[\s\S]*?requestId,[\s\S]*?action === "set" \? value : undefined/);
+assert.match(source, /private manualCanWrite\(displayPath: string\): boolean/);
 const staticMarkup = index.slice(0, index.indexOf('<script src="assets/vendor/simple-keyboard/index.js"></script>'));
 assert.doesNotMatch(staticMarkup, /data-manual-admin=/);
 assert.match(index, /if \(demoManualStart\) switchPage\("manual"\);/);

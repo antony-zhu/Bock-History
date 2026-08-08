@@ -23,15 +23,17 @@ type Config struct {
 // fields such as component, label and displayPath are intentionally ignored
 // when JSON is decoded into this type.
 type PointDefinition struct {
-	PointID     string           `json:"pointId"`
-	Address     string           `json:"address"`
-	Type        string           `json:"type"`
-	Access      string           `json:"access"`
-	ReadPoint   string           `json:"readPoint"`
-	WritePoint  string           `json:"writePoint"`
-	WriteMethod string           `json:"writeMethod"`
-	Write       *WriteDefinition `json:"write"`
-	Alarm       *AlarmDefinition `json:"alarm"`
+	PointID       string           `json:"pointId"`
+	Address       string           `json:"address"`
+	Type          string           `json:"type"`
+	Access        string           `json:"access"`
+	ReadPoint     string           `json:"readPoint"`
+	WritePoint    string           `json:"writePoint"`
+	WriteMethod   string           `json:"writeMethod"`
+	RegisterCount int              `json:"registerCount"`
+	WordOrder     string           `json:"wordOrder"`
+	Write         *WriteDefinition `json:"write"`
+	Alarm         *AlarmDefinition `json:"alarm"`
 }
 
 type WriteDefinition struct {
@@ -96,15 +98,17 @@ func Validate(value Config) error {
 	}
 
 	for index, point := range value.Points {
-		read, exists := byID[point.ReadPoint]
-		if !exists {
-			return fmt.Errorf("points[%d].readPoint %q does not exist", index, point.ReadPoint)
-		}
-		if read.Access == "write" {
-			return fmt.Errorf("points[%d].readPoint %q is not readable", index, point.ReadPoint)
-		}
-		if read.Type != point.Type {
-			return fmt.Errorf("points[%d].readPoint %q type does not match", index, point.ReadPoint)
+		if point.Access != "write" {
+			read, exists := byID[point.ReadPoint]
+			if !exists {
+				return fmt.Errorf("points[%d].readPoint %q does not exist", index, point.ReadPoint)
+			}
+			if read.Access == "write" {
+				return fmt.Errorf("points[%d].readPoint %q is not readable", index, point.ReadPoint)
+			}
+			if read.Type != point.Type {
+				return fmt.Errorf("points[%d].readPoint %q type does not match", index, point.ReadPoint)
+			}
 		}
 		if point.Access == "read" {
 			continue
@@ -137,8 +141,14 @@ func validatePoint(index int, point PointDefinition) error {
 	if point.Access != "read" && point.Access != "write" && point.Access != "read_write" {
 		return fmt.Errorf("%s.access is unsupported", prefix)
 	}
-	if strings.TrimSpace(point.ReadPoint) == "" {
+	if point.Access != "write" && strings.TrimSpace(point.ReadPoint) == "" {
 		return fmt.Errorf("%s.readPoint is required", prefix)
+	}
+	if point.Access == "write" && strings.TrimSpace(point.ReadPoint) != "" {
+		return fmt.Errorf("%s write-only point must not define readPoint", prefix)
+	}
+	if err := validateRegisterLayout(prefix, point); err != nil {
+		return err
 	}
 
 	if point.Access == "read" {
@@ -151,6 +161,9 @@ func validatePoint(index int, point PointDefinition) error {
 		}
 		if strings.TrimSpace(point.WriteMethod) == "" {
 			return fmt.Errorf("%s.writeMethod is required", prefix)
+		}
+		if err := validateWriteMethod(prefix, point); err != nil {
+			return err
 		}
 		if err := validateWrite(prefix, point.Type, point.Write); err != nil {
 			return err
@@ -184,6 +197,9 @@ func validateWrite(prefix, pointType string, write *WriteDefinition) error {
 	if write.Mode != "set" && write.Mode != "pulse" && write.Mode != "momentary" && write.Mode != "toggle" {
 		return fmt.Errorf("%s.write.mode is unsupported", prefix)
 	}
+	if write.Mode == "set" {
+		return nil
+	}
 	if err := ValidateValue(pointType, write.ActiveValue); err != nil {
 		return fmt.Errorf("%s.write.activeValue: %w", prefix, err)
 	}
@@ -199,6 +215,50 @@ func validateWrite(prefix, pointType string, write *WriteDefinition) error {
 	return nil
 }
 
+func validateRegisterLayout(prefix string, point PointDefinition) error {
+	switch point.Type {
+	case "float32":
+		if point.RegisterCount != 2 {
+			return fmt.Errorf("%s.registerCount must be 2 for float32", prefix)
+		}
+		if point.WordOrder != "low-high" && point.WordOrder != "high-low" {
+			return fmt.Errorf("%s.wordOrder must be low-high or high-low for float32", prefix)
+		}
+	case "int16", "uint16":
+		if point.RegisterCount != 1 {
+			return fmt.Errorf("%s.registerCount must be 1 for %s", prefix, point.Type)
+		}
+		if point.WordOrder != "" {
+			return fmt.Errorf("%s.wordOrder is only valid for float32", prefix)
+		}
+	default:
+		if point.RegisterCount != 0 || point.WordOrder != "" {
+			return fmt.Errorf("%s register layout is only valid for int16, uint16, or float32", prefix)
+		}
+	}
+	return nil
+}
+
+func validateWriteMethod(prefix string, point PointDefinition) error {
+	switch point.Type {
+	case "bool":
+		if point.WriteMethod != "maskWrite" {
+			return fmt.Errorf("%s bool writes require writeMethod maskWrite", prefix)
+		}
+	case "int16", "uint16":
+		if point.WriteMethod != "fc06" {
+			return fmt.Errorf("%s %s writes require writeMethod fc06", prefix, point.Type)
+		}
+	case "float32":
+		if point.WriteMethod != "fc10" {
+			return fmt.Errorf("%s float32 writes require writeMethod fc10", prefix)
+		}
+	default:
+		return fmt.Errorf("%s type %q has no approved Easy521 write method", prefix, point.Type)
+	}
+	return nil
+}
+
 // ValidateValue checks a value sent by the HMI against a configured point
 // type. JSON numbers arrive as float64 after decoding into any.
 func ValidateValue(pointType string, value any) error {
@@ -207,12 +267,22 @@ func ValidateValue(pointType string, value any) error {
 		if _, ok := value.(bool); ok {
 			return nil
 		}
-	case "int":
+	case "int", "int16":
 		if isInteger(value) {
+			if pointType == "int16" && (numberAsFloat64(value) < -32768 || numberAsFloat64(value) > 32767) {
+				break
+			}
 			return nil
 		}
-	case "float":
+	case "uint16":
+		if isInteger(value) && numberAsFloat64(value) >= 0 && numberAsFloat64(value) <= 65535 {
+			return nil
+		}
+	case "float", "float32":
 		if isNumber(value) {
+			if pointType == "float32" && (math.IsNaN(numberAsFloat64(value)) || math.IsInf(numberAsFloat64(value), 0) || math.Abs(numberAsFloat64(value)) > math.MaxFloat32) {
+				break
+			}
 			return nil
 		}
 	case "string":
@@ -253,8 +323,42 @@ func isNumber(value any) bool {
 	}
 }
 
+func numberAsFloat64(value any) float64 {
+	switch number := value.(type) {
+	case int:
+		return float64(number)
+	case int8:
+		return float64(number)
+	case int16:
+		return float64(number)
+	case int32:
+		return float64(number)
+	case int64:
+		return float64(number)
+	case uint:
+		return float64(number)
+	case uint8:
+		return float64(number)
+	case uint16:
+		return float64(number)
+	case uint32:
+		return float64(number)
+	case uint64:
+		return float64(number)
+	case float32:
+		return float64(number)
+	case float64:
+		return number
+	case json.Number:
+		converted, _ := number.Float64()
+		return converted
+	default:
+		return 0
+	}
+}
+
 func validType(value string) bool {
-	return value == "bool" || value == "int" || value == "float" || value == "string"
+	return value == "bool" || value == "int" || value == "float" || value == "string" || value == "int16" || value == "uint16" || value == "float32"
 }
 
 func cloneDefinition(value PointDefinition) PointDefinition {

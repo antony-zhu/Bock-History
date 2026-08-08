@@ -1,5 +1,6 @@
 // Package easy521 contains the narrow Modbus TCP operations approved for the
-// current Easy521 path: FC03 register reads and FC22 single-bit mask writes.
+// current Easy521 path: FC03 reads, FC22 bit writes, and explicit FC06/FC10
+// register writes used by the simulator-only numeric profile.
 package easy521
 
 import (
@@ -15,8 +16,11 @@ import (
 
 const (
 	functionReadHoldingRegisters byte = 0x03
+	functionWriteSingleRegister  byte = 0x06
+	functionWriteMultipleRegs    byte = 0x10
 	functionMaskWriteRegister    byte = 0x16
 	maxReadRegisters                  = 125
+	maxWriteRegisters                 = 123
 )
 
 var ErrTransportDisconnected = errors.New("PLC transport disconnected")
@@ -31,7 +35,8 @@ type Config struct {
 type DialFunc func(context.Context, string, string) (net.Conn, error)
 
 // Client is deliberately used by exactly one PLCWorker goroutine. It keeps
-// one active Modbus TCP connection and exposes no FC06/FC16/full-word write.
+// one active Modbus TCP connection and never retries a write after a failed
+// exchange.
 type Client struct {
 	cfg    Config
 	dial   DialFunc
@@ -87,6 +92,51 @@ func (c *Client) ReadHoldingRegisters(ctx context.Context, address, quantity uin
 		values[index] = binary.BigEndian.Uint16(response[2+index*2 : 4+index*2])
 	}
 	return values, nil
+}
+
+// WriteSingleRegister performs one FC06 write. It is used only for configured
+// one-register numeric values; callers must not use it for shared BOOL words.
+func (c *Client) WriteSingleRegister(ctx context.Context, address, value uint16) error {
+	request := make([]byte, 5)
+	request[0] = functionWriteSingleRegister
+	binary.BigEndian.PutUint16(request[1:3], address)
+	binary.BigEndian.PutUint16(request[3:5], value)
+	response, err := c.exchange(ctx, request)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(response, request) {
+		c.Close()
+		return errors.New("Modbus FC06 response does not echo request")
+	}
+	return nil
+}
+
+// WriteMultipleRegisters performs one FC10 (Modbus function 0x10) write. The
+// PLC response contains only the address and quantity, so the full request is
+// not echoed.
+func (c *Client) WriteMultipleRegisters(ctx context.Context, address uint16, values []uint16) error {
+	if len(values) == 0 || len(values) > maxWriteRegisters || uint32(address)+uint32(len(values)) > 1<<16 {
+		return fmt.Errorf("invalid FC10 register range address=%d quantity=%d", address, len(values))
+	}
+	request := make([]byte, 6+len(values)*2)
+	request[0] = functionWriteMultipleRegs
+	binary.BigEndian.PutUint16(request[1:3], address)
+	binary.BigEndian.PutUint16(request[3:5], uint16(len(values)))
+	request[5] = byte(len(values) * 2)
+	for index, value := range values {
+		binary.BigEndian.PutUint16(request[6+index*2:8+index*2], value)
+	}
+	response, err := c.exchange(ctx, request)
+	if err != nil {
+		return err
+	}
+	if len(response) != 5 || response[0] != functionWriteMultipleRegs ||
+		binary.BigEndian.Uint16(response[1:3]) != address || binary.BigEndian.Uint16(response[3:5]) != uint16(len(values)) {
+		c.Close()
+		return errors.New("invalid Modbus FC10 response")
+	}
+	return nil
 }
 
 // MaskWriteBit updates exactly one bit with FC22. It does not read or write a

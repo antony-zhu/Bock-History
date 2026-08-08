@@ -1,108 +1,403 @@
 {
   "title": "Block 本地控制",
   "scanIntervalMs": 50,
+  "numericProfiles": {
+    "simulatorFloat32": {
+      "scope": "电脑模拟联调",
+      "dataType": "float32",
+      "registerCount": 2,
+      "singleRegisterByteOrder": "big-endian",
+      "wordOrder": "low-high",
+      "readFunction": "FC03",
+      "writeFunction": "FC10",
+      "verification": "真实 Easy521 投用前，必须用已知浮点基准值核验寄存器跨度和字序；本约定不是现场事实。"
+    }
+  },
   "points": [
     {
-      "pointId": "machine.startCommand",
+      "pointId": "manual.motion.z.jog.down.action",
+      "address": "D504.0",
+      "type": "bool",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.jog.down.action",
+      "writePoint": "manual.motion.z.jog.down.action",
+      "writeMethod": "maskWrite",
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 }
+    },
+    {
+      "pointId": "manual.motion.z.jog.up.action",
       "address": "D504.1",
       "type": "bool",
       "access": "read_write",
-      "readPoint": "machine.startFeedback",
-      "writePoint": "machine.startCommand",
+      "readPoint": "manual.motion.z.jog.up.action",
+      "writePoint": "manual.motion.z.jog.up.action",
       "writeMethod": "maskWrite",
-      "write": {
-        "mode": "pulse",
-        "activeValue": true,
-        "defaultValue": false,
-        "pulseMs": 100
-      }
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 }
     },
     {
-      "pointId": "machine.startFeedback",
-      "address": "D504.2",
+      "pointId": "manual.origin.z.set.action",
+      "address": "D504.7",
       "type": "bool",
+      "access": "read_write",
+      "readPoint": "manual.origin.z.set.action",
+      "writePoint": "manual.origin.z.set.action",
+      "writeMethod": "maskWrite",
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 }
+    },
+    {
+      "pointId": "manual.origin.x.set.action",
+      "address": "D504.8",
+      "type": "bool",
+      "access": "read_write",
+      "readPoint": "manual.origin.x.set.action",
+      "writePoint": "manual.origin.x.set.action",
+      "writeMethod": "maskWrite",
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 }
+    },
+    {
+      "pointId": "manual.motion.x.jog.left.action",
+      "address": "D504.9",
+      "type": "bool",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.jog.left.action",
+      "writePoint": "manual.motion.x.jog.left.action",
+      "writeMethod": "maskWrite",
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 }
+    },
+    {
+      "pointId": "manual.motion.x.jog.right.action",
+      "address": "D504.10",
+      "type": "bool",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.jog.right.action",
+      "writePoint": "manual.motion.x.jog.right.action",
+      "writeMethod": "maskWrite",
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 }
+    },
+    {
+      "pointId": "manual.motion.x.relative.trigger.action",
+      "address": "D550.3",
+      "type": "bool",
+      "access": "write",
+      "readPoint": null,
+      "writePoint": "manual.motion.x.relative.trigger.action",
+      "writeMethod": "maskWrite",
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false }
+    },
+    {
+      "pointId": "manual.motion.z.relative.trigger.action",
+      "address": "D550.4",
+      "type": "bool",
+      "access": "write",
+      "readPoint": null,
+      "writePoint": "manual.motion.z.relative.trigger.action",
+      "writeMethod": "maskWrite",
+      "write": { "mode": "pulse", "activeValue": true, "defaultValue": false }
+    },
+    {
+      "pointId": "manual.motion.x.jog.speed.parameter",
+      "address": "D800",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.jog.speed.parameter",
+      "writePoint": "manual.motion.x.jog.speed.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.jog.speed.parameter",
+      "address": "D806",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.jog.speed.parameter",
+      "writePoint": "manual.motion.z.jog.speed.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.absolute.target.parameter",
+      "address": "D812",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.absolute.target.parameter",
+      "writePoint": "manual.motion.x.absolute.target.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.absolute.speed.parameter",
+      "address": "D814",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.absolute.speed.parameter",
+      "writePoint": "manual.motion.x.absolute.speed.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.absolute.acceleration.parameter",
+      "address": "D816",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.absolute.acceleration.parameter",
+      "writePoint": "manual.motion.x.absolute.acceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.absolute.deceleration.parameter",
+      "address": "D818",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.absolute.deceleration.parameter",
+      "writePoint": "manual.motion.x.absolute.deceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.absolute.target.parameter",
+      "address": "D820",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.absolute.target.parameter",
+      "writePoint": "manual.motion.z.absolute.target.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.absolute.speed.parameter",
+      "address": "D822",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.absolute.speed.parameter",
+      "writePoint": "manual.motion.z.absolute.speed.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.absolute.acceleration.parameter",
+      "address": "D824",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.absolute.acceleration.parameter",
+      "writePoint": "manual.motion.z.absolute.acceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.absolute.deceleration.parameter",
+      "address": "D826",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.absolute.deceleration.parameter",
+      "writePoint": "manual.motion.z.absolute.deceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.relative.distance.parameter",
+      "address": "D828",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.relative.distance.parameter",
+      "writePoint": "manual.motion.x.relative.distance.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.relative.speed.parameter",
+      "address": "D830",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.relative.speed.parameter",
+      "writePoint": "manual.motion.x.relative.speed.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.relative.acceleration.parameter",
+      "address": "D832",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.relative.acceleration.parameter",
+      "writePoint": "manual.motion.x.relative.acceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.x.relative.deceleration.parameter",
+      "address": "D834",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.x.relative.deceleration.parameter",
+      "writePoint": "manual.motion.x.relative.deceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.relative.distance.parameter",
+      "address": "D836",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.relative.distance.parameter",
+      "writePoint": "manual.motion.z.relative.distance.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.relative.speed.parameter",
+      "address": "D840",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.relative.speed.parameter",
+      "writePoint": "manual.motion.z.relative.speed.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.relative.acceleration.parameter",
+      "address": "D842",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.relative.acceleration.parameter",
+      "writePoint": "manual.motion.z.relative.acceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.relative.deceleration.parameter",
+      "address": "D844",
+      "type": "float32",
+      "access": "read_write",
+      "readPoint": "manual.motion.z.relative.deceleration.parameter",
+      "writePoint": "manual.motion.z.relative.deceleration.parameter",
+      "writeMethod": "fc10",
+      "registerCount": 2,
+      "wordOrder": "low-high",
+      "write": { "mode": "set" }
+    },
+    {
+      "pointId": "manual.motion.z.load.feedback",
+      "address": "D846",
+      "type": "float32",
       "access": "read",
-      "readPoint": "machine.startFeedback",
+      "readPoint": "manual.motion.z.load.feedback",
       "writePoint": null,
-      "writeMethod": null
+      "writeMethod": null,
+      "registerCount": 2,
+      "wordOrder": "low-high"
     },
     {
-      "pointId": "machine.jogForward",
-      "address": "D504.3",
-      "type": "bool",
-      "access": "read_write",
-      "readPoint": "machine.jogForward",
-      "writePoint": "machine.jogForward",
-      "writeMethod": "maskWrite",
-      "write": {
-        "mode": "momentary",
-        "activeValue": true,
-        "defaultValue": false
-      }
+      "pointId": "manual.motion.x.load.feedback",
+      "address": "D848",
+      "type": "float32",
+      "access": "read",
+      "readPoint": "manual.motion.x.load.feedback",
+      "writePoint": null,
+      "writeMethod": null,
+      "registerCount": 2,
+      "wordOrder": "low-high"
     },
     {
-      "pointId": "machine.enabled",
-      "address": "D504.4",
-      "type": "bool",
-      "access": "read_write",
-      "readPoint": "machine.enabled",
-      "writePoint": "machine.enabled",
-      "writeMethod": "maskWrite",
-      "write": {
-        "mode": "toggle",
-        "activeValue": true,
-        "defaultValue": false
-      }
+      "pointId": "manual.motion.z.position.feedback",
+      "address": "D850",
+      "type": "float32",
+      "access": "read",
+      "readPoint": "manual.motion.z.position.feedback",
+      "writePoint": null,
+      "writeMethod": null,
+      "registerCount": 2,
+      "wordOrder": "low-high"
+    },
+    {
+      "pointId": "manual.motion.x.position.feedback",
+      "address": "D852",
+      "type": "float32",
+      "access": "read",
+      "readPoint": "manual.motion.x.position.feedback",
+      "writePoint": null,
+      "writeMethod": null,
+      "registerCount": 2,
+      "wordOrder": "low-high"
     }
   ],
   "bindings": [
-    {
-      "displayPath": "home.machine.start",
-      "description": "启动设备",
-      "component": "button",
-      "readPoint": "machine.startFeedback",
-      "writePoint": "machine.startCommand",
-      "action": "pulse"
-    },
-    {
-      "displayPath": "home.machine.jog.forward",
-      "description": "正向点动",
-      "component": "button",
-      "readPoint": "machine.jogForward",
-      "writePoint": "machine.jogForward",
-      "action": "momentary"
-    },
-    {
-      "displayPath": "home.machine.enabled",
-      "description": "设备使能",
-      "component": "button",
-      "readPoint": "machine.enabled",
-      "writePoint": "machine.enabled",
-      "action": "toggle"
-    },
-    {
-      "displayPath": "home.machine.start.feedback",
-      "description": "启动反馈",
-      "component": "value",
-      "readPoint": "machine.startFeedback"
-    }
+    { "displayPath": "manual.motion.z.jog.down.action", "description": "Z轴手动向下", "component": "button", "readPoint": "manual.motion.z.jog.down.action", "writePoint": "manual.motion.z.jog.down.action", "action": "pulse", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.motion.z.jog.up.action", "description": "Z轴手动向上", "component": "button", "readPoint": "manual.motion.z.jog.up.action", "writePoint": "manual.motion.z.jog.up.action", "action": "pulse", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.motion.x.jog.left.action", "description": "X轴手动向左", "component": "button", "readPoint": "manual.motion.x.jog.left.action", "writePoint": "manual.motion.x.jog.left.action", "action": "pulse", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.motion.x.jog.right.action", "description": "X轴手动向右", "component": "button", "readPoint": "manual.motion.x.jog.right.action", "writePoint": "manual.motion.x.jog.right.action", "action": "pulse", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.motion.x.relative.trigger.action", "description": "X轴相对运动可点击BOOL点", "component": "button", "readPoint": null, "writePoint": "manual.motion.x.relative.trigger.action", "action": "pulse", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.motion.z.relative.trigger.action", "description": "Z轴相对运动可点击BOOL点", "component": "button", "readPoint": null, "writePoint": "manual.motion.z.relative.trigger.action", "action": "pulse", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.origin.x.set.action", "description": "设置X轴原点", "component": "button", "readPoint": "manual.origin.x.set.action", "writePoint": "manual.origin.x.set.action", "action": "pulse", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.origin.z.set.action", "description": "设置Z轴原点", "component": "button", "readPoint": "manual.origin.z.set.action", "writePoint": "manual.origin.z.set.action", "action": "pulse", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.jog.speed.parameter", "description": "X轴点动速度参数", "component": "number", "readPoint": "manual.motion.x.jog.speed.parameter", "writePoint": "manual.motion.x.jog.speed.parameter", "action": "set", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.motion.z.jog.speed.parameter", "description": "Z轴点动速度参数", "component": "number", "readPoint": "manual.motion.z.jog.speed.parameter", "writePoint": "manual.motion.z.jog.speed.parameter", "action": "set", "permission": "operate", "state": "configured" },
+    { "displayPath": "manual.motion.x.position.feedback", "description": "X轴当前位置", "component": "value", "readPoint": "manual.motion.x.position.feedback", "state": "configured" },
+    { "displayPath": "manual.motion.z.position.feedback", "description": "Z轴当前位置", "component": "value", "readPoint": "manual.motion.z.position.feedback", "state": "configured" },
+    { "displayPath": "manual.motion.x.load.feedback", "description": "X轴当前平均负载率", "component": "value", "readPoint": "manual.motion.x.load.feedback", "state": "configured" },
+    { "displayPath": "manual.motion.z.load.feedback", "description": "Z轴当前平均负载率", "component": "value", "readPoint": "manual.motion.z.load.feedback", "state": "configured" },
+    { "displayPath": "manual.gripper.open.action", "description": "手动张开夹爪", "component": "button", "readPoint": null, "writePoint": null, "state": "pending" },
+    { "displayPath": "manual.gripper.close.action", "description": "手动夹紧夹爪", "component": "button", "readPoint": null, "writePoint": null, "state": "pending" },
+    { "displayPath": "manual.gripper.clamped.feedback", "description": "夹爪夹紧状态反馈", "component": "value", "readPoint": null, "state": "pending" },
+    { "displayPath": "manual.gripper.opened.feedback", "description": "夹爪松开状态反馈", "component": "value", "readPoint": null, "state": "pending" },
+    { "displayPath": "manual.homing.start.action", "description": "启动回原", "component": "button", "readPoint": null, "writePoint": null, "state": "pending" },
+    { "displayPath": "manual.motion.x.absolute.trigger.action", "description": "X轴绝对运动BOOL点，触发语义待确认", "component": "button", "readPoint": null, "writePoint": null, "state": "pending" },
+    { "displayPath": "manual.motion.z.absolute.trigger.action", "description": "Z轴绝对运动BOOL点，触发语义待确认", "component": "button", "readPoint": null, "writePoint": null, "state": "pending" },
+    { "displayPath": "manual.motion.x.absolute.target.parameter", "description": "X轴绝对运动目标值", "component": "number", "readPoint": "manual.motion.x.absolute.target.parameter", "writePoint": "manual.motion.x.absolute.target.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.absolute.speed.parameter", "description": "X轴绝对运动速度", "component": "number", "readPoint": "manual.motion.x.absolute.speed.parameter", "writePoint": "manual.motion.x.absolute.speed.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.absolute.acceleration.parameter", "description": "X轴绝对运动加速度", "component": "number", "readPoint": "manual.motion.x.absolute.acceleration.parameter", "writePoint": "manual.motion.x.absolute.acceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.absolute.deceleration.parameter", "description": "X轴绝对运动减速度", "component": "number", "readPoint": "manual.motion.x.absolute.deceleration.parameter", "writePoint": "manual.motion.x.absolute.deceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.absolute.target.parameter", "description": "Z轴绝对运动目标值", "component": "number", "readPoint": "manual.motion.z.absolute.target.parameter", "writePoint": "manual.motion.z.absolute.target.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.absolute.speed.parameter", "description": "Z轴绝对运动速度", "component": "number", "readPoint": "manual.motion.z.absolute.speed.parameter", "writePoint": "manual.motion.z.absolute.speed.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.absolute.acceleration.parameter", "description": "Z轴绝对运动加速度", "component": "number", "readPoint": "manual.motion.z.absolute.acceleration.parameter", "writePoint": "manual.motion.z.absolute.acceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.absolute.deceleration.parameter", "description": "Z轴绝对运动减速度", "component": "number", "readPoint": "manual.motion.z.absolute.deceleration.parameter", "writePoint": "manual.motion.z.absolute.deceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.relative.distance.parameter", "description": "X轴相对运动位移", "component": "number", "readPoint": "manual.motion.x.relative.distance.parameter", "writePoint": "manual.motion.x.relative.distance.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.relative.speed.parameter", "description": "X轴相对运动速度", "component": "number", "readPoint": "manual.motion.x.relative.speed.parameter", "writePoint": "manual.motion.x.relative.speed.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.relative.acceleration.parameter", "description": "X轴相对运动加速度", "component": "number", "readPoint": "manual.motion.x.relative.acceleration.parameter", "writePoint": "manual.motion.x.relative.acceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.x.relative.deceleration.parameter", "description": "X轴相对运动减速度", "component": "number", "readPoint": "manual.motion.x.relative.deceleration.parameter", "writePoint": "manual.motion.x.relative.deceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.relative.distance.parameter", "description": "Z轴相对运动位移", "component": "number", "readPoint": "manual.motion.z.relative.distance.parameter", "writePoint": "manual.motion.z.relative.distance.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.relative.speed.parameter", "description": "Z轴相对运动速度", "component": "number", "readPoint": "manual.motion.z.relative.speed.parameter", "writePoint": "manual.motion.z.relative.speed.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.relative.acceleration.parameter", "description": "Z轴相对运动加速度", "component": "number", "readPoint": "manual.motion.z.relative.acceleration.parameter", "writePoint": "manual.motion.z.relative.acceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" },
+    { "displayPath": "manual.motion.z.relative.deceleration.parameter", "description": "Z轴相对运动减速度", "component": "number", "readPoint": "manual.motion.z.relative.deceleration.parameter", "writePoint": "manual.motion.z.relative.deceleration.parameter", "action": "set", "permission": "maintenance", "state": "configured" }
   ],
   "layout": [
-    {
-      "displayPath": "home.machine.controls",
-      "description": "设备控制",
-      "bindings": [
-        "home.machine.start",
-        "home.machine.jog.forward",
-        "home.machine.enabled"
-      ]
-    },
-    {
-      "displayPath": "home.machine.status",
-      "description": "设备状态",
-      "bindings": [
-        "home.machine.start.feedback"
-      ]
-    }
+    { "displayPath": "manual.motion.z", "description": "Z轴手动操作", "bindings": ["manual.motion.z.jog.up.action", "manual.motion.z.jog.down.action", "manual.motion.z.jog.speed.parameter", "manual.motion.z.relative.trigger.action"] },
+    { "displayPath": "manual.motion.x", "description": "X轴手动操作", "bindings": ["manual.motion.x.jog.left.action", "manual.motion.x.jog.right.action", "manual.motion.x.jog.speed.parameter", "manual.motion.x.relative.trigger.action"] },
+    { "displayPath": "manual.origin", "description": "设置轴原点", "bindings": ["manual.origin.x.set.action", "manual.origin.z.set.action"] },
+    { "displayPath": "manual.monitoring", "description": "轴位置与负载", "bindings": ["manual.motion.x.position.feedback", "manual.motion.z.position.feedback", "manual.motion.x.load.feedback", "manual.motion.z.load.feedback"] }
   ]
 }

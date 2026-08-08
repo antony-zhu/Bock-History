@@ -97,6 +97,69 @@ func TestMaskWriteBitUsesFC22AndPreservesNeighborBits(t *testing.T) {
 	}
 }
 
+func TestWriteSingleRegisterUsesFC06(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	defer serverConnection.Close()
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) { return clientConnection, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(serverConnection)
+		if err != nil {
+			done <- err
+			return
+		}
+		if frame[7] != functionWriteSingleRegister || binary.BigEndian.Uint16(frame[8:10]) != 820 || binary.BigEndian.Uint16(frame[10:12]) != 9 {
+			done <- io.ErrUnexpectedEOF
+			return
+		}
+		done <- writeResponse(serverConnection, frame, frame[7:])
+	}()
+	if err := client.WriteSingleRegister(context.Background(), 820, 9); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWriteMultipleRegistersUsesFC10(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	defer serverConnection.Close()
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) { return clientConnection, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(serverConnection)
+		if err != nil {
+			done <- err
+			return
+		}
+		if frame[7] != functionWriteMultipleRegs || binary.BigEndian.Uint16(frame[8:10]) != 800 ||
+			binary.BigEndian.Uint16(frame[10:12]) != 2 || frame[12] != 4 ||
+			binary.BigEndian.Uint16(frame[13:15]) != 0x0000 || binary.BigEndian.Uint16(frame[15:17]) != 0x4104 {
+			done <- io.ErrUnexpectedEOF
+			return
+		}
+		response := append([]byte{functionWriteMultipleRegs}, frame[8:12]...)
+		done <- writeResponse(serverConnection, frame, response)
+	}()
+	if err := client.WriteMultipleRegisters(context.Background(), 800, []uint16{0x0000, 0x4104}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMaskWriteBitDoesNotRetryAfterException(t *testing.T) {
 	clientConnection, serverConnection := net.Pipe()
 	defer serverConnection.Close()

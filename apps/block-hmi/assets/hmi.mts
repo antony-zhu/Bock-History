@@ -19,15 +19,17 @@ type PLCDevice = {
 type PointDefinition = {
   pointId: string;
   address: string;
-  type: "bool" | "int" | "float" | "string";
+  type: "bool" | "int" | "float" | "string" | "int16" | "uint16" | "float32";
   access: "read" | "write" | "read_write";
-  readPoint: string;
+  readPoint: string | null;
   writePoint: string | null;
-  writeMethod: "maskWrite" | null;
+  writeMethod: "maskWrite" | "fc06" | "fc10" | null;
+  registerCount?: number;
+  wordOrder?: "low-high" | "high-low";
   write?: {
     mode: "set" | "pulse" | "momentary" | "toggle";
-    activeValue: boolean;
-    defaultValue: boolean;
+    activeValue?: boolean | number;
+    defaultValue?: boolean | number;
     pulseMs?: number;
   };
 };
@@ -35,10 +37,12 @@ type PointDefinition = {
 type Binding = {
   displayPath: string;
   description: string;
-  component: "button" | "value";
-  readPoint: string;
+  component: "button" | "value" | "number";
+  readPoint: string | null;
   writePoint?: string | null;
-  action?: "pulse" | "momentary" | "toggle";
+  action?: "pulse" | "momentary" | "toggle" | "set";
+  permission?: "operate" | "maintenance";
+  state?: "configured" | "pending";
 };
 
 type LayoutGroup = {
@@ -53,6 +57,7 @@ type PageConfiguration = {
   points: PointDefinition[];
   bindings: Binding[];
   layout: LayoutGroup[];
+  numericProfiles?: Record<string, unknown>;
 };
 
 type ActivationEvent = {
@@ -113,6 +118,12 @@ type LegacyBackend = {
   sendCommand(command: string, payload?: Record<string, unknown>, context?: unknown): Promise<{ state: LegacyState }>;
   acknowledgeAlarm(alarmID: number, context?: unknown): Promise<{ state: LegacyState }>;
   getAudit(options?: unknown): Promise<{ events: LegacyHistory[] }>;
+  manual: {
+    binding(displayPath: string): Binding | null;
+    value(displayPath: string): Scalar | undefined;
+    canWrite(displayPath: string): boolean;
+    command(displayPath: string, value?: number): Promise<void>;
+  };
 };
 
 type SoftKeyboardMode = "soft" | "native";
@@ -196,6 +207,8 @@ export function buildRuntimeConfigure(
       readPoint: point.readPoint,
       writePoint: point.writePoint,
       writeMethod: point.writeMethod,
+      registerCount: point.registerCount,
+      wordOrder: point.wordOrder,
       write: point.write === undefined ? undefined : {
         mode: point.write.mode,
         activeValue: point.write.activeValue,
@@ -224,11 +237,16 @@ export function buildPLCDisconnect(id = requestID(), timestamp = new Date().toIS
 
 export function buildPointCommand(
   pointID: string,
-  action: "pulse" | "press" | "release" | "toggle",
+  action: "pulse" | "press" | "release" | "toggle" | "set",
   id = requestID(),
-  timestamp = new Date().toISOString()
+  timestamp = new Date().toISOString(),
+  value?: Scalar
 ): object {
-  return request("point.command", { pointId: pointID, action }, id, timestamp);
+  return request("point.command", {
+    pointId: pointID,
+    action,
+    ...(action === "set" ? { value } : {})
+  }, id, timestamp);
 }
 
 export function applyAbsoluteValues(target: Map<string, PointValue>, values: Record<string, PointValue>): void {
@@ -361,14 +379,18 @@ function demoConfiguration(): PageConfiguration {
 }
 
 async function loadConfiguration(demo: boolean): Promise<PageConfiguration> {
-  if (demo) {
-    return demoConfiguration();
+  try {
+    const response = await fetch(new URL("./points.json", import.meta.url), { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error("无法读取 points.json");
+    }
+    return configurationFrom(await response.json());
+  } catch (error) {
+    if (demo) {
+      return demoConfiguration();
+    }
+    throw error;
   }
-  const response = await fetch(new URL("./points.json", import.meta.url), { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("无法读取 points.json");
-  }
-  return configurationFrom(await response.json());
 }
 
 function websocketURL(): string {
@@ -686,7 +708,13 @@ class AppleBridge {
       getState: () => this.getState(),
       sendCommand: (command, payload) => this.sendCommand(command, payload),
       acknowledgeAlarm: (alarmID) => this.acknowledgeAlarm(alarmID),
-      getAudit: () => Promise.resolve({ events: cloneState(this.currentState()).history })
+      getAudit: () => Promise.resolve({ events: cloneState(this.currentState()).history }),
+      manual: {
+        binding: (displayPath) => this.manualBinding(displayPath),
+        value: (displayPath) => this.manualValue(displayPath),
+        canWrite: (displayPath) => this.manualCanWrite(displayPath),
+        command: (displayPath, value) => this.manualCommand(displayPath, value)
+      }
     };
   }
 
@@ -1414,10 +1442,64 @@ class AppleBridge {
 
   private valueFor(displayPath: string): Scalar | undefined {
     const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
-    if (binding === undefined) {
+    if (binding === undefined || binding.readPoint === null) {
       return undefined;
     }
     return this.values.get(binding.readPoint)?.value;
+  }
+
+  private manualBinding(displayPath: string): Binding | null {
+    const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
+    return binding === undefined ? null : { ...binding };
+  }
+
+  private manualValue(displayPath: string): Scalar | undefined {
+    return this.valueFor(displayPath);
+  }
+
+  private manualCanWrite(displayPath: string): boolean {
+    const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
+    if (binding === undefined || binding.state === "pending" || binding.writePoint === null || binding.writePoint === undefined ||
+      (binding.action !== "pulse" && binding.action !== "toggle" && binding.action !== "set")) {
+      return false;
+    }
+    if (!this.hasPermission(binding.permission ?? "operate")) {
+      return false;
+    }
+    return this.demo || this.canSendRuntime();
+  }
+
+  private manualCommand(displayPath: string, value?: number): Promise<void> {
+    const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
+    const action = binding?.action;
+    const writePoint = binding?.writePoint;
+    if (binding === undefined || binding.state === "pending" || writePoint === null || writePoint === undefined ||
+      (action !== "pulse" && action !== "toggle" && action !== "set")) {
+      return Promise.reject(new HMIAPIError("点位读写映射待确认", 501, "point_not_configured"));
+    }
+    const permission = binding.permission ?? "operate";
+    if (!this.hasPermission(permission)) {
+      return Promise.reject(new HMIAPIError(permission === "maintenance" ? "请使用管理员会话执行此操作" : "请登录后执行现场操作", 403, "permission_denied"));
+    }
+    if (action === "set" && (typeof value !== "number" || !Number.isFinite(value))) {
+      return Promise.reject(new HMIAPIError("请输入有效数值", 400, "invalid_value"));
+    }
+    if (this.demo) {
+      return Promise.resolve();
+    }
+    if (!this.canSendRuntime()) {
+      return Promise.reject(new HMIAPIError("PLC 尚未连接", 503, "plc_not_connected"));
+    }
+    const requestId = requestID();
+    return this.pendingPointCommand.dispatch(requestId, () => {
+      this.socket!.send(JSON.stringify(buildPointCommand(
+        writePoint,
+        action,
+        requestId,
+        undefined,
+        action === "set" ? value : undefined
+      )));
+    });
   }
 
   private sendCommand(command: string, payload: Record<string, unknown> = {}): Promise<{ state: LegacyState }> {
@@ -1659,8 +1741,11 @@ class AppleBridge {
     window.setTimeout(() => {
       const start = document.querySelector<HTMLButtonElement>('[data-action="start"]');
       const runtimeEnabled = this.canSendRuntime();
+      const startConfigured = this.config.bindings.some((binding) =>
+        binding.displayPath === "home.machine.start" && binding.state !== "pending" && binding.writePoint !== null && binding.action === "pulse"
+      );
       document.querySelectorAll<HTMLButtonElement>(".control-button:not(.manual-entry-button)").forEach((button) => {
-        const available = runtimeEnabled && button === start;
+        const available = runtimeEnabled && startConfigured && button === start;
         button.dataset.backendUnavailable = available ? "false" : "true";
       });
       const mode = document.querySelector<HTMLButtonElement>("#modeToggle");

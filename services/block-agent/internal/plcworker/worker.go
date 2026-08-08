@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strconv"
@@ -33,12 +34,14 @@ const (
 	CodePointStateUnexpected = "POINT_STATE_UNEXPECTED"
 )
 
-// Adapter is deliberately narrow. Its only write is a one-bit FC22 mask
-// write, so a shared D word never has a full-register write or a client-side
-// read-modify-write fallback.
+// Adapter keeps BOOL writes on FC22 so shared D words never use a client-side
+// read-modify-write fallback. FC06/FC10 are limited to explicitly configured
+// numeric register spans.
 type Adapter interface {
 	ReadHoldingRegisters(context.Context, uint16, uint16) ([]uint16, error)
 	MaskWriteBit(context.Context, uint16, uint8, bool) error
+	WriteSingleRegister(context.Context, uint16, uint16) error
+	WriteMultipleRegisters(context.Context, uint16, []uint16) error
 	Close()
 }
 
@@ -71,6 +74,7 @@ type Worker struct {
 	timeout      time.Duration
 	points       map[string]pointPlan
 	byWord       map[uint16][]pointPlan
+	readable     map[string]struct{}
 	batches      []readBatch
 	last         map[string]pointstore.PointValue
 	commands     chan commandRequest
@@ -87,7 +91,14 @@ type Worker struct {
 
 type pointPlan struct {
 	definition runtimeconfig.PointDefinition
-	address    bitAddress
+	address    pointAddress
+}
+
+type pointAddress struct {
+	word  uint16
+	bit   uint8
+	count uint16
+	bitIO bool
 }
 
 type bitAddress struct {
@@ -105,10 +116,10 @@ type commandRequest struct {
 	reply   chan Result
 }
 
-// New builds a session-only scan plan. The current Easy521 implementation is
-// intentionally restricted to documented candidate D-word bit addresses
-// (D504.1, D504.2, ...); M-memory mapping and non-bit data layouts have not
-// yet been verified and therefore are not guessed here.
+// New builds a session-only scan plan. It accepts documented D-word bit
+// addresses plus the explicit simulator numeric profile (D-register spans
+// with an exact type, count, and word order); no M-memory or inferred layouts
+// are accepted.
 func New(config runtimeconfig.Config, adapter Adapter, publish func(map[string]pointstore.PointValue) error, now func() time.Time) (*Worker, error) {
 	normalized, err := runtimeconfig.Normalize(config)
 	if err != nil {
@@ -124,13 +135,13 @@ func New(config runtimeconfig.Config, adapter Adapter, publish func(map[string]p
 		now = time.Now
 	}
 
-	points, byWord, batches, err := buildPlan(normalized)
+	points, byWord, readable, batches, err := buildPlan(normalized)
 	if err != nil {
 		return nil, err
 	}
 	return &Worker{
 		adapter: adapter, publish: publish, now: now, timeout: 2 * time.Second,
-		points: points, byWord: byWord, batches: batches, last: make(map[string]pointstore.PointValue, len(points)),
+		points: points, byWord: byWord, readable: readable, batches: batches, last: make(map[string]pointstore.PointValue, len(readable)),
 		commands: make(chan commandRequest, CommandQueueCapacity), done: make(chan struct{}), ready: make(chan error, 1),
 	}, nil
 }
@@ -261,8 +272,28 @@ func (w *Worker) execute(command Command) Result {
 	if !allowsAction(point.definition, command.Action) {
 		return failure(command.PointID, CodePointNotWritable, "point does not allow this action")
 	}
-	writePoint := w.points[point.definition.WritePoint]
-	readPoint := w.points[point.definition.ReadPoint]
+	writePoint, exists := w.points[point.definition.WritePoint]
+	if !exists {
+		return failure(command.PointID, CodeInvalidRequest, "configured writePoint is unavailable")
+	}
+	var readPoint pointPlan
+	hasReadPoint := point.definition.ReadPoint != ""
+	if hasReadPoint {
+		readPoint, exists = w.points[point.definition.ReadPoint]
+		if !exists {
+			return failure(command.PointID, CodeInvalidRequest, "configured readPoint is unavailable")
+		}
+	}
+
+	if point.definition.Type != "bool" {
+		if command.Action != "set" {
+			return failure(command.PointID, CodeInvalidRequest, "numeric points only support set")
+		}
+		if err := w.writeRegisters(writePoint, command.Value); err != nil {
+			return failure(command.PointID, CodePLCWriteFailed, err.Error())
+		}
+		return w.confirmCommand(command.PointID, readPoint, hasReadPoint)
+	}
 
 	var target bool
 	switch command.Action {
@@ -311,11 +342,18 @@ func (w *Worker) execute(command Command) Result {
 			return failure(command.PointID, CodePLCWriteFailed, err.Error())
 		}
 	case "toggle":
+		if !hasReadPoint {
+			return failure(command.PointID, CodeInvalidRequest, "toggle requires a readable point")
+		}
 		values, err := w.readAll()
 		if err != nil {
 			return failure(command.PointID, CodePLCReadFailed, err.Error())
 		}
-		current := values[readPoint.definition.PointID].Value
+		currentValue, returned := values[readPoint.definition.PointID]
+		if !returned {
+			return failure(command.PointID, CodePLCReadFailed, "configured readPoint was not returned by PLC")
+		}
+		current := currentValue.Value
 		active := point.definition.Write.ActiveValue
 		defaultValue := point.definition.Write.DefaultValue
 		switch {
@@ -332,28 +370,138 @@ func (w *Worker) execute(command Command) Result {
 	default:
 		return failure(command.PointID, CodeInvalidRequest, "unsupported point action")
 	}
+	return w.confirmCommand(command.PointID, readPoint, hasReadPoint)
+}
 
+func (w *Worker) confirmCommand(pointID string, readPoint pointPlan, hasReadPoint bool) Result {
 	values, err := w.readAll()
 	if err != nil {
-		return failure(command.PointID, CodePLCReadFailed, err.Error())
+		return failure(pointID, CodePLCReadFailed, err.Error())
+	}
+	if !hasReadPoint {
+		return Result{Success: true, PointID: pointID}
 	}
 	actual, exists := values[readPoint.definition.PointID]
 	if !exists {
-		return failure(command.PointID, CodePLCReadFailed, "configured readPoint was not returned by PLC")
+		return failure(pointID, CodePLCReadFailed, "configured readPoint was not returned by PLC")
 	}
-	return Result{Success: true, PointID: command.PointID, ActualValue: actual.Value}
+	return Result{Success: true, PointID: pointID, ActualValue: actual.Value}
 }
 
-func (w *Worker) writeBit(address bitAddress, value bool) error {
+func (w *Worker) writeBit(address pointAddress, value bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
 	defer cancel()
 	return w.adapter.MaskWriteBit(ctx, address.word, address.bit, value)
 }
 
-// readAll batches all configured D words. D504.1 and D504.2 therefore share
-// one FC03 request for D504 instead of racing separate per-bit reads.
+func (w *Worker) writeRegisters(point pointPlan, value any) error {
+	words, err := numericWords(point.definition, value)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
+	defer cancel()
+	switch point.definition.WriteMethod {
+	case "fc06":
+		return w.adapter.WriteSingleRegister(ctx, point.address.word, words[0])
+	case "fc10":
+		return w.adapter.WriteMultipleRegisters(ctx, point.address.word, words)
+	default:
+		return fmt.Errorf("unsupported numeric write method %q", point.definition.WriteMethod)
+	}
+}
+
+func numericWords(definition runtimeconfig.PointDefinition, value any) ([]uint16, error) {
+	if err := runtimeconfig.ValidateValue(definition.Type, value); err != nil {
+		return nil, err
+	}
+	number, ok := numericFloat64(value)
+	if !ok {
+		return nil, errors.New("numeric point requires a number")
+	}
+	switch definition.Type {
+	case "int16":
+		return []uint16{uint16(int16(number))}, nil
+	case "uint16":
+		return []uint16{uint16(number)}, nil
+	case "float32":
+		bits := math.Float32bits(float32(number))
+		low, high := uint16(bits), uint16(bits>>16)
+		if definition.WordOrder == "low-high" {
+			return []uint16{low, high}, nil
+		}
+		if definition.WordOrder == "high-low" {
+			return []uint16{high, low}, nil
+		}
+		return nil, fmt.Errorf("unsupported float32 word order %q", definition.WordOrder)
+	default:
+		return nil, fmt.Errorf("unsupported numeric point type %q", definition.Type)
+	}
+}
+
+func decodePointValue(point pointPlan, words []uint16) (any, error) {
+	if len(words) != int(point.address.count) {
+		return nil, errors.New("PLC returned an incomplete register span")
+	}
+	if point.address.bitIO {
+		return words[0]&(uint16(1)<<point.address.bit) != 0, nil
+	}
+	switch point.definition.Type {
+	case "int16":
+		return int16(words[0]), nil
+	case "uint16":
+		return words[0], nil
+	case "float32":
+		var bits uint32
+		if point.definition.WordOrder == "low-high" {
+			bits = uint32(words[1])<<16 | uint32(words[0])
+		} else if point.definition.WordOrder == "high-low" {
+			bits = uint32(words[0])<<16 | uint32(words[1])
+		} else {
+			return nil, fmt.Errorf("unsupported float32 word order %q", point.definition.WordOrder)
+		}
+		return float64(math.Float32frombits(bits)), nil
+	default:
+		return nil, fmt.Errorf("unsupported numeric point type %q", point.definition.Type)
+	}
+}
+
+func numericFloat64(value any) (float64, bool) {
+	switch number := value.(type) {
+	case int:
+		return float64(number), true
+	case int8:
+		return float64(number), true
+	case int16:
+		return float64(number), true
+	case int32:
+		return float64(number), true
+	case int64:
+		return float64(number), true
+	case uint:
+		return float64(number), true
+	case uint8:
+		return float64(number), true
+	case uint16:
+		return float64(number), true
+	case uint32:
+		return float64(number), true
+	case uint64:
+		return float64(number), true
+	case float32:
+		return float64(number), true
+	case float64:
+		return number, true
+	default:
+		return 0, false
+	}
+}
+
+// readAll batches configured readable D words. D504.1 and D504.2 therefore
+// share one FC03 request for D504 instead of racing separate per-bit reads;
+// a float32 span such as D800-D801 stays in one FC03 request.
 func (w *Worker) readAll() (map[string]pointstore.PointValue, error) {
-	values := make(map[string]pointstore.PointValue, len(w.points))
+	values := make(map[string]pointstore.PointValue, len(w.readable))
 	var readErr error
 	confirmedDisconnect := false
 	for _, batch := range w.batches {
@@ -394,7 +542,14 @@ func (w *Worker) goodValues(values map[string]pointstore.PointValue, batch readB
 	defer w.stateMu.Unlock()
 	for index, word := range batch.words {
 		for _, point := range w.pointsAt(word) {
-			value := registers[index]&(uint16(1)<<point.address.bit) != 0
+			end := index + int(point.address.count)
+			if end > len(registers) {
+				continue
+			}
+			value, err := decodePointValue(point, registers[index:end])
+			if err != nil {
+				continue
+			}
 			item := pointstore.PointValue{Value: value, Quality: "good", UpdatedAt: w.now().UTC()}
 			if point.definition.Alarm != nil {
 				active := reflect.DeepEqual(value, point.definition.Alarm.AlarmValue)
@@ -440,8 +595,8 @@ func (w *Worker) staleValues() map[string]pointstore.PointValue {
 
 func (w *Worker) staleValuesLocked() map[string]pointstore.PointValue {
 	now := w.now().UTC()
-	values := make(map[string]pointstore.PointValue, len(w.points))
-	for pointID := range w.points {
+	values := make(map[string]pointstore.PointValue, len(w.readable))
+	for pointID := range w.readable {
 		item, exists := w.last[pointID]
 		if !exists {
 			item = pointstore.PointValue{}
@@ -509,51 +664,106 @@ func (w *Worker) stopAdmitting() {
 	w.lifeMu.Unlock()
 }
 
-func buildPlan(config runtimeconfig.Config) (map[string]pointPlan, map[uint16][]pointPlan, []readBatch, error) {
+func buildPlan(config runtimeconfig.Config) (map[string]pointPlan, map[uint16][]pointPlan, map[string]struct{}, []readBatch, error) {
 	points := make(map[string]pointPlan, len(config.Points))
 	byWord := make(map[uint16][]pointPlan)
-	words := make(map[uint16]struct{})
+	readable := make(map[string]struct{}, len(config.Points))
+	readPlans := make([]pointPlan, 0, len(config.Points))
 	for _, definition := range config.Points {
-		if definition.Type != "bool" {
-			return nil, nil, nil, fmt.Errorf("point %q: Easy521 FC03/FC22 path currently supports only bool D-word bits", definition.PointID)
-		}
-		address, err := parseBitAddress(definition.Address)
+		address, err := planAddress(definition)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("point %q: %w", definition.PointID, err)
-		}
-		if definition.Access != "read" && definition.WriteMethod != "maskWrite" {
-			return nil, nil, nil, fmt.Errorf("point %q: Easy521 bit writes require writeMethod maskWrite", definition.PointID)
+			return nil, nil, nil, nil, fmt.Errorf("point %q: %w", definition.PointID, err)
 		}
 		point := pointPlan{definition: definition, address: address}
 		points[definition.PointID] = point
-		byWord[address.word] = append(byWord[address.word], point)
-		words[address.word] = struct{}{}
+		if definition.Access != "write" {
+			byWord[address.word] = append(byWord[address.word], point)
+			readable[definition.PointID] = struct{}{}
+			readPlans = append(readPlans, point)
+		}
 	}
 	for _, point := range points {
 		if point.definition.Access == "read" {
 			continue
 		}
 		writePoint, exists := points[point.definition.WritePoint]
-		if !exists || writePoint.definition.Type != "bool" {
-			return nil, nil, nil, fmt.Errorf("point %q: writePoint is not a supported Easy521 bit", point.definition.PointID)
+		if !exists || writePoint.definition.Type != point.definition.Type || writePoint.address.bitIO != point.address.bitIO {
+			return nil, nil, nil, nil, fmt.Errorf("point %q: writePoint is not a supported Easy521 %s point", point.definition.PointID, point.definition.Type)
 		}
 	}
 
-	ordered := make([]int, 0, len(words))
-	for word := range words {
-		ordered = append(ordered, int(word))
-	}
-	sort.Ints(ordered)
-	batches := make([]readBatch, 0, len(ordered))
-	for _, rawWord := range ordered {
-		word := uint16(rawWord)
-		if len(batches) == 0 || word != batches[len(batches)-1].words[len(batches[len(batches)-1].words)-1]+1 || len(batches[len(batches)-1].words) == 125 {
-			batches = append(batches, readBatch{start: word})
+	sort.Slice(readPlans, func(left, right int) bool {
+		if readPlans[left].address.word == readPlans[right].address.word {
+			return readPlans[left].address.count < readPlans[right].address.count
 		}
-		last := len(batches) - 1
-		batches[last].words = append(batches[last].words, word)
+		return readPlans[left].address.word < readPlans[right].address.word
+	})
+	batches := make([]readBatch, 0, len(readPlans))
+	if len(readPlans) == 0 {
+		return points, byWord, readable, batches, nil
 	}
-	return points, byWord, batches, nil
+	batchStart := readPlans[0].address.word
+	batchEnd := addressEnd(readPlans[0].address)
+	for _, point := range readPlans[1:] {
+		pointStart := point.address.word
+		pointEnd := addressEnd(point.address)
+		contiguous := uint32(pointStart) <= uint32(batchEnd)+1
+		fits := uint32(maxWord(batchEnd, pointEnd))-uint32(batchStart)+1 <= 125
+		if !contiguous || !fits {
+			batches = append(batches, newReadBatch(batchStart, batchEnd))
+			batchStart, batchEnd = pointStart, pointEnd
+			continue
+		}
+		batchEnd = maxWord(batchEnd, pointEnd)
+	}
+	batches = append(batches, newReadBatch(batchStart, batchEnd))
+	return points, byWord, readable, batches, nil
+}
+
+func planAddress(definition runtimeconfig.PointDefinition) (pointAddress, error) {
+	if definition.Type == "bool" {
+		address, err := parseBitAddress(definition.Address)
+		if err != nil {
+			return pointAddress{}, err
+		}
+		if definition.Access != "read" && definition.WriteMethod != "maskWrite" {
+			return pointAddress{}, errors.New("Easy521 bit writes require writeMethod maskWrite")
+		}
+		return pointAddress{word: address.word, bit: address.bit, count: 1, bitIO: true}, nil
+	}
+	if definition.Type != "int16" && definition.Type != "uint16" && definition.Type != "float32" {
+		return pointAddress{}, fmt.Errorf("Easy521 FC03 numeric path does not support type %q", definition.Type)
+	}
+	address, err := parseRegisterAddress(definition.Address)
+	if err != nil {
+		return pointAddress{}, err
+	}
+	if uint32(address)+uint32(definition.RegisterCount) > 1<<16 {
+		return pointAddress{}, fmt.Errorf("register span D%d..D%d is outside the PLC address range", address, uint32(address)+uint32(definition.RegisterCount)-1)
+	}
+	if definition.Access != "read" && definition.WriteMethod != "fc06" && definition.WriteMethod != "fc10" {
+		return pointAddress{}, fmt.Errorf("numeric writes require writeMethod fc06 or fc10")
+	}
+	return pointAddress{word: address, count: uint16(definition.RegisterCount)}, nil
+}
+
+func addressEnd(address pointAddress) uint16 {
+	return address.word + address.count - 1
+}
+
+func maxWord(left, right uint16) uint16 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func newReadBatch(start, end uint16) readBatch {
+	words := make([]uint16, int(end-start)+1)
+	for index := range words {
+		words[index] = start + uint16(index)
+	}
+	return readBatch{start: start, words: words}
 }
 
 func parseBitAddress(value string) (bitAddress, error) {
@@ -570,6 +780,18 @@ func parseBitAddress(value string) (bitAddress, error) {
 		return bitAddress{}, fmt.Errorf("address %q has an invalid bit", value)
 	}
 	return bitAddress{word: uint16(word), bit: uint8(bit)}, nil
+}
+
+func parseRegisterAddress(value string) (uint16, error) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "D") || len(trimmed) == 1 || strings.Contains(trimmed, ".") {
+		return 0, fmt.Errorf("address %q must be a D register such as D800", value)
+	}
+	word, err := strconv.ParseUint(trimmed[1:], 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("address %q has an invalid D register", value)
+	}
+	return uint16(word), nil
 }
 
 func allowsAction(definition runtimeconfig.PointDefinition, action string) bool {

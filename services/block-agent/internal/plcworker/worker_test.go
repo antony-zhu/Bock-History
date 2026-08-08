@@ -3,6 +3,7 @@ package plcworker
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,102 @@ func TestInitialPollBatchesD504BitsIntoOneFC03(t *testing.T) {
 	reads := adapter.readCalls()
 	if len(reads) == 0 || reads[0].address != 504 || reads[0].quantity != 1 {
 		t.Fatalf("FC03 batches = %#v, want D504 once", reads)
+	}
+}
+
+func TestFloat32ProfileReadsD800SpanAndWritesFC10(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.registers[800] = 0x0000
+	adapter.registers[801] = 0x4148 // float32 12.5, low-high word order.
+	published := make(chan map[string]pointstore.PointValue, 4)
+	worker := newWorker(t, float32Config(), adapter, func(values map[string]pointstore.PointValue) error {
+		published <- values
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Run(ctx)
+	initial := <-published
+	if value, ok := initial["manual.motion.x.jog.speed.parameter"]; !ok || value.Value != float64(12.5) {
+		t.Fatalf("initial float32 value = %#v", initial)
+	}
+	reads := adapter.readCalls()
+	if len(reads) == 0 || reads[0].address != 800 || reads[0].quantity != 2 {
+		t.Fatalf("float32 FC03 span = %#v, want D800-D801", reads)
+	}
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "manual.motion.x.jog.speed.parameter", Action: "set", Value: float64(8.25)})
+	if !accepted {
+		t.Fatalf("numeric set was rejected: %+v", rejected)
+	}
+	result := waitResult(t, reply)
+	if !result.Success || result.ActualValue != float64(8.25) {
+		t.Fatalf("numeric result = %+v", result)
+	}
+	writes := adapter.registerWriteCalls()
+	wantBits := math.Float32bits(8.25)
+	wantWords := []uint16{uint16(wantBits), uint16(wantBits >> 16)}
+	if len(writes) != 1 || writes[0].method != "fc10" || writes[0].address != 800 || !equalWords(writes[0].values, wantWords) {
+		t.Fatalf("FC10 numeric write = %#v, want %#v", writes, wantWords)
+	}
+}
+
+func TestUint16ProfileWritesFC06(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.registers[820] = 7
+	worker := newWorker(t, uint16Config(), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Run(ctx)
+	waitFor(t, time.Second, func() bool { return len(adapter.readCalls()) > 0 })
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "manual.test.uint16", Action: "set", Value: float64(9)})
+	if !accepted {
+		t.Fatalf("numeric set was rejected: %+v", rejected)
+	}
+	if result := waitResult(t, reply); !result.Success || result.ActualValue != uint16(9) {
+		t.Fatalf("numeric result = %+v", result)
+	}
+	writes := adapter.registerWriteCalls()
+	if len(writes) != 1 || writes[0].method != "fc06" || writes[0].address != 820 || !equalWords(writes[0].values, []uint16{9}) {
+		t.Fatalf("FC06 numeric write = %#v", writes)
+	}
+}
+
+func TestWriteOnlyPulseUsesDefault100msFC22(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	config, err := runtimeconfig.Normalize(runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{{
+		PointID: "manual.motion.x.relative.trigger.action", Address: "D550.3", Type: "bool", Access: "write",
+		WritePoint: "manual.motion.x.relative.trigger.action", WriteMethod: "maskWrite",
+		Write: &runtimeconfig.WriteDefinition{Mode: "pulse", ActiveValue: true, DefaultValue: false},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Points[0].Write.PulseMs != runtimeconfig.DefaultPulseMs {
+		t.Fatalf("pulse default = %d", config.Points[0].Write.PulseMs)
+	}
+	worker := newWorker(t, config, adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Run(ctx)
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "manual.motion.x.relative.trigger.action", Action: "pulse"})
+	if !accepted {
+		t.Fatalf("pulse was rejected: %+v", rejected)
+	}
+	if result := waitResult(t, reply); !result.Success || result.ActualValue != nil {
+		t.Fatalf("write-only pulse result = %+v", result)
+	}
+	writes := adapter.writeCalls()
+	if len(writes) != 2 || writes[0].word != 550 || writes[0].bit != 3 || !writes[0].value || writes[1].value {
+		t.Fatalf("write-only FC22 pulse = %#v", writes)
+	}
+}
+
+func TestPollIntervalRemainsFiftyMilliseconds(t *testing.T) {
+	if PollInterval != 50*time.Millisecond {
+		t.Fatalf("PollInterval = %s, want 50ms", PollInterval)
 	}
 }
 
@@ -215,6 +312,34 @@ func testConfig(mode string, pulseMs int) runtimeconfig.Config {
 	}}
 }
 
+func float32Config() runtimeconfig.Config {
+	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{{
+		PointID: "manual.motion.x.jog.speed.parameter", Address: "D800", Type: "float32", Access: "read_write",
+		ReadPoint: "manual.motion.x.jog.speed.parameter", WritePoint: "manual.motion.x.jog.speed.parameter", WriteMethod: "fc10",
+		RegisterCount: 2, WordOrder: "low-high", Write: &runtimeconfig.WriteDefinition{Mode: "set"},
+	}}}
+}
+
+func uint16Config() runtimeconfig.Config {
+	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{{
+		PointID: "manual.test.uint16", Address: "D820", Type: "uint16", Access: "read_write",
+		ReadPoint: "manual.test.uint16", WritePoint: "manual.test.uint16", WriteMethod: "fc06",
+		RegisterCount: 1, Write: &runtimeconfig.WriteDefinition{Mode: "set"},
+	}}}
+}
+
+func equalWords(left, right []uint16) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func waitResult(t *testing.T, reply <-chan Result) Result {
 	t.Helper()
 	select {
@@ -258,14 +383,21 @@ type writeCall struct {
 	value bool
 }
 
+type registerWriteCall struct {
+	method  string
+	address uint16
+	values  []uint16
+}
+
 type fakeAdapter struct {
-	mu         sync.Mutex
-	registers  map[uint16]uint16
-	reads      []readCall
-	writes     []writeCall
-	readErr    error
-	writeErr   error
-	afterWrite func(writeCall)
+	mu               sync.Mutex
+	registers        map[uint16]uint16
+	reads            []readCall
+	writes           []writeCall
+	registersWritten []registerWriteCall
+	readErr          error
+	writeErr         error
+	afterWrite       func(writeCall)
 }
 
 func newFakeAdapter(word504 uint16) *fakeAdapter {
@@ -307,6 +439,30 @@ func (f *fakeAdapter) MaskWriteBit(_ context.Context, word uint16, bit uint8, va
 	return err
 }
 
+func (f *fakeAdapter) WriteSingleRegister(_ context.Context, address uint16, value uint16) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	call := registerWriteCall{method: "fc06", address: address, values: []uint16{value}}
+	f.registersWritten = append(f.registersWritten, call)
+	if f.writeErr == nil {
+		f.registers[address] = value
+	}
+	return f.writeErr
+}
+
+func (f *fakeAdapter) WriteMultipleRegisters(_ context.Context, address uint16, values []uint16) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	copyValues := append([]uint16(nil), values...)
+	f.registersWritten = append(f.registersWritten, registerWriteCall{method: "fc10", address: address, values: copyValues})
+	if f.writeErr == nil {
+		for index, value := range values {
+			f.registers[address+uint16(index)] = value
+		}
+	}
+	return f.writeErr
+}
+
 func (f *fakeAdapter) Close() {}
 
 func (f *fakeAdapter) readCalls() []readCall {
@@ -319,6 +475,16 @@ func (f *fakeAdapter) writeCalls() []writeCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]writeCall(nil), f.writes...)
+}
+
+func (f *fakeAdapter) registerWriteCalls() []registerWriteCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := make([]registerWriteCall, len(f.registersWritten))
+	for index, call := range f.registersWritten {
+		result[index] = registerWriteCall{method: call.method, address: call.address, values: append([]uint16(nil), call.values...)}
+	}
+	return result
 }
 
 func (f *fakeAdapter) word(address uint16) uint16 {
