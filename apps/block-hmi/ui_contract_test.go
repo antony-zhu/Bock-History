@@ -397,11 +397,15 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 		`id="manualZSpeedInput"`,
 		`id="manualAdvancedMount"`,
 		`function renderManualAdmin()`,
+		`function manualAdminMountAction(previousRole, nextRole, hasAdminNodes)`,
 		`mount.replaceChildren();`,
 		`权限来自当前产品设计：源点位表没有管理员角色列。`,
 		`if (demoManualStart) switchPage("manual");`,
 		`["home", "manual", "data", "alarm", "history"].includes(name)`,
 		`.control-button:not(.manual-entry-button)`,
+		`id="manualXSpeedInput" type="number" step="any" inputmode="decimal"`,
+		`id="manualZSpeedInput" type="number" step="any" inputmode="decimal"`,
+		`input.step = "any";`,
 	} {
 		if !strings.Contains(page, required) {
 			t.Fatalf("manual page is missing %q", required)
@@ -419,10 +423,23 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 	if manualHandler == "" ||
 		!strings.Contains(manualHandler, `if (!requireFrontendPermission("operate")) return false;`) ||
 		!strings.Contains(manualHandler, `当前页面未绑定现场写入`) ||
+		!strings.Contains(manualHandler, `电脑预览，不发送 PLC 指令`) ||
 		strings.Contains(manualHandler, "sendCommand") ||
 		strings.Contains(manualHandler, "point.command") ||
-		strings.Contains(manualHandler, "WebSocket") {
+		strings.Contains(manualHandler, "WebSocket") ||
+		strings.Contains(manualHandler, "manualDemoNumber") ||
+		strings.Contains(manualHandler, "manualState.x") ||
+		strings.Contains(manualHandler, "manualState.z") ||
+		strings.Contains(page, "function manualDemoNumber") {
 		t.Fatal("manual actions are not an isolated local demo interaction")
+	}
+	manualAdminRender := regexp.MustCompile(`(?s)function renderManualAdmin\(\) \{.*?\n      \}\n\n      function renderManual`).FindString(page)
+	if manualAdminRender == "" ||
+		!strings.Contains(manualAdminRender, `if (mountAction === "retain") return false;`) ||
+		!strings.Contains(manualAdminRender, `if (mountAction === "clear") {`) ||
+		!strings.Contains(manualAdminRender, `mount.replaceChildren(panel);`) ||
+		!strings.Contains(manualAdminRender, `renderedManualAdminRole = manualRole;`) {
+		t.Fatal("manual admin render does not preserve inputs during repeated administrator renders and clear them after a role change")
 	}
 	bridge, err := os.ReadFile("assets/hmi.mts")
 	if err != nil {

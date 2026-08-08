@@ -4707,8 +4707,8 @@
                 <section class="manual-control-section" aria-labelledby="manualSpeedTitle">
                   <header class="manual-section-head"><strong id="manualSpeedTitle">手动速度</strong></header>
                   <div class="manual-speed-list">
-                    <label class="manual-input-field" for="manualXSpeedInput"><span>X 速度</span><input id="manualXSpeedInput" type="number" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="X 手动速度" data-manual-speed="x" aria-label="X 手动速度"></label>
-                    <label class="manual-input-field" for="manualZSpeedInput"><span>Z 速度</span><input id="manualZSpeedInput" type="number" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="Z 手动速度" data-manual-speed="z" aria-label="Z 手动速度"></label>
+                    <label class="manual-input-field" for="manualXSpeedInput"><span>X 速度</span><input id="manualXSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="X 手动速度" data-manual-speed="x" aria-label="X 手动速度"></label>
+                    <label class="manual-input-field" for="manualZSpeedInput"><span>Z 速度</span><input id="manualZSpeedInput" type="number" step="any" inputmode="decimal" autocomplete="off" data-soft-keyboard="numeric" data-soft-label="Z 手动速度" data-manual-speed="z" aria-label="Z 手动速度"></label>
                   </div>
                 </section>
 
@@ -5109,6 +5109,7 @@
       const backend = window.HMIBackend || null;
       let frontendPermissions = { operate: false, maintenance: false };
       let manualRole = "GUEST";
+      let renderedManualAdminRole = null;
       let toastTimer = 0;
       let clearConfirmTimer = 0;
       let backendConnected = false;
@@ -5853,11 +5854,6 @@
         return value === "" || value == null ? "—" : String(value);
       }
 
-      function manualDemoNumber(value, delta) {
-        const numeric = Number(value);
-        return String((Number.isFinite(numeric) ? numeric : 0) + delta);
-      }
-
       function createManualAdminInput(label, key) {
         const field = document.createElement("label");
         field.className = "manual-admin-field";
@@ -5865,6 +5861,7 @@
         const input = document.createElement("input");
         input.className = "manual-admin-input";
         input.type = "number";
+        input.step = "any";
         input.inputMode = "decimal";
         input.autocomplete = "off";
         input.placeholder = "—";
@@ -5901,12 +5898,22 @@
         return group;
       }
 
+      function manualAdminMountAction(previousRole, nextRole, hasAdminNodes) {
+        if (nextRole !== "ADMIN") return hasAdminNodes ? "clear" : "retain";
+        return previousRole === "ADMIN" && hasAdminNodes ? "retain" : "build";
+      }
+
       function renderManualAdmin() {
         const mount = $("#manualAdvancedMount");
         $("#manualControlCard").classList.toggle("has-admin", manualRole === "ADMIN");
-        mount.replaceChildren();
+        const mountAction = manualAdminMountAction(renderedManualAdminRole, manualRole, mount.childElementCount > 0);
+        if (mountAction === "retain") return false;
+        if (mountAction === "clear") {
+          mount.replaceChildren();
+          renderedManualAdminRole = manualRole;
+          return true;
+        }
         // 权限来自当前产品设计：源点位表没有管理员角色列。
-        if (manualRole !== "ADMIN") return;
 
         const panel = document.createElement("section");
         panel.className = "manual-admin-panel";
@@ -5960,6 +5967,8 @@
           )
         );
         mount.replaceChildren(panel);
+        renderedManualAdminRole = manualRole;
+        return true;
       }
 
       function renderManual() {
@@ -5973,14 +5982,16 @@
         $("#manualClawState").textContent = `夹爪状态：${manualState.claw}`;
         $("#manualHomeState").textContent = `回原状态：${manualState.home}`;
         const writableDemo = demoMode && frontendPermissions.operate;
+        let keyboardRefreshNeeded = false;
         [["#manualXSpeedInput", "xSpeed"], ["#manualZSpeedInput", "zSpeed"]].forEach(([selector, key]) => {
           const input = $(selector);
+          if (input.readOnly !== !writableDemo) keyboardRefreshNeeded = true;
           input.readOnly = !writableDemo;
           input.setAttribute("aria-readonly", String(!writableDemo));
           if (document.activeElement !== input) input.value = manualState[key];
         });
-        renderManualAdmin();
-        window.HMISoftKeyboard?.refresh?.();
+        if (renderManualAdmin()) keyboardRefreshNeeded = true;
+        if (keyboardRefreshNeeded) window.HMISoftKeyboard?.refresh?.();
       }
 
       function pulseManualButton(button) {
@@ -5998,21 +6009,9 @@
           return false;
         }
 
-        if (action === "x-left") manualState.x = manualDemoNumber(manualState.x, -1);
-        if (action === "x-right" || action === "x-relative" || action === "x-relative-admin") manualState.x = manualDemoNumber(manualState.x, 1);
-        if (action === "z-up") manualState.z = manualDemoNumber(manualState.z, 1);
-        if (action === "z-down" || action === "z-relative" || action === "z-relative-admin") manualState.z = manualDemoNumber(manualState.z, -1);
         if (action === "clamp") manualState.claw = "已夹紧";
         if (action === "release") manualState.claw = "已松开";
-        if (action === "home") {
-          manualState.x = "0";
-          manualState.z = "0";
-          manualState.home = "已回原";
-        }
-        if (action === "x-origin") manualState.home = "X 原点已设定";
-        if (action === "z-origin") manualState.home = "Z 原点已设定";
-        if (action === "x-absolute") manualState.home = "X 绝对移动已演示";
-        if (action === "z-absolute") manualState.home = "Z 绝对移动已演示";
+        if (action !== "clamp" && action !== "release") showToast("电脑预览，不发送 PLC 指令", "info");
         renderManual();
         return true;
       }
