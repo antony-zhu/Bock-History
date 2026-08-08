@@ -22,6 +22,7 @@ import {
   clearTransientRuntime,
   defaultIdleTimeoutSeconds,
   demoAuthPreviewFromSearch,
+  demoManualRoleFromSearch,
   frontendSessionIsActive,
   isDisplayPath,
   renewFrontendSession,
@@ -51,6 +52,10 @@ assert.deepEqual(renewFrontendSession({
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=bootstrap"), "bootstrap");
 assert.equal(demoAuthPreviewFromSearch("?demo=1&auth=login"), "login");
 assert.equal(demoAuthPreviewFromSearch("?demo=1"), null);
+assert.equal(demoManualRoleFromSearch("?demo=1&manualRole=operator"), "OPERATOR");
+assert.equal(demoManualRoleFromSearch("?demo=1&manualRole=admin"), "ADMIN");
+assert.equal(demoManualRoleFromSearch("?demo=1&manualRole=guest"), "GUEST");
+assert.equal(demoManualRoleFromSearch("?manualRole=admin"), "GUEST");
 
 assert.deepEqual(demoViewport, { width: 1920, height: 1080 });
 assert.equal(demoDisplayScale(1920, 1080), 1);
@@ -198,7 +203,8 @@ assert.match(pointCommand[0], /pendingPointCommand\.dispatch\(requestId, \(\) =>
 assert.match(source, /const enabled = this\.valueFor\("home\.machine\.enabled"\);[\s\S]*?state\.mode = enabled === true \? "auto" : "manual";/);
 const productionPolicy = source.match(/private deferProductionPolicy\(\): void \{[\s\S]*?\n  \}\n\}/);
 assert.notEqual(productionPolicy, null);
-assert.match(productionPolicy[0], /const available = runtimeEnabled && \(button === start \|\| button\.dataset\.action === "custom"\);/);
+assert.match(productionPolicy[0], /\.control-button:not\(\.manual-entry-button\)/);
+assert.match(productionPolicy[0], /const available = runtimeEnabled && button === start;/);
 assert.match(productionPolicy[0], /mode\.dataset\.backendUnavailable = runtimeEnabled \? "false" : "true";/);
 assert.doesNotMatch(productionPolicy[0], /mode\.dataset\.backendUnavailable = "true"/);
 assert.doesNotMatch(source, /\/api\/auth\/status/);
@@ -269,6 +275,26 @@ assert.match(modeChange[0], /if \(!requireFrontendPermission\("operate"\)\) retu
 assert.match(modeChange[0], /state\.mode === "auto" \? "manual" : "auto"/);
 assert.match(modeChange[0], /backend\.sendCommand\("set_mode"/);
 assert.match(modeChange[0], /runBackendMutation\(/);
+assert.match(index, /data-page="manual"[\s\S]*?id="manualPageTitle"/);
+assert.match(index, /id="manualPageEntry" type="button">手动模式<\/button>/);
+assert.doesNotMatch(index, /id="manualPageEntry"[^>]*data-action=/);
+assert.match(index, /\$\("#manualPageEntry"\)\.addEventListener\("click", \(\) => switchPage\("manual"\)\);/);
+assert.match(index, /\["home", "manual", "data", "alarm", "history"\]\.includes\(name\)/);
+assert.match(index, /\.control-button:not\(\.manual-entry-button\)/);
+const manualHandler = index.match(/function handleManualAction\(button\) \{[\s\S]*?\n      \}\n\n      function bindManualPage/);
+assert.notEqual(manualHandler, null);
+assert.match(manualHandler[0], /if \(!requireFrontendPermission\("operate"\)\) return false;/);
+assert.match(manualHandler[0], /if \(!demoMode\) \{[\s\S]*?当前页面未绑定现场写入/);
+assert.doesNotMatch(manualHandler[0], /sendCommand|point\.command|WebSocket/);
+assert.match(index, /function renderManualAdmin\(\) \{[\s\S]*?mount\.replaceChildren\(\);[\s\S]*?if \(manualRole !== "ADMIN"\) return;/);
+assert.match(index, /权限来自当前产品设计：源点位表没有管理员角色列。/);
+const staticMarkup = index.slice(0, index.indexOf('<script src="assets/vendor/simple-keyboard/index.js"></script>'));
+assert.doesNotMatch(staticMarkup, /data-manual-admin=/);
+assert.match(index, /if \(demoManualStart\) switchPage\("manual"\);/);
+assert.match(source, /export function demoManualRoleFromSearch\(search: string\): FrontendRole/);
+assert.match(source, /role\(\): FrontendRole;/);
+assert.match(source, /role: \(\) => this\.frontendRole\(\)/);
+assert.match(compiledSource, /export function demoManualRoleFromSearch\(search\)/);
 assert.match(index, /async function runBackendMutation\(factory, options = \{\}\) \{[\s\S]*?mutationError[\s\S]*?showToast\(\s*backendErrorMessage\(mutationError\)/);
 assert.match(index, /async function saveProductionSettings\(manual = false\) \{[\s\S]*?requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /data-maintenance-tab="production"[\s\S]*?data-maintenance-tab="wifi"[\s\S]*?data-maintenance-tab="plc"[\s\S]*?data-maintenance-tab="accounts"/);

@@ -131,6 +131,7 @@ type HMIFrontendAuth = {
   hasPermission(permission: "operate" | "maintenance"): boolean;
   requirePermission(permission: "operate" | "maintenance"): boolean;
   permissions(): FrontendPermissions;
+  role(): FrontendRole;
 };
 
 declare global {
@@ -389,6 +390,7 @@ type BackendIdentity = {
   role: "VIEWER" | "OPERATOR" | "ADMIN";
   permissions: FrontendPermissions;
 };
+type FrontendRole = BackendIdentity["role"] | "GUEST";
 export type FrontendSession = {
   username: string;
   role: BackendIdentity["role"];
@@ -447,8 +449,27 @@ export function demoAuthPreviewFromSearch(search: string): DemoAuthPreview {
   return auth === "login" || auth === "bootstrap" ? auth : null;
 }
 
+export function demoManualRoleFromSearch(search: string): FrontendRole {
+  const query = new URLSearchParams(search);
+  if (query.get("demo") !== "1") {
+    return "GUEST";
+  }
+  const role = query.get("manualRole");
+  if (role === "operator") {
+    return "OPERATOR";
+  }
+  if (role === "admin") {
+    return "ADMIN";
+  }
+  return "GUEST";
+}
+
 function demoAuthPreviewMode(): DemoAuthPreview {
   return demoAuthPreviewFromSearch(window.location.search);
+}
+
+function demoManualRole(): FrontendRole {
+  return demoManualRoleFromSearch(window.location.search);
 }
 
 function cloneState(state: LegacyState): LegacyState {
@@ -603,7 +624,8 @@ class AppleBridge {
   constructor(
     private readonly config: PageConfiguration,
     private readonly demo: boolean,
-    private readonly authPreview: DemoAuthPreview
+    private readonly authPreview: DemoAuthPreview,
+    private readonly manualRole: FrontendRole
   ) {}
 
   async start(): Promise<void> {
@@ -613,7 +635,8 @@ class AppleBridge {
       permissions: () => ({
         operate: this.hasPermission("operate"),
         maintenance: this.hasPermission("maintenance")
-      })
+      }),
+      role: () => this.frontendRole()
     };
     window.addEventListener("block-hmi-public-navigation", () => {
       if (!this.authPanel().hidden) {
@@ -632,6 +655,16 @@ class AppleBridge {
     });
     this.prepareGuestHMI();
     await this.loadAuthenticationState();
+    if (this.demo && this.manualRole !== "GUEST") {
+      this.beginSession({
+        username: this.manualRole === "ADMIN" ? "admin" : "operator",
+        role: this.manualRole,
+        permissions: {
+          operate: true,
+          maintenance: this.manualRole === "ADMIN"
+        }
+      });
+    }
     if (this.demo) {
       this.configured = true;
       this.setPLCStatus("演示模式（未连接 PLC）");
@@ -1221,6 +1254,10 @@ class AppleBridge {
     return this.signedIn && this.session !== null && this.session.permissions[permission];
   }
 
+  private frontendRole(): FrontendRole {
+    return this.signedIn && this.session !== null ? this.session.role : "GUEST";
+  }
+
   private requirePermission(permission: "operate" | "maintenance"): boolean {
     if (this.hasPermission(permission)) {
       return true;
@@ -1243,6 +1280,7 @@ class AppleBridge {
     window.dispatchEvent(new CustomEvent("block-hmi-auth-changed", {
       detail: {
         signedIn: this.signedIn,
+        role: this.frontendRole(),
         operate: this.hasPermission("operate"),
         maintenance: this.hasPermission("maintenance")
       }
@@ -1621,8 +1659,8 @@ class AppleBridge {
     window.setTimeout(() => {
       const start = document.querySelector<HTMLButtonElement>('[data-action="start"]');
       const runtimeEnabled = this.canSendRuntime();
-      document.querySelectorAll<HTMLButtonElement>(".control-button").forEach((button) => {
-        const available = runtimeEnabled && (button === start || button.dataset.action === "custom");
+      document.querySelectorAll<HTMLButtonElement>(".control-button:not(.manual-entry-button)").forEach((button) => {
+        const available = runtimeEnabled && button === start;
         button.dataset.backendUnavailable = available ? "false" : "true";
       });
       const mode = document.querySelector<HTMLButtonElement>("#modeToggle");
@@ -1669,7 +1707,7 @@ function errorText(code: string | undefined): string {
 
 export async function installHMIBackend(): Promise<LegacyBackend> {
   const demo = isDemoMode();
-  const bridge = new AppleBridge(await loadConfiguration(demo), demo, demoAuthPreviewMode());
+  const bridge = new AppleBridge(await loadConfiguration(demo), demo, demoAuthPreviewMode(), demoManualRole());
   await bridge.start();
   const backend = bridge.backend();
   window.HMIBackend = backend;

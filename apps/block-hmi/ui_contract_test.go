@@ -17,6 +17,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	for _, required := range []string{
 		`id="hmi"`,
 		`data-page="home"`,
+		`data-page="manual"`,
 		`data-page="data"`,
 		`data-page="maintenance"`,
 		`data-page="alarm"`,
@@ -258,7 +259,8 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)const enabled = this\.valueFor\("home\.machine\.enabled"\);.*?state\.mode = enabled === true \? "auto" : "manual";`).MatchString(source) {
 		t.Fatal("mode display is not derived from the PLC enabled point")
 	}
-	if !strings.Contains(source, `const available = runtimeEnabled && (button === start || button.dataset.action === "custom");`) ||
+	if !strings.Contains(source, `document.querySelectorAll<HTMLButtonElement>(".control-button:not(.manual-entry-button)")`) ||
+		!strings.Contains(source, `const available = runtimeEnabled && button === start;`) ||
 		!strings.Contains(source, `mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";`) ||
 		strings.Contains(source, `mode.dataset.backendUnavailable = "true";`) {
 		t.Fatal("production mode controls are not enabled only while the runtime is writable")
@@ -373,6 +375,69 @@ func TestDemoShellUsesFixedIndustrialViewport(t *testing.T) {
 	} {
 		if !strings.Contains(shell, required) {
 			t.Fatalf("demo shell is missing %q", required)
+		}
+	}
+}
+
+func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
+	contents, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(contents)
+	for _, required := range []string{
+		`data-page="manual"`,
+		`id="manualPageEntry"`,
+		`id="manualReturnHome"`,
+		`id="manualXPosition"`,
+		`id="manualZPosition"`,
+		`id="manualXLoad"`,
+		`id="manualZLoad"`,
+		`id="manualXSpeedInput"`,
+		`id="manualZSpeedInput"`,
+		`id="manualAdvancedMount"`,
+		`function renderManualAdmin()`,
+		`mount.replaceChildren();`,
+		`权限来自当前产品设计：源点位表没有管理员角色列。`,
+		`if (demoManualStart) switchPage("manual");`,
+		`["home", "manual", "data", "alarm", "history"].includes(name)`,
+		`.control-button:not(.manual-entry-button)`,
+	} {
+		if !strings.Contains(page, required) {
+			t.Fatalf("manual page is missing %q", required)
+		}
+	}
+	if strings.Contains(page, `id="manualPageEntry" type="button" data-action=`) ||
+		!strings.Contains(page, `$("#manualPageEntry").addEventListener("click", () => switchPage("manual"));`) {
+		t.Fatal("home manual entry no longer performs public-only page navigation")
+	}
+	markup := strings.Split(page, `<script src="assets/vendor/simple-keyboard/index.js"></script>`)[0]
+	if strings.Contains(markup, `data-manual-admin=`) {
+		t.Fatal("operator and guest markup still contains prebuilt administrator nodes")
+	}
+	manualHandler := regexp.MustCompile(`(?s)function handleManualAction\(button\) \{.*?\n      \}\n\n      function bindManualPage`).FindString(page)
+	if manualHandler == "" ||
+		!strings.Contains(manualHandler, `if (!requireFrontendPermission("operate")) return false;`) ||
+		!strings.Contains(manualHandler, `当前页面未绑定现场写入`) ||
+		strings.Contains(manualHandler, "sendCommand") ||
+		strings.Contains(manualHandler, "point.command") ||
+		strings.Contains(manualHandler, "WebSocket") {
+		t.Fatal("manual actions are not an isolated local demo interaction")
+	}
+	bridge, err := os.ReadFile("assets/hmi.mts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(bridge)
+	for _, required := range []string{
+		`export function demoManualRoleFromSearch(search: string): FrontendRole`,
+		`role(): FrontendRole;`,
+		`role: () => this.frontendRole()`,
+		`if (this.demo && this.manualRole !== "GUEST")`,
+		`private frontendRole(): FrontendRole`,
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("manual role bridge is missing %q", required)
 		}
 	}
 }

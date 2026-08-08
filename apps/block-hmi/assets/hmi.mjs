@@ -253,8 +253,25 @@ export function demoAuthPreviewFromSearch(search) {
     const auth = query.get("auth");
     return auth === "login" || auth === "bootstrap" ? auth : null;
 }
+export function demoManualRoleFromSearch(search) {
+    const query = new URLSearchParams(search);
+    if (query.get("demo") !== "1") {
+        return "GUEST";
+    }
+    const role = query.get("manualRole");
+    if (role === "operator") {
+        return "OPERATOR";
+    }
+    if (role === "admin") {
+        return "ADMIN";
+    }
+    return "GUEST";
+}
 function demoAuthPreviewMode() {
     return demoAuthPreviewFromSearch(window.location.search);
+}
+function demoManualRole() {
+    return demoManualRoleFromSearch(window.location.search);
 }
 function cloneState(state) {
     return JSON.parse(JSON.stringify(state));
@@ -366,6 +383,7 @@ class AppleBridge {
     config;
     demo;
     authPreview;
+    manualRole;
     socket = null;
     signedIn = false;
     session = null;
@@ -387,10 +405,11 @@ class AppleBridge {
     pendingPointCommand = new PointCommandReceipt();
     demoState = initialDemoState();
     authKeyboardOriginalMode = null;
-    constructor(config, demo, authPreview) {
+    constructor(config, demo, authPreview, manualRole) {
         this.config = config;
         this.demo = demo;
         this.authPreview = authPreview;
+        this.manualRole = manualRole;
     }
     async start() {
         window.HMIFrontendAuth = {
@@ -399,7 +418,8 @@ class AppleBridge {
             permissions: () => ({
                 operate: this.hasPermission("operate"),
                 maintenance: this.hasPermission("maintenance")
-            })
+            }),
+            role: () => this.frontendRole()
         };
         window.addEventListener("block-hmi-public-navigation", () => {
             if (!this.authPanel().hidden) {
@@ -418,6 +438,16 @@ class AppleBridge {
         });
         this.prepareGuestHMI();
         await this.loadAuthenticationState();
+        if (this.demo && this.manualRole !== "GUEST") {
+            this.beginSession({
+                username: this.manualRole === "ADMIN" ? "admin" : "operator",
+                role: this.manualRole,
+                permissions: {
+                    operate: true,
+                    maintenance: this.manualRole === "ADMIN"
+                }
+            });
+        }
         if (this.demo) {
             this.configured = true;
             this.setPLCStatus("演示模式（未连接 PLC）");
@@ -965,6 +995,9 @@ class AppleBridge {
     hasPermission(permission) {
         return this.signedIn && this.session !== null && this.session.permissions[permission];
     }
+    frontendRole() {
+        return this.signedIn && this.session !== null ? this.session.role : "GUEST";
+    }
     requirePermission(permission) {
         if (this.hasPermission(permission)) {
             return true;
@@ -985,6 +1018,7 @@ class AppleBridge {
         window.dispatchEvent(new CustomEvent("block-hmi-auth-changed", {
             detail: {
                 signedIn: this.signedIn,
+                role: this.frontendRole(),
                 operate: this.hasPermission("operate"),
                 maintenance: this.hasPermission("maintenance")
             }
@@ -1341,8 +1375,8 @@ class AppleBridge {
         window.setTimeout(() => {
             const start = document.querySelector('[data-action="start"]');
             const runtimeEnabled = this.canSendRuntime();
-            document.querySelectorAll(".control-button").forEach((button) => {
-                const available = runtimeEnabled && (button === start || button.dataset.action === "custom");
+            document.querySelectorAll(".control-button:not(.manual-entry-button)").forEach((button) => {
+                const available = runtimeEnabled && button === start;
                 button.dataset.backendUnavailable = available ? "false" : "true";
             });
             const mode = document.querySelector("#modeToggle");
@@ -1385,7 +1419,7 @@ function errorText(code) {
 }
 export async function installHMIBackend() {
     const demo = isDemoMode();
-    const bridge = new AppleBridge(await loadConfiguration(demo), demo, demoAuthPreviewMode());
+    const bridge = new AppleBridge(await loadConfiguration(demo), demo, demoAuthPreviewMode(), demoManualRole());
     await bridge.start();
     const backend = bridge.backend();
     window.HMIBackend = backend;
