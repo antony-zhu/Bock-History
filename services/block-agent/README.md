@@ -159,7 +159,7 @@ socket 不暴露给 HMI。
 
 ## 本地认证
 
-本地认证以 Common `contracts/block-local-api/v2` 为准。SQLite 是账号和页面空闲
+本地认证以 Common `contracts/block-local-api/2026-08-08` 为准。SQLite 是账号和页面空闲
 时长的唯一来源：保存 username、Argon2id password hash、role 和 60–3600 秒的
 `idleTimeoutSeconds`（默认 300）。不新增会话表。
 
@@ -176,7 +176,7 @@ socket 不暴露给 HMI。
 
 本机 HMI 认证和维护只使用 `/api/...`。`/api/v1/...` 和
 `/api/v2/...` 不提供别名、重定向或回退，请求统一返回 404。Common
-`contracts/block-local-api/v2` 仍是契约制品的版本目录，不代表 HTTP 路径版本。MQTTS v2 的协议、配置名称和运行语义不受此变更影响。
+`contracts/block-local-api/2026-08-08` 是当前契约制品目录，不代表 HTTP 路径版本。MQTTS v2 的协议、配置名称和运行语义不受此变更影响。
 
 这些写操作只属于 Block 现场本地接口，不会从 BDM 或 Pad 调用。请求必须带
 稳定 `Idempotency-Key`；Agent 在发送前写入 SQLite，按单队列执行，并在
