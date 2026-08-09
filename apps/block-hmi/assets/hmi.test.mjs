@@ -14,6 +14,7 @@ import {
   ActivationFilter,
   applyAbsoluteValues,
   buildPLCConnect,
+  buildPLCDeviceID,
   buildPLCDisconnect,
   buildPLCScan,
   buildPointCommand,
@@ -98,7 +99,16 @@ assert.deepEqual(simulatorConfigured.points[0], {
   readPoint: "manual.motion.x.jog.speed.parameter", writePoint: "manual.motion.x.jog.speed.parameter", writeMethod: "fc10",
   registerCount: 2, wordOrder: "low-high", write: { mode: "set", activeValue: undefined, defaultValue: undefined, pulseMs: undefined }
 });
-assert.equal(buildPLCScan("192.168.1.0/24", "scan", timestamp).type, "plc.scan");
+assert.deepEqual(buildPLCScan("192.168.1.0/24", 1502, 1, "scan", timestamp), {
+  protocolVersion: "1.0",
+  type: "plc.scan",
+  requestId: "scan",
+  timestamp,
+  addressRange: "192.168.1.0/24",
+  port: 1502,
+  unitId: 1
+});
+assert.equal(buildPLCDeviceID("192.168.10.87", 1502, 1), "easy521://192.168.10.87:1502?unitId=1");
 assert.equal(buildPLCConnect("easy521://127.0.0.1:1502?unitId=1", "connect", timestamp).type, "plc.connect");
 assert.equal(buildPLCDisconnect("disconnect", timestamp).type, "plc.disconnect");
 assert.equal(buildPointsSnapshotGet("snapshot", timestamp).type, "points.snapshot.get");
@@ -453,6 +463,16 @@ assert.match(index, /setTimeout\(\(\) => \{[\s\S]*?saveProductionSettings\(\);[\
 assert.match(index, /"\/api\/maintenance\/production"/);
 assert.match(index, /"\/api\/maintenance\/connectivity"/);
 assert.match(index, /"\/api\/maintenance\/wifi\/connect"/);
+assert.match(index, /id="plcSubnetInput"[^>]*value="192\.168\.1\.0\/24"[^>]*data-soft-keyboard="full"/);
+assert.match(index, /id="plcHostInput"[^>]*data-soft-keyboard="decimal"/);
+assert.match(index, /id="plcPortInput"[^>]*min="1"[^>]*max="65535"[^>]*data-soft-keyboard="numeric"/);
+assert.match(index, /id="plcUnitInput"[^>]*min="1"[^>]*max="247"[^>]*data-soft-keyboard="numeric"/);
+assert.match(index, /id="savePlcButton"[^>]*>保存地址并连接/);
+assert.match(index, /扫描、连接和轮询均由本机 Agent 执行/);
+assert.match(source, /export function buildPLCDeviceID\(host: string, port = defaultPLCPort, unitID = defaultPLCUnitID\): string/);
+assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?readPLCScanSettings\(\)[\s\S]*?buildPLCScan\(settings\.addressRange, settings\.port, settings\.unitID\)/);
+assert.match(source, /private sendPLCSave\(\): void \{[\s\S]*?readPLCEndpoint\(\)[\s\S]*?buildPLCDeviceID\(endpoint\.host, endpoint\.port, endpoint\.unitID\)/);
+assert.match(source, /scan\.disabled = !active;[\s\S]*?save\.disabled = !active;[\s\S]*?snapshot\.disabled = !active;/);
 const wifiConnect = index.match(/async function connectWiFi\(\) \{[\s\S]*?\n      \}\n\n      function switchMaintenanceTab/);
 assert.notEqual(wifiConnect, null);
 assert.match(wifiConnect[0], /try \{[\s\S]*?await maintenanceRequest\("\/api\/maintenance\/wifi\/connect", "POST", \{ ssid, password \}\);[\s\S]*?passwordInput\.value = "";\s*window\.HMISoftKeyboard\?\.clearInput\(passwordInput\);[\s\S]*?return true;/);

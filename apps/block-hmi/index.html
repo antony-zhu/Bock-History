@@ -3433,6 +3433,7 @@
 
     .auth-form button,
     .plc-actions button,
+    #plc-candidates .plc-candidate-connect,
     .auth-logout,
     .auth-close {
       background: #2868d7;
@@ -3465,7 +3466,8 @@
     }
 
     .auth-form button:disabled,
-    .plc-actions button:disabled {
+    .plc-actions button:disabled,
+    #plc-candidates .plc-candidate-connect:disabled {
       cursor: not-allowed;
       opacity: 0.45;
     }
@@ -3562,8 +3564,43 @@
       gap: 10px;
     }
 
-    .plc-actions button:nth-child(n + 2) {
+    .plc-actions #snapshot-button,
+    .plc-actions #plc-disconnect-button {
       background: #607784;
+    }
+
+    .plc-actions button:not(:disabled):active,
+    #plc-candidates .plc-candidate-connect:not(:disabled):active {
+      filter: brightness(0.94);
+      transform: translateY(1px);
+    }
+
+    .plc-config-grid {
+      display: grid;
+      gap: 14px 16px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin: 18px 0;
+    }
+
+    .plc-config-grid label {
+      color: #405866;
+      display: grid;
+      font-size: 14px;
+      font-weight: 700;
+      gap: 7px;
+    }
+
+    .plc-config-grid input {
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid #c8d5dc;
+      border-radius: 12px;
+      box-sizing: border-box;
+      color: #1d1d1f;
+      font: inherit;
+      font-variant-numeric: tabular-nums;
+      min-height: 52px;
+      padding: 0 13px;
+      width: 100%;
     }
 
     #plc-candidates {
@@ -3573,7 +3610,18 @@
     }
 
     #plc-candidates li {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
       margin: 6px 0;
+    }
+
+    #plc-candidates .plc-candidate-connect {
+      border-radius: 11px;
+      font-size: 14px;
+      min-height: 46px;
+      padding: 0 14px;
     }
 
     .auth-logout {
@@ -3883,6 +3931,7 @@
       .plc-control-sheet { padding: 22px 20px; }
       .page[data-page="maintenance"] .settings-row,
       .page[data-page="maintenance"] .settings-row.single-field { grid-template-columns: 1fr; }
+      .plc-config-grid { grid-template-columns: 1fr; }
       .connection-facts { grid-template-columns: 1fr; }
     }
 
@@ -4813,9 +4862,15 @@
               </section>
 
               <section class="maintenance-panel" id="plcSettingsPanel" role="tabpanel" tabindex="0" aria-labelledby="maintenancePLCTab" data-maintenance-panel="plc" hidden>
-                <header class="maintenance-panel-head"><span>03</span><div><h2>PLC 通信</h2><p>使用现有扫描、连接和实时 WebSocket 数据；此页不提供手动配置。</p></div></header>
+                <header class="maintenance-panel-head"><span>03</span><div><h2>PLC 通信</h2><p>由本机 Agent 扫描、连接和轮询；在此填写独立子网和 PLC 地址。</p></div></header>
                 <section class="plc-control-sheet" id="plc-control-sheet" aria-labelledby="plc-title">
                   <div class="auth-account-head"><strong id="plc-title">PLC 连接</strong><span id="plc-status" role="status">PLC 未连接</span></div>
+                  <div class="plc-config-grid" aria-label="PLC 扫描与连接配置">
+                    <label for="plcSubnetInput"><span>独立子网</span><input id="plcSubnetInput" type="text" autocomplete="off" value="192.168.1.0/24" data-soft-keyboard="full" data-soft-label="独立子网" aria-describedby="plc-status"></label>
+                    <label for="plcHostInput"><span>PLC IP</span><input id="plcHostInput" type="text" inputmode="decimal" autocomplete="off" data-soft-keyboard="decimal" data-soft-label="PLC IP" aria-describedby="plc-status"></label>
+                    <label for="plcPortInput"><span>端口</span><input id="plcPortInput" type="number" min="1" max="65535" step="1" inputmode="numeric" autocomplete="off" value="502" data-soft-keyboard="numeric" data-soft-label="端口" aria-describedby="plc-status"></label>
+                    <label for="plcUnitInput"><span>Unit ID</span><input id="plcUnitInput" type="number" min="1" max="247" step="1" inputmode="numeric" autocomplete="off" value="1" data-soft-keyboard="numeric" data-soft-label="Unit ID" aria-describedby="plc-status"></label>
+                  </div>
                   <dl class="connection-facts plc-facts" aria-label="PLC 当前只读状态">
                     <div><dt>连接</dt><dd id="plc-connection-value">PLC 未连接</dd></div>
                     <div><dt>最近采样</dt><dd id="plc-last-sample">—</dd></div>
@@ -4823,8 +4878,8 @@
                     <div><dt>点位数</dt><dd id="plc-point-count">—</dd></div>
                   </dl>
                   <div class="plc-live-points" id="plc-live-points" aria-live="polite">等待 PLC 实时点值</div>
-                  <p class="settings-note plc-write-warning" id="plc-write-warning">此页仅显示实时点值。PLC 写入不在维护设置中提供。</p>
-                  <div class="plc-actions"><button id="plc-scan-button" type="button" disabled>扫描 PLC</button><button id="plc-disconnect-button" type="button" disabled>断开 PLC</button><button id="snapshot-button" type="button" disabled>刷新当前状态</button></div>
+                  <p class="settings-note plc-write-warning" id="plc-write-warning">扫描、连接和轮询均由本机 Agent 执行。保存地址会在首次读取成功后生效；本页不直接访问 PLC。</p>
+                  <div class="plc-actions"><button id="plc-scan-button" type="button" disabled>扫描 PLC</button><button id="savePlcButton" type="button" disabled>保存地址并连接</button><button id="snapshot-button" type="button" disabled>刷新状态</button><button id="plc-disconnect-button" type="button" disabled>断开 PLC</button></div>
                   <ul id="plc-candidates" aria-live="polite"><li>尚未扫描 PLC</li></ul>
                 </section>
               </section>

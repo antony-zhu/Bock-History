@@ -215,13 +215,28 @@ func TestPLCScanReturnsOneCompleteResult(t *testing.T) {
 	defer connection.Close()
 	configure(t, connection)
 	_ = receive(t, connection)
-	send(t, connection, map[string]any{"type": "plc.scan", "requestId": "scan", "addressRange": "127.0.0.1/32"})
+	send(t, connection, map[string]any{"type": "plc.scan", "requestId": "scan", "addressRange": "127.0.0.1/32", "port": 1502, "unitId": 1})
 	result := receiveType(t, connection, "plc.scan.result")
 	if result["success"] != true {
 		t.Fatalf("scan result = %#v", result)
 	}
 	if _, ok := result["devices"].([]any); !ok {
 		t.Fatalf("scan devices = %#v", result["devices"])
+	}
+}
+
+func TestPLCScanRejectsInvalidTransportSettings(t *testing.T) {
+	_, address, cancel, done := startRuntime(t)
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+	configure(t, connection)
+	_ = receive(t, connection)
+	send(t, connection, map[string]any{"type": "plc.scan", "requestId": "invalid-scan", "addressRange": "127.0.0.1/32", "port": 0, "unitId": 1})
+	result := receiveType(t, connection, "error")
+	errorValue, ok := result["error"].(map[string]any)
+	if !ok || errorValue["code"] != "INVALID_REQUEST" {
+		t.Fatalf("invalid scan result = %#v", result)
 	}
 }
 

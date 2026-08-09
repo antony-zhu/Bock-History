@@ -19,8 +19,10 @@ func (r *Runtime) handlePLCScan(client *wsClient, raw []byte) {
 		Timestamp       string `json:"timestamp"`
 		RequestID       string `json:"requestId"`
 		AddressRange    string `json:"addressRange"`
+		Port            *int   `json:"port"`
+		UnitID          *int   `json:"unitId"`
 	}
-	if err := decodeAllowed(raw, &request, "protocolVersion", "type", "timestamp", "requestId", "addressRange"); err != nil || request.Type != "plc.scan" || request.AddressRange == "" {
+	if err := decodeAllowed(raw, &request, "protocolVersion", "type", "timestamp", "requestId", "addressRange", "port", "unitId"); err != nil || request.Type != "plc.scan" || request.AddressRange == "" {
 		message := "plc.scan requires addressRange"
 		if err != nil {
 			message = err.Error()
@@ -32,6 +34,18 @@ func (r *Runtime) handlePLCScan(client *wsClient, raw []byte) {
 		client.enqueue(errorEnvelope(r.now, request.RequestID, "INVALID_REQUEST", err.Error()), false)
 		return
 	}
+	port := defaultPLCScanPort
+	if request.Port != nil {
+		port = *request.Port
+	}
+	unitID := defaultPLCUnitID
+	if request.UnitID != nil {
+		unitID = *request.UnitID
+	}
+	if port < 1 || port > 65535 || unitID < 1 || unitID > 247 {
+		client.enqueue(errorEnvelope(r.now, request.RequestID, "INVALID_REQUEST", "plc.scan port must be 1..65535 and unitId must be 1..247"), false)
+		return
+	}
 	ctx, cancel, selected, started := r.beginScan()
 	if !started {
 		client.enqueue(errorEnvelope(r.now, request.RequestID, "BUSY", "a PLC scan is already in progress"), false)
@@ -39,7 +53,7 @@ func (r *Runtime) handlePLCScan(client *wsClient, raw []byte) {
 	}
 	go func() {
 		defer r.endScan(cancel)
-		devices, err := scanRange(ctx, request.AddressRange, selected)
+		devices, err := scanRange(ctx, request.AddressRange, port, byte(unitID), selected)
 		if errors.Is(err, context.Canceled) {
 			return
 		}

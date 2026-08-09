@@ -37,7 +37,13 @@ type plcDevice struct {
 	Metadata map[string]any `json:"metadata"`
 }
 
-func scanRange(ctx context.Context, addressRange string, selectedDeviceID string) ([]plcDevice, error) {
+type plcProbe func(context.Context, netip.Addr, int, byte, string) (plcDevice, bool)
+
+func scanRange(ctx context.Context, addressRange string, port int, unitID byte, selectedDeviceID string) ([]plcDevice, error) {
+	return scanRangeWithProbe(ctx, addressRange, port, unitID, selectedDeviceID, probePLC)
+}
+
+func scanRangeWithProbe(ctx context.Context, addressRange string, port int, unitID byte, selectedDeviceID string, probe plcProbe) ([]plcDevice, error) {
 	addresses, err := scanAddresses(addressRange)
 	if err != nil {
 		return nil, err
@@ -54,7 +60,7 @@ func scanRange(ctx context.Context, addressRange string, selectedDeviceID string
 		go func() {
 			defer workers.Done()
 			for address := range jobs {
-				device, found := probePLC(ctx, address, selectedDeviceID)
+				device, found := probe(ctx, address, port, unitID, selectedDeviceID)
 				if !found {
 					continue
 				}
@@ -121,8 +127,8 @@ func errorsInvalidAddressRange(raw string) error {
 	return fmt.Errorf("addressRange %q must be an IPv4 CIDR", raw)
 }
 
-func probePLC(ctx context.Context, address netip.Addr, selectedDeviceID string) (plcDevice, bool) {
-	endpoint := plcEndpoint{host: address.String(), port: defaultPLCScanPort, unitID: defaultPLCUnitID}
+func probePLC(ctx context.Context, address netip.Addr, port int, unitID byte, selectedDeviceID string) (plcDevice, bool) {
+	endpoint := plcEndpoint{host: address.String(), port: port, unitID: unitID}
 	client, err := easy521.New(easy521.Config{
 		Endpoint:       endpoint.String(),
 		UnitID:         endpoint.unitID,
@@ -174,7 +180,7 @@ func parsePLCDeviceID(raw string) (plcEndpoint, error) {
 		return plcEndpoint{}, errorsInvalidDeviceID()
 	}
 	unitID, err := strconv.Atoi(query.Get("unitId"))
-	if err != nil || unitID < 0 || unitID > 255 {
+	if err != nil || unitID < 1 || unitID > 247 {
 		return plcEndpoint{}, errorsInvalidDeviceID()
 	}
 	return plcEndpoint{host: parsed.Hostname(), port: port, unitID: byte(unitID)}, nil

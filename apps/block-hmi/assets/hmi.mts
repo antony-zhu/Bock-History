@@ -155,6 +155,8 @@ declare global {
 
 const debounceMilliseconds = 50;
 const defaultPLCAddressRange = "192.168.1.0/24";
+const defaultPLCPort = 502;
+const defaultPLCUnitID = 1;
 
 function requestID(): string {
   return crypto.randomUUID();
@@ -168,6 +170,22 @@ function request(type: string, fields: object, id = requestID(), timestamp = new
     timestamp,
     ...fields
   };
+}
+
+function isIPv4Address(value: string): boolean {
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every((part) => {
+    if (!/^\d+$/.test(part)) {
+      return false;
+    }
+    const number = Number(part);
+    return Number.isInteger(number) && number >= 0 && number <= 255;
+  });
+}
+
+function isIPv4CIDR(value: string): boolean {
+  const [address, bits, ...extra] = value.split("/");
+  return extra.length === 0 && isIPv4Address(address ?? "") && /^\d+$/.test(bits ?? "") && Number(bits) >= 0 && Number(bits) <= 32;
 }
 
 export function isDisplayPath(value: string): boolean {
@@ -223,8 +241,18 @@ export function buildPointsSnapshotGet(id = requestID(), timestamp = new Date().
   return request("points.snapshot.get", {}, id, timestamp);
 }
 
-export function buildPLCScan(addressRange = defaultPLCAddressRange, id = requestID(), timestamp = new Date().toISOString()): object {
-  return request("plc.scan", { addressRange }, id, timestamp);
+export function buildPLCScan(
+  addressRange = defaultPLCAddressRange,
+  port = defaultPLCPort,
+  unitID = defaultPLCUnitID,
+  id = requestID(),
+  timestamp = new Date().toISOString()
+): object {
+  return request("plc.scan", { addressRange, port, unitId: unitID }, id, timestamp);
+}
+
+export function buildPLCDeviceID(host: string, port = defaultPLCPort, unitID = defaultPLCUnitID): string {
+  return "easy521://" + host + ":" + String(port) + "?unitId=" + String(unitID);
 }
 
 export function buildPLCConnect(deviceID: string, id = requestID(), timestamp = new Date().toISOString()): object {
@@ -968,6 +996,9 @@ class AppleBridge {
     document.querySelector<HTMLButtonElement>("#plc-scan-button")!.addEventListener("click", () => {
       this.sendPLCScan();
     });
+    document.querySelector<HTMLButtonElement>("#savePlcButton")!.addEventListener("click", () => {
+      this.sendPLCSave();
+    });
     document.querySelector<HTMLButtonElement>("#plc-disconnect-button")!.addEventListener("click", () => {
       this.sendPLCDisconnect();
     });
@@ -1370,6 +1401,7 @@ class AppleBridge {
     if (message.type === "plc.connection.changed" && message.state !== undefined) {
       this.plcState = message.state;
       if (message.deviceId !== undefined) {
+        this.populatePLCInputs(message.deviceId);
         for (const device of this.plcDevices) {
           if (device.deviceId === message.deviceId) {
             device.state = message.state;
@@ -1585,7 +1617,28 @@ class AppleBridge {
       this.setPLCStatus("演示模式不扫描 PLC");
       return;
     }
-    this.sendRuntimeRequest(buildPLCScan());
+    const settings = this.readPLCScanSettings();
+    if (settings === null) {
+      return;
+    }
+    this.setPLCStatus("正在扫描 PLC");
+    this.sendRuntimeRequest(buildPLCScan(settings.addressRange, settings.port, settings.unitID));
+  }
+
+  private sendPLCSave(): void {
+    if (!this.requirePermission("maintenance")) {
+      return;
+    }
+    if (this.demo) {
+      this.setPLCStatus("演示模式不保存 PLC 地址");
+      return;
+    }
+    const endpoint = this.readPLCEndpoint();
+    if (endpoint === null) {
+      return;
+    }
+    this.setPLCStatus("正在保存并连接 PLC 地址");
+    this.sendPLCConnect(buildPLCDeviceID(endpoint.host, endpoint.port, endpoint.unitID));
   }
 
   private sendPLCConnect(deviceID: string): void {
@@ -1595,6 +1648,7 @@ class AppleBridge {
     if (this.demo) {
       return;
     }
+    this.populatePLCInputs(deviceID);
     this.sendRuntimeRequest(buildPLCConnect(deviceID));
   }
 
@@ -1624,6 +1678,60 @@ class AppleBridge {
       return;
     }
     this.socket.send(JSON.stringify(message));
+  }
+
+  private readPLCScanSettings(): { addressRange: string; port: number; unitID: number } | null {
+    const addressRange = document.querySelector<HTMLInputElement>("#plcSubnetInput")!.value.trim();
+    if (!isIPv4CIDR(addressRange)) {
+      this.setPLCStatus("请输入有效的独立子网（IPv4 CIDR）");
+      return null;
+    }
+    const transport = this.readPLCTransportSettings();
+    return transport === null ? null : { addressRange, ...transport };
+  }
+
+  private readPLCEndpoint(): { host: string; port: number; unitID: number } | null {
+    const host = document.querySelector<HTMLInputElement>("#plcHostInput")!.value.trim();
+    if (!isIPv4Address(host)) {
+      this.setPLCStatus("请输入有效的 PLC IP");
+      return null;
+    }
+    const transport = this.readPLCTransportSettings();
+    return transport === null ? null : { host, ...transport };
+  }
+
+  private readPLCTransportSettings(): { port: number; unitID: number } | null {
+    const port = Number(document.querySelector<HTMLInputElement>("#plcPortInput")!.value);
+    const unitID = Number(document.querySelector<HTMLInputElement>("#plcUnitInput")!.value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      this.setPLCStatus("请输入 1 至 65535 的 PLC 端口");
+      return null;
+    }
+    if (!Number.isInteger(unitID) || unitID < 1 || unitID > 247) {
+      this.setPLCStatus("请输入 1 至 247 的 Unit ID");
+      return null;
+    }
+    return { port, unitID };
+  }
+
+  private populatePLCInputs(deviceID: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(deviceID);
+    } catch {
+      return;
+    }
+    if (parsed.protocol !== "easy521:" || !isIPv4Address(parsed.hostname)) {
+      return;
+    }
+    const port = Number(parsed.port);
+    const unitID = Number(parsed.searchParams.get("unitId"));
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || !Number.isInteger(unitID) || unitID < 1 || unitID > 247) {
+      return;
+    }
+    document.querySelector<HTMLInputElement>("#plcHostInput")!.value = parsed.hostname;
+    document.querySelector<HTMLInputElement>("#plcPortInput")!.value = String(port);
+    document.querySelector<HTMLInputElement>("#plcUnitInput")!.value = String(unitID);
   }
 
   private canSendRuntime(): boolean {
@@ -1693,12 +1801,14 @@ class AppleBridge {
   private renderPLCCandidates(): void {
     const list = document.querySelector<HTMLElement>("#plc-candidates")!;
     const scan = document.querySelector<HTMLButtonElement>("#plc-scan-button")!;
+    const save = document.querySelector<HTMLButtonElement>("#savePlcButton")!;
     const disconnect = document.querySelector<HTMLButtonElement>("#plc-disconnect-button")!;
     const snapshot = document.querySelector<HTMLButtonElement>("#snapshot-button")!;
     const active = this.canSendRuntime();
-    scan.disabled = this.signedIn && !active;
-    snapshot.disabled = this.signedIn && !active;
-    disconnect.disabled = this.signedIn && (!active || this.plcState === "disconnected" || this.plcState === "unconfigured");
+    scan.disabled = !active;
+    save.disabled = !active;
+    snapshot.disabled = !active;
+    disconnect.disabled = !active || this.plcState === "disconnected" || this.plcState === "unconfigured";
     list.replaceChildren();
     if (this.demo) {
       const item = document.createElement("li");
@@ -1718,8 +1828,9 @@ class AppleBridge {
       detail.textContent = device.name + " · " + device.address + " · " + plcStateText(device.state);
       const connect = document.createElement("button");
       connect.type = "button";
+      connect.className = "plc-candidate-connect";
       connect.textContent = "连接";
-      connect.disabled = this.signedIn && (!active || device.state === "connected" || device.state === "connecting");
+      connect.disabled = !active || device.state === "connected" || device.state === "connecting";
       connect.addEventListener("click", () => this.sendPLCConnect(device.deviceId));
       item.append(detail, document.createTextNode(" "), connect);
       list.append(item);
