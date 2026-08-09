@@ -46,7 +46,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`/api/maintenance/connectivity`,
 		`/api/maintenance/wifi/connect`,
 		`id="operatorName"`,
-		`assets/soft-keyboard.css?v=20260808.3`,
+		`assets/soft-keyboard.css?v=20260809.1`,
 		`assets/soft-keyboard.js?v=20260808.3`,
 		`import("./assets/hmi.mjs?v=20260808.4")`,
 		`function requireFrontendPermission(permission)`,

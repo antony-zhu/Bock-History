@@ -177,6 +177,50 @@ const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "utf8");
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
+
+function cssRule(selector) {
+  const start = keyboardCSS.indexOf(`${selector} {`);
+  assert.notEqual(start, -1, `missing CSS rule: ${selector}`);
+  const bodyStart = keyboardCSS.indexOf("{", start) + 1;
+  const end = keyboardCSS.indexOf("\n}", bodyStart);
+  assert.notEqual(end, -1, `unterminated CSS rule: ${selector}`);
+  return keyboardCSS.slice(bodyStart, end);
+}
+
+const keyboardDockRule = cssRule(".soft-keyboard-dock");
+assert.match(keyboardDockRule, /color: #172a3a;/);
+assert.match(keyboardDockRule, /border: 1px solid #657786;/);
+assert.match(keyboardDockRule, /background: #e8eef2;/);
+assert.doesNotMatch(keyboardDockRule, /\b(?:opacity|transform|filter|backdrop-filter)\s*:/);
+
+const keyboardKeyRule = cssRule(".hmi-simple-keyboard.hg-theme-default .hg-button");
+assert.match(keyboardKeyRule, /color: #172a3a;/);
+assert.match(keyboardKeyRule, /border: 1px solid #718493;/);
+assert.match(keyboardKeyRule, /background: #ffffff;/);
+assert.doesNotMatch(keyboardKeyRule, /rgba\(|var\(|\b(?:opacity|filter|backdrop-filter)\s*:/);
+
+const functionKeyRule = cssRule(".hmi-simple-keyboard .hg-button.hg-function-key");
+assert.match(functionKeyRule, /color: #172a3a;/);
+assert.match(functionKeyRule, /background: #dce5eb;/);
+assert.match(cssRule(".hmi-simple-keyboard .hg-button.hg-button-done"), /background: #006fbd;/);
+assert.match(cssRule(".hmi-simple-keyboard .hg-button.hg-button-cancel"), /background: #fce4e2;/);
+
+const graphiteDockRule = cssRule('html[data-theme="graphite"] .soft-keyboard-dock');
+assert.match(graphiteDockRule, /color: #fff;/);
+assert.match(graphiteDockRule, /border-color: #c3cbd3;/);
+assert.match(graphiteDockRule, /background: #29323a;/);
+assert.doesNotMatch(graphiteDockRule, /rgba\(|var\(|\b(?:opacity|transform|filter|backdrop-filter)\s*:/);
+assert.match(
+  cssRule('html[data-theme="graphite"] #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock'),
+  /background: #29323a;/
+);
+
+const graphiteKeyRule = cssRule('html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button');
+assert.match(graphiteKeyRule, /color: #fff;/);
+assert.match(graphiteKeyRule, /border-color: #d7dde3;/);
+assert.match(graphiteKeyRule, /background: #3a4650;/);
+assert.doesNotMatch(graphiteKeyRule, /rgba\(|var\(|\b(?:opacity|filter|backdrop-filter)\s*:/);
+
 const defaultPointsConfiguration = JSON.parse(readFileSync(new URL("./points.json", import.meta.url), "utf8"));
 const simulatorPointsConfiguration = JSON.parse(readFileSync(new URL("./points.simulatorFloat32.json", import.meta.url), "utf8"));
 assert.deepEqual(defaultPointsConfiguration.points.map((point) => point.address), [
@@ -358,7 +402,7 @@ assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]
 assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
 assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", state\.mode === "manual"\);/);
 for (const asset of [
-  'assets/soft-keyboard.css?v=20260808.3',
+  'assets/soft-keyboard.css?v=20260809.1',
   'assets/soft-keyboard.js?v=20260808.3',
   './assets/hmi.mjs?v=20260808.4'
 ]) {

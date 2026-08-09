@@ -1,11 +1,5 @@
 :root {
-  --keyboard-panel: #f8fafc;
-  --keyboard-panel-border: rgba(255, 255, 255, 0.92);
-  --keyboard-key: rgba(255, 255, 255, 0.96);
-  --keyboard-key-border: rgba(29, 29, 31, 0.1);
-  --keyboard-key-text: #1d1d1f;
-  --keyboard-muted: #6e6e73;
-  --keyboard-shadow: rgba(39, 62, 78, 0.18);
+  --keyboard-muted: #435664;
 }
 
 .settings-layout {
@@ -202,20 +196,18 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 
 .soft-keyboard-dock {
   position: absolute;
-  top: 50%;
+  top: calc(50% - 148px);
   right: 28px;
   z-index: 18;
   width: 420px;
   padding: 16px;
-  color: var(--keyboard-key-text);
-  border: 1px solid var(--keyboard-panel-border);
+  color: #172a3a;
+  border: 1px solid #657786;
   border-radius: 28px;
-  background: var(--keyboard-panel);
+  background: #e8eef2;
   box-shadow: none;
-  opacity: 0;
-  transform: translateY(-50%) scale(0.98);
-  transform-origin: right center;
   transition: none;
+  visibility: hidden;
 }
 
 .soft-keyboard-dock[hidden] {
@@ -223,8 +215,7 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 }
 
 .soft-keyboard-dock.is-open {
-  opacity: 1;
-  transform: translateY(-50%) scale(1);
+  visibility: visible;
 }
 
 .soft-keyboard-dock[data-open-immediate="true"] {
@@ -237,12 +228,6 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
   bottom: 18px;
   left: 28px;
   width: auto;
-  transform: translateY(14px) scale(0.99);
-  transform-origin: center bottom;
-}
-
-.soft-keyboard-dock[data-layout="full"].is-open {
-  transform: translateY(0) scale(1);
 }
 
 #auth-panel[data-keyboard-open="true"] {
@@ -287,7 +272,7 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 }
 
 #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
-  background: #f8fafc;
+  background: #e8eef2;
   transition: none;
 }
 
@@ -316,11 +301,11 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 .hmi-simple-keyboard.hg-theme-default .hg-button {
   height: 60px;
   min-width: 0;
-  color: var(--keyboard-key-text);
-  border: 1px solid var(--keyboard-key-border);
-  border-bottom-color: rgba(29, 29, 31, 0.18);
+  color: #172a3a;
+  border: 1px solid #718493;
+  border-bottom-color: #536a7a;
   border-radius: 15px;
-  background: var(--keyboard-key);
+  background: #ffffff;
   box-shadow: none;
   cursor: pointer;
   font-family: inherit;
@@ -331,15 +316,28 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 
 .hmi-simple-keyboard.hg-theme-default .hg-button:active,
 .hmi-simple-keyboard.hg-theme-default .hg-button.hg-activeButton {
-  background: rgba(0, 113, 227, 0.14);
+  color: #172a3a;
+  border-color: #1671b5;
+  border-bottom-color: #075e9f;
+  background: #cce5f7;
   box-shadow: none;
   transform: none;
 }
 
 .hmi-simple-keyboard .hg-button.hg-function-key {
-  color: #3a3a3c;
-  background: rgba(120, 120, 128, 0.13);
+  color: #172a3a;
+  border-color: #718493;
+  border-bottom-color: #536a7a;
+  background: #dce5eb;
   font-size: 14px;
+}
+
+.hmi-simple-keyboard .hg-button.hg-function-key:active,
+.hmi-simple-keyboard .hg-button.hg-function-key.hg-activeButton {
+  color: #172a3a;
+  border-color: #1671b5;
+  border-bottom-color: #075e9f;
+  background: #c3d8e6;
 }
 
 .hmi-simple-keyboard .hg-button[data-skbtn="{shift}"],
@@ -364,18 +362,24 @@ html[data-keyboard-mode="soft"] input[type="number"]::-webkit-outer-spin-button 
 
 .hmi-simple-keyboard .hg-button[data-skbtn="{shift}"].is-shift-active {
   color: #fff;
-  background: var(--blue);
+  border-color: #004f8e;
+  border-bottom-color: #004f8e;
+  background: #006fbd;
   box-shadow: none;
 }
 
 .hmi-simple-keyboard .hg-button.hg-button-done {
   color: #fff;
-  border-color: transparent;
-  background: var(--blue);
+  border-color: #004f8e;
+  border-bottom-color: #004f8e;
+  background: #006fbd;
 }
 
 .hmi-simple-keyboard .hg-button.hg-button-cancel {
-  color: var(--red);
+  color: #9d201c;
+  border-color: #bd6d68;
+  border-bottom-color: #9d4a45;
+  background: #fce4e2;
 }
 
 .soft-keyboard-dock[data-layout="full"] .hmi-simple-keyboard.hg-theme-default .hg-button {
@@ -455,13 +459,7 @@ html[data-soft-keyboard-open="true"][data-soft-keyboard-layout="full"] #wifiSett
 }
 
 html[data-theme="graphite"] {
-  --keyboard-panel: var(--skin-surface);
-  --keyboard-panel-border: rgba(255, 255, 255, 0.72);
-  --keyboard-key: rgba(255, 255, 255, 0.055);
-  --keyboard-key-border: rgba(255, 255, 255, 0.72);
-  --keyboard-key-text: #fff;
-  --keyboard-muted: rgba(255, 255, 255, 0.72);
-  --keyboard-shadow: rgba(5, 12, 20, 0.3);
+  --keyboard-muted: #e5e7eb;
 }
 
 html[data-theme="graphite"] .soft-keyboard-toggle {
@@ -483,36 +481,60 @@ html[data-theme="graphite"] .soft-keyboard-toggle[aria-pressed="true"] .soft-key
 }
 
 html[data-theme="graphite"] .soft-keyboard-dock {
-  box-shadow:
-    0 26px 64px var(--keyboard-shadow),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  color: #fff;
+  border-color: #c3cbd3;
+  background: #29323a;
+  box-shadow: none;
+}
+
+html[data-theme="graphite"] #auth-panel[data-keyboard-open="true"] ~ #hmi .soft-keyboard-dock {
+  background: #29323a;
 }
 
 html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button {
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.72);
-  border-bottom-color: rgba(255, 255, 255, 0.88);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow:
-    0 5px 12px rgba(5, 12, 20, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border-color: #d7dde3;
+  border-bottom-color: #f1f5f9;
+  background: #3a4650;
+  box-shadow: none;
 }
 
 html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button:active,
-html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button.hg-activeButton,
-html[data-theme="graphite"] .hmi-simple-keyboard .hg-button.hg-function-key {
+html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button.hg-activeButton {
   color: #fff;
-  background: rgba(255, 255, 255, 0.14);
+  border-color: #f1f5f9;
+  border-bottom-color: #f1f5f9;
+  background: #526272;
 }
 
+html[data-theme="graphite"] .hmi-simple-keyboard .hg-button.hg-function-key {
+  color: #fff;
+  border-color: #d7dde3;
+  border-bottom-color: #f1f5f9;
+  background: #46535e;
+}
+
+html[data-theme="graphite"] .hmi-simple-keyboard .hg-button.hg-function-key:active,
+html[data-theme="graphite"] .hmi-simple-keyboard .hg-button.hg-function-key.hg-activeButton {
+  color: #fff;
+  border-color: #f1f5f9;
+  border-bottom-color: #f1f5f9;
+  background: #526272;
+}
+
+html[data-theme="graphite"] .hmi-simple-keyboard .hg-button[data-skbtn="{shift}"].is-shift-active,
 html[data-theme="graphite"] .hmi-simple-keyboard .hg-button.hg-button-done {
   color: #fff;
-  border-color: #fff;
-  background: rgba(255, 255, 255, 0.14);
+  border-color: #d6e9ff;
+  border-bottom-color: #d6e9ff;
+  background: #0b6fb8;
 }
 
 html[data-theme="graphite"] .hmi-simple-keyboard .hg-button.hg-button-cancel {
   color: #fff;
+  border-color: #ffb4ae;
+  border-bottom-color: #ffb4ae;
+  background: #a8322b;
 }
 
 html[data-theme="graphite"] .soft-keyboard-toggle:focus,
@@ -588,6 +610,7 @@ html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button:foc
   }
 
   .soft-keyboard-dock {
+    top: calc(50% - 112px);
     right: 8px;
     right: calc(8px + env(safe-area-inset-right));
     width: 336px;
@@ -671,16 +694,6 @@ html[data-theme="graphite"] .hmi-simple-keyboard.hg-theme-default .hg-button:foc
   .soft-keyboard-dock[data-layout="full"] .hmi-simple-keyboard.hg-theme-default .hg-button {
     height: 44px;
     font-size: 11px;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .soft-keyboard-dock {
-    background: #f7f7f9;
-  }
-
-  html[data-theme="graphite"] .soft-keyboard-dock {
-    background: var(--skin-surface);
   }
 }
 
