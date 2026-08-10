@@ -20,7 +20,7 @@ import (
 
 const (
 	CommandQueueCapacity = 64
-	PollInterval         = 50 * time.Millisecond
+	PollInterval         = time.Duration(runtimeconfig.RequiredScanIntervalMs) * time.Millisecond
 )
 
 const (
@@ -205,8 +205,8 @@ func (w *Worker) ConfirmDisconnected() error {
 }
 
 // Run is the only place that calls the adapter. It does one initial scan, then
-// coalesces 50 ms ticks in pollPending while always giving an already queued
-// external command priority over the next ordinary poll.
+// starts the next 500 ms wait only after each complete scan ends. The single
+// goroutine keeps slow scans and command confirmation scans from overlapping.
 func (w *Worker) Run(ctx context.Context) {
 	defer w.adapter.Close()
 	defer w.doneOnce.Do(func() { close(w.done) })
@@ -217,10 +217,20 @@ func (w *Worker) Run(ctx context.Context) {
 		close(w.ready)
 	})
 
-	ticker := time.NewTicker(PollInterval)
-	defer ticker.Stop()
-	pollPending := true // configuration begins with the current PLC snapshot.
-	initial := true
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Configuration begins with the current PLC snapshot rather than waiting
+	// for the first interval.
+	_, err := w.readAll()
+	w.readyOnce.Do(func() {
+		w.ready <- err
+		close(w.ready)
+	})
+
+	pollTimer := time.NewTimer(PollInterval)
+	defer pollTimer.Stop()
 
 	for {
 		if ctx.Err() != nil {
@@ -229,39 +239,54 @@ func (w *Worker) Run(ctx context.Context) {
 
 		select {
 		case request := <-w.commands:
-			w.reply(request, w.execute(request.command))
-			// A command always gets a fresh poll opportunity, including a failed
-			// write whose actual output is then left to PLC feedback.
-			pollPending = true
+			w.handleCommand(request, pollTimer)
 			continue
 		default:
-		}
-
-		if pollPending {
-			_, err := w.readAll()
-			if initial {
-				w.readyOnce.Do(func() {
-					w.ready <- err
-					close(w.ready)
-				})
-				initial = false
-			}
-			pollPending = false
-			continue
 		}
 
 		select {
 		case <-ctx.Done():
 			return
 		case request := <-w.commands:
-			w.reply(request, w.execute(request.command))
-			pollPending = true
-		case <-ticker.C:
-			// Multiple ticks collapse to this single boolean rather than a
-			// historical backlog of PLC reads.
-			pollPending = true
+			w.handleCommand(request, pollTimer)
+		case <-pollTimer.C:
+			// Prefer a command that became ready with this elapsed tick. Its
+			// confirmation poll is the current snapshot, so an ordinary read
+			// immediately before it would be redundant.
+			select {
+			case request := <-w.commands:
+				w.handleCommand(request, pollTimer)
+			default:
+				_, _ = w.readAll()
+				pollTimer.Reset(PollInterval)
+			}
 		}
 	}
+}
+
+func (w *Worker) handleCommand(request commandRequest, pollTimer *time.Timer) {
+	result := w.execute(request.command)
+	if result.Code == CodePLCWriteFailed {
+		// A timed out write may still have changed the PLC. Publish one current
+		// complete snapshot before exposing that ambiguous failure to the HMI.
+		_, _ = w.readAll()
+	}
+	// Successful commands finish their immediate full read inside execute.
+	// Resetting here also discards an elapsed ordinary-poll tick, so that a
+	// confirmation or failed-write read never causes a duplicate read after
+	// the reply.
+	resetPollTimer(pollTimer)
+	w.reply(request, result)
+}
+
+func resetPollTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(PollInterval)
 }
 
 func (w *Worker) execute(command Command) Result {
@@ -289,7 +314,11 @@ func (w *Worker) execute(command Command) Result {
 		if command.Action != "set" {
 			return failure(command.PointID, CodeInvalidRequest, "numeric points only support set")
 		}
-		if err := w.writeRegisters(writePoint, command.Value); err != nil {
+		attempted, err := w.writeRegisters(writePoint, command.Value)
+		if err != nil {
+			if !attempted {
+				return failure(command.PointID, CodeInvalidRequest, err.Error())
+			}
 			return failure(command.PointID, CodePLCWriteFailed, err.Error())
 		}
 		return w.confirmCommand(command.PointID, readPoint, hasReadPoint)
@@ -394,20 +423,20 @@ func (w *Worker) writeBit(address pointAddress, value bool) error {
 	return w.adapter.MaskWriteBit(ctx, address.word, address.bit, value)
 }
 
-func (w *Worker) writeRegisters(point pointPlan, value any) error {
+func (w *Worker) writeRegisters(point pointPlan, value any) (bool, error) {
 	words, err := numericWords(point.definition, value)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
 	defer cancel()
 	switch point.definition.WriteMethod {
 	case "fc06":
-		return w.adapter.WriteSingleRegister(ctx, point.address.word, words[0])
+		return true, w.adapter.WriteSingleRegister(ctx, point.address.word, words[0])
 	case "fc10":
-		return w.adapter.WriteMultipleRegisters(ctx, point.address.word, words)
+		return true, w.adapter.WriteMultipleRegisters(ctx, point.address.word, words)
 	default:
-		return fmt.Errorf("unsupported numeric write method %q", point.definition.WriteMethod)
+		return false, fmt.Errorf("unsupported numeric write method %q", point.definition.WriteMethod)
 	}
 }
 

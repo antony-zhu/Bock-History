@@ -110,9 +110,10 @@ node assets/hmi.test.mjs
 go test ./...
 ```
 
-`assets/points.json` 是默认/真实 PLC 使用的安全点表，只包含已确认的 BOOL
-点位。电脑模拟联调的 FLOAT32 点表单独保存在
-`assets/points.simulatorFloat32.json`，只能由发布构建时显式选择；默认页面始终加载
+`assets/points.json` 是默认/真实 PLC 使用的获批点表，派生自
+`D:\PLC_Points\PLC_Points_260809.xlsx`；包含 27 个运行时点位：18 个 BOOL、1 个
+FLOAT32/REAL、5 个 INT16 和 3 个 INT32/DINT，`scanIntervalMs=500`。遗留的
+`assets/points.simulatorFloat32.json` 仅为显式选择的 legacy 模拟 profile；默认页面始终加载
 `points.json`。`runtime.configure` 只发送所选点表的运行时点位；显示路径和中文说明只在
 浏览器使用。
 

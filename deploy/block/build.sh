@@ -19,9 +19,9 @@ Creates one immutable release artifact:
   deploy/install.sh, rollback.sh, health-check.sh, units, and release helpers
   VERSION
 
-The default profile contains only verified BOOL PLC points. Set
-BLOCK_PLC_PROFILE=simulatorFloat32 only for the explicit computer simulator
-test artifact; it includes the unverified FLOAT32 point table.
+The default profile contains the approved real PLC point table. Set
+BLOCK_PLC_PROFILE=simulatorFloat32 only for the explicit legacy computer
+simulator test artifact.
 EOF
 }
 

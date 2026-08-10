@@ -1,6 +1,6 @@
 {
   "title": "Block 本地控制",
-  "scanIntervalMs": 50,
+  "scanIntervalMs": 500,
   "numericProfiles": {
     "simulatorFloat32": {
       "scope": "电脑模拟联调",

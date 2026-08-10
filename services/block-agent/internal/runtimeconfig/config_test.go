@@ -53,7 +53,7 @@ func TestNormalizeRejectsIncompleteOrInconsistentTable(t *testing.T) {
 
 func TestDecodeIgnoresFrontendOnlyPointFields(t *testing.T) {
 	config, err := Decode(json.RawMessage(`{
-		"scanIntervalMs": 50,
+		"scanIntervalMs": 500,
 		"points": [{
 			"pointId": "machine.ready",
 			"address": "M0.1",

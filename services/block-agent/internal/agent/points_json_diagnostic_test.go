@@ -22,7 +22,7 @@ func TestPublishedPointsJSONConfiguresRuntime(t *testing.T) {
 	connection := dial(t, address)
 	defer connection.Close()
 	send(t, connection, map[string]any{
-		"type": "runtime.configure", "scanIntervalMs": 50, "points": file.Points,
+		"type": "runtime.configure", "scanIntervalMs": 500, "points": file.Points,
 	})
 	message := receive(t, connection)
 	if message["type"] != "runtime.configured" {

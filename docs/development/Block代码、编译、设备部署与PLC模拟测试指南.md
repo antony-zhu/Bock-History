@@ -2,6 +2,8 @@
 
 本文说明 Block 本地 HMI、Block Agent、应用制品发布和 Easy521 电脑模拟 PLC 的当前推荐流程。命令以 `2026-08-09` 已验证的工作树和脚本为准。
 
+当前运行时固定在每次完整 PLC 读取结束后等待 500 ms 再开始下一次读取。普通成功写后立即完整轮询；脉冲按置 1 → 100 ms → 复位 0 → 立即完整轮询，读取完成才算命令完成。实际 PLC 写入失败或超时也立即完整轮询一次，读取完成后才回复失败；随后从该次读取完成时重新等待 500 ms。无效命令和本地校验失败不会额外读取。本指南中标明“历史”的 50 ms 记录仅保留当时的验收事实，不能作为当前 500 ms 的真机验收证据。
+
 这是一套 **Block 应用部署** 流程，不是固件烧写流程。它不写 bootloader、kernel、rootfs、分区或整机镜像，也不修改 PLC 控制程序。
 
 ## 1. 路径、版本和不可越过的边界
@@ -9,8 +11,8 @@
 | 内容 | 路径或值 |
 | --- | --- |
 | Block 正式 Git 仓库 | `D:\codex\Block-DMP\repos\Block` |
-| 当前开发工作树 | `D:\codex\Block-DMP\worktrees\Block\block-hmi-apple-replica-001` |
-| 本轮冻结的应用提交 | `538d30255dc960c0271146002f593ac7587942a1`，包含 `26bfe99` |
+| 当前开发工作树 | `D:\codex\Block-DMP\repos\Block` |
+| 本轮冻结的应用提交 | `fc685ad30f0141c8e8be3604cea48cb0545809f1`（基于 `b1b2862`） |
 | Common baseline | `d1073038277db0b954c021cb2cc377012ec8a78c` |
 | HMI | `apps/block-hmi/**` |
 | Agent | `services/block-agent/**` |
@@ -22,7 +24,7 @@
 
 ```powershell
 # Windows PowerShell
-$BlockRepo = 'D:\codex\Block-DMP\worktrees\Block\block-hmi-apple-replica-001'
+$BlockRepo = 'D:\codex\Block-DMP\repos\Block'
 git -C $BlockRepo status --short
 git -C $BlockRepo rev-parse HEAD
 Get-Content -LiteralPath "$BlockRepo\COMMON_BASELINE" -Encoding UTF8
@@ -38,7 +40,7 @@ Get-Content -LiteralPath "$BlockRepo\COMMON_BASELINE" -Encoding UTF8
 
 ```powershell
 # Windows PowerShell，在工作树根目录执行
-Set-Location 'D:\codex\Block-DMP\worktrees\Block\block-hmi-apple-replica-001'
+Set-Location 'D:\codex\Block-DMP\repos\Block'
 .\tools\start-block-hmi-auth-demo.ps1
 ```
 
@@ -60,8 +62,8 @@ Set-Location 'D:\codex\Block-DMP\worktrees\Block\block-hmi-apple-replica-001'
 
 | profile | 点位 | 用途和安全含义 |
 | --- | --- | --- |
-| `default` | 8 个已确认 BOOL | 默认构建；未显式设置环境变量时使用。适用于正常安全基线。 |
-| `simulatorFloat32` | 8 BOOL + 22 FLOAT32，共 30 点 | 只用于电脑模拟 PLC 联调；FLOAT32 是本机模拟约定，不得当成真实 Easy521 字序、权限或动作语义。 |
+| `default` | 18 BOOL + 1 FLOAT32/REAL + 5 INT16 + 3 INT32/DINT，共 27 点、54 bindings，`scanIntervalMs=500` | 默认构建；未显式设置环境变量时使用的获批真实点表。 |
+| `simulatorFloat32` | 8 BOOL + 22 FLOAT32，共 30 点 | 仅可显式选择的 legacy 电脑模拟 PLC 联调 profile；FLOAT32 是本机模拟约定，不得当成真实 Easy521 字序、权限或动作语义。 |
 
 构建器只接受这两个值；未知 profile 会直接拒绝。无论选择哪种 profile，制品中都只保留一份 `web/assets/points.json`，不会把 `points.simulatorFloat32.json` 源文件一并发布。
 
@@ -72,7 +74,7 @@ Set-Location 'D:\codex\Block-DMP\worktrees\Block\block-hmi-apple-replica-001'
 ```powershell
 # Windows PowerShell
 $Workspace = 'D:\codex\Block-DMP'
-$BlockRepo = "$Workspace\worktrees\Block\block-hmi-apple-replica-001"
+$BlockRepo = "$Workspace\repos\Block"
 $CacheRoot = "$Workspace\.cache\block-guide-validation"
 $Go = "$Workspace\.tools\go1.26.5\go\bin\go.exe"
 
@@ -136,7 +138,7 @@ python -m unittest discover -v
 
 ```bash
 WORKSPACE=/d/codex/Block-DMP
-BLOCK_REPO="$WORKSPACE/worktrees/Block/block-hmi-apple-replica-001"
+BLOCK_REPO="$WORKSPACE/repos/Block"
 VERSION='<approved-unique-version>'
 CACHE_ROOT="$WORKSPACE/.cache/block-release-$VERSION"
 ARTIFACT_DIR="$CACHE_ROOT/artifact"
@@ -190,7 +192,7 @@ unset BLOCK_PLC_PROFILE
 deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
 ```
 
-电脑模拟 PLC 专用 profile：
+仅可显式选择的 legacy 电脑模拟 PLC profile：
 
 ```bash
 export BLOCK_PLC_PROFILE=simulatorFloat32
@@ -209,16 +211,23 @@ $Profile = Get-Content -LiteralPath "$ArtifactDir\web\assets\points.json" `
   -Raw -Encoding UTF8 | ConvertFrom-Json
 $BoolCount = @($Profile.points | Where-Object type -eq 'bool').Count
 $FloatCount = @($Profile.points | Where-Object type -eq 'float32').Count
+$Int16Count = @($Profile.points | Where-Object type -eq 'int16').Count
+$Int32Count = @($Profile.points | Where-Object type -eq 'int32').Count
+$BindingCount = @($Profile.bindings).Count
 [pscustomobject]@{
   Total = @($Profile.points).Count
   Bool = $BoolCount
   Float32 = $FloatCount
+  Int16 = $Int16Count
+  Int32 = $Int32Count
+  Bindings = $BindingCount
+  ScanIntervalMs = $Profile.scanIntervalMs
   SimulatorSourceLeaked = Test-Path -LiteralPath `
     "$ArtifactDir\web\assets\points.simulatorFloat32.json"
 }
 ```
 
-预期：`default` 为 `8/8/0`，`simulatorFloat32` 为 `30/8/22`，且 `SimulatorSourceLeaked=False`。
+预期：`default` 为 `Total=27`、`Bool=18`、`Float32=1`、`Int16=5`、`Int32=3`、`Bindings=54`、`ScanIntervalMs=500`；仅显式选择的 legacy `simulatorFloat32` 保持 `Total=30`、`Bool=8`、`Float32=22`，且 `SimulatorSourceLeaked=False`。
 
 Windows `tar.exe` 可能丢失脚本执行位，因此在 **WSL/Linux shell** 生成 manifest 和唯一压缩包：
 
@@ -353,7 +362,7 @@ sudo journalctl -u block-kiosk.service -b --no-pager
 - `0.0.0.0:8443`：独立维护 HTTPS，不提供 `/ws`。
 - `9443`：独立 SSH bootstrap HTTPS，不是 HMI/WSS。
 
-最后在真机屏幕确认 Chromium 打开 `https://127.0.0.1:8444/`、无证书错误、页面不是白屏并持续收到 WSS 更新。通过 HMI PLC 页和模拟器 `/api/status` 交叉确认 endpoint、Unit、连接状态、50 ms 扫描和 FC03 请求；没有单独写入授权时到此停止。
+最后在真机屏幕确认 Chromium 打开 `https://127.0.0.1:8444/`、无证书错误、页面不是白屏并持续收到 WSS 更新。通过 HMI PLC 页和模拟器 `/api/status` 交叉确认 endpoint、Unit、连接状态、每次完整读取结束后等待 500 ms 的扫描节奏和 FC03 请求；没有单独写入授权时到此停止。
 
 ### 完成后清理
 
@@ -427,7 +436,7 @@ Invoke-RestMethod -Method Post `
 | ARM64 构建、manifest/archive 校验 | PASS |
 | `.104` 安装、`verify-install`、版本、services、严格 TLS、明文拒绝 | PASS |
 | 设备 Agent 到 PC 模拟器的连接和 30 点 FC03 读取扫描 | PASS |
-| 本地 Easy521 client + PLC worker 写项目 | PASS：D850 外部变化、D800/D812 FC10 回读、D504 FC22 邻位保持、D550.3/.4 约 100 ms 脉冲、50 ms scan、断线检测 |
+| 本地 Easy521 client + PLC worker 写项目 | 历史 PASS（当时为 50 ms scan）：D850 外部变化、D800/D812 FC10 回读、D504 FC22 邻位保持、D550.3/.4 约 100 ms 脉冲、断线检测；当前 500 ms 节奏需按本指南重新验证 |
 | 本地模拟器重启恢复 | NOT VERIFIED：外部重启晚于原 harness 的 8 秒判定窗，不能据此判定产品不重连 |
 | 设备 WSS 点位写闭环 | **NOT VERIFIED**：点位命令总数 `0`；17 numeric、D504 邻位、D550.3/.4 和断线恢复均未在设备 WSS 路径执行 |
 

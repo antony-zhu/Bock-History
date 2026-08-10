@@ -13,6 +13,8 @@ import (
 	"block.local/block-agent/internal/runtimeconfig"
 )
 
+const pollTimingTolerance = 50 * time.Millisecond
+
 func TestInitialPollBatchesD504BitsIntoOneFC03(t *testing.T) {
 	adapter := newFakeAdapter(0x0006) // D504.1 and D504.2 are both set.
 	published := make(chan map[string]pointstore.PointValue, 2)
@@ -32,6 +34,61 @@ func TestInitialPollBatchesD504BitsIntoOneFC03(t *testing.T) {
 	reads := adapter.readCalls()
 	if len(reads) == 0 || reads[0].address != 504 || reads[0].quantity != 1 {
 		t.Fatalf("FC03 batches = %#v, want D504 once", reads)
+	}
+}
+
+func TestPreCancelledContextSkipsInitialPoll(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	worker := newWorker(t, testConfig("pulse", runtimeconfig.DefaultPulseMs), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	worker.Run(ctx)
+	if reads := adapter.readCalls(); len(reads) != 0 {
+		t.Fatalf("pre-cancelled worker made FC03 reads: %#v", reads)
+	}
+	if err := <-worker.Ready(); err != context.Canceled {
+		t.Fatalf("ready error = %v, want %v", err, context.Canceled)
+	}
+	select {
+	case <-worker.Done():
+	default:
+		t.Fatal("pre-cancelled worker did not stop")
+	}
+}
+
+func TestInitialPollIsImmediateAndSlowPollsWaitForCompletion(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.readDelay = PollInterval + pollTimingTolerance
+	readStarted := make(chan struct{}, 2)
+	adapter.beforeRead = func(readCall) {
+		readStarted <- struct{}{}
+	}
+	worker := newWorker(t, testConfig("pulse", runtimeconfig.DefaultPulseMs), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		waitDone(t, worker)
+	}()
+
+	go worker.Run(ctx)
+	select {
+	case <-readStarted:
+	case <-time.After(PollInterval - 2*pollTimingTolerance):
+		t.Fatal("initial poll did not start before the first scheduled interval")
+	}
+
+	select {
+	case <-readStarted:
+	case <-time.After(2*PollInterval + time.Second):
+		t.Fatal("second poll did not start")
+	}
+	events := adapter.readEvents()
+	if gap := events[1].startedAt.Sub(events[0].completedAt); gap < PollInterval-pollTimingTolerance {
+		t.Fatalf("next poll began %s after the slow poll completed, want at least %s", gap, PollInterval-pollTimingTolerance)
+	}
+	if active := adapter.maxConcurrentReads(); active != 1 {
+		t.Fatalf("maximum concurrent reads = %d, want 1", active)
 	}
 }
 
@@ -215,16 +272,16 @@ func TestWriteOnlyPulseUsesDefault100msFC22(t *testing.T) {
 	}
 }
 
-func TestPollIntervalRemainsFiftyMilliseconds(t *testing.T) {
-	if PollInterval != 50*time.Millisecond {
-		t.Fatalf("PollInterval = %s, want 50ms", PollInterval)
+func TestPollIntervalRemainsFiveHundredMilliseconds(t *testing.T) {
+	if PollInterval != 500*time.Millisecond {
+		t.Fatalf("PollInterval = %s, want 500ms", PollInterval)
 	}
 }
 
 func TestPulseUsesFC22SetWaitClearThenFreshRead(t *testing.T) {
 	adapter := newFakeAdapter(0)
 	published := make(chan map[string]pointstore.PointValue, 8)
-	worker := newWorker(t, testConfig("pulse", 20), adapter, func(values map[string]pointstore.PointValue) error {
+	worker := newWorker(t, testConfig("pulse", runtimeconfig.DefaultPulseMs), adapter, func(values map[string]pointstore.PointValue) error {
 		published <- values
 		return nil
 	})
@@ -246,8 +303,211 @@ func TestPulseUsesFC22SetWaitClearThenFreshRead(t *testing.T) {
 	if len(writes) != 2 || !writes[0].value || writes[1].value || writes[0].word != 504 || writes[0].bit != 1 {
 		t.Fatalf("FC22 pulse sequence = %#v", writes)
 	}
+	if elapsed := writes[1].at.Sub(writes[0].at); elapsed < time.Duration(runtimeconfig.DefaultPulseMs)*time.Millisecond-pollTimingTolerance {
+		t.Fatalf("pulse stayed active for %s, want at least %dms", elapsed, runtimeconfig.DefaultPulseMs)
+	}
+	reads := adapter.readEvents()
+	if len(reads) < 2 || reads[1].startedAt.Before(writes[1].at) {
+		t.Fatalf("pulse confirmation read = %#v, want a full read after reset", reads)
+	}
 	if adapter.word(504)&0x0002 != 0 {
 		t.Fatalf("pulse did not clear D504.1: %#x", adapter.word(504))
+	}
+}
+
+func TestSuccessfulCommandConfirmationPrecedesReplyAndRestartsPollTimer(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	confirmationStarted := make(chan struct{})
+	releaseConfirmation := make(chan struct{})
+
+	var readCountMu sync.Mutex
+	readCount := 0
+	adapter.beforeRead = func(readCall) {
+		readCountMu.Lock()
+		readCount++
+		count := readCount
+		readCountMu.Unlock()
+		if count == 2 {
+			close(confirmationStarted)
+			<-releaseConfirmation
+		}
+	}
+
+	worker := newWorker(t, testConfig("set", runtimeconfig.DefaultPulseMs), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		select {
+		case <-releaseConfirmation:
+		default:
+			close(releaseConfirmation)
+		}
+		cancel()
+		waitDone(t, worker)
+	}()
+	go worker.Run(ctx)
+	waitFor(t, time.Second, func() bool { return len(adapter.readCalls()) == 1 })
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "command", Action: "set", Value: true})
+	if !accepted {
+		t.Fatalf("set was rejected: %+v", rejected)
+	}
+	select {
+	case <-confirmationStarted:
+	case <-time.After(time.Second):
+		t.Fatal("successful set did not start its confirmation read")
+	}
+	select {
+	case result := <-reply:
+		t.Fatalf("set replied before confirmation read completed: %+v", result)
+	case <-time.After(pollTimingTolerance):
+	}
+
+	close(releaseConfirmation)
+	result := waitResult(t, reply)
+	if !result.Success || result.ActualValue != true {
+		t.Fatalf("set result = %+v", result)
+	}
+
+	select {
+	case <-time.After(PollInterval / 2):
+	}
+	if reads := adapter.readCalls(); len(reads) != 2 {
+		t.Fatalf("reads after command confirmation = %#v, want no extra immediate poll", reads)
+	}
+
+	waitFor(t, PollInterval+time.Second, func() bool { return len(adapter.readCalls()) >= 3 })
+	events := adapter.readEvents()
+	if gap := events[2].startedAt.Sub(events[1].completedAt); gap < PollInterval-pollTimingTolerance {
+		t.Fatalf("ordinary poll began %s after command confirmation, want at least %s", gap, PollInterval-pollTimingTolerance)
+	}
+}
+
+func TestFailedWriteRefreshesBeforeReplyAndRestartsPollTimer(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.writeErr = context.DeadlineExceeded
+	freshReadStarted := make(chan struct{})
+	releaseFreshRead := make(chan struct{})
+
+	var readCountMu sync.Mutex
+	readCount := 0
+	adapter.beforeRead = func(readCall) {
+		readCountMu.Lock()
+		readCount++
+		count := readCount
+		readCountMu.Unlock()
+		if count == 2 {
+			close(freshReadStarted)
+			<-releaseFreshRead
+		}
+	}
+
+	worker := newWorker(t, testConfig("set", runtimeconfig.DefaultPulseMs), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		select {
+		case <-releaseFreshRead:
+		default:
+			close(releaseFreshRead)
+		}
+		cancel()
+		waitDone(t, worker)
+	}()
+	go worker.Run(ctx)
+	select {
+	case err := <-worker.Ready():
+		if err != nil {
+			t.Fatalf("initial read failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial read did not finish")
+	}
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "command", Action: "set", Value: true})
+	if !accepted {
+		t.Fatalf("set was rejected: %+v", rejected)
+	}
+	select {
+	case <-freshReadStarted:
+	case <-time.After(PollInterval - pollTimingTolerance):
+		t.Fatal("failed write did not start its immediate fresh read")
+	}
+	select {
+	case result := <-reply:
+		t.Fatalf("failed write replied before fresh read completed: %+v", result)
+	case <-time.After(pollTimingTolerance):
+	}
+	if writes := adapter.writeCalls(); len(writes) != 1 {
+		t.Fatalf("failed write retried %d times", len(writes))
+	}
+
+	close(releaseFreshRead)
+	result := waitResult(t, reply)
+	if result.Success || result.Code != CodePLCWriteFailed {
+		t.Fatalf("write failure result = %+v", result)
+	}
+
+	select {
+	case <-time.After(PollInterval / 2):
+	}
+	if reads := adapter.readCalls(); len(reads) != 2 {
+		t.Fatalf("reads after failed-write refresh = %#v, want no duplicate immediate poll", reads)
+	}
+
+	waitFor(t, PollInterval+time.Second, func() bool { return len(adapter.readCalls()) >= 3 })
+	events := adapter.readEvents()
+	if gap := events[2].startedAt.Sub(events[1].completedAt); gap < PollInterval-pollTimingTolerance {
+		t.Fatalf("ordinary poll began %s after failed-write refresh, want at least %s", gap, PollInterval-pollTimingTolerance)
+	}
+}
+
+func TestRejectedCommandsDoNotRefresh(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.registers[820] = 7
+	worker := newWorker(t, uint16Config(), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		waitDone(t, worker)
+	}()
+	go worker.Run(ctx)
+	select {
+	case err := <-worker.Ready():
+		if err != nil {
+			t.Fatalf("initial read failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial read did not finish")
+	}
+
+	missingReply, rejected, accepted := worker.TrySubmit(Command{PointID: "missing", Action: "set", Value: 1})
+	if !accepted {
+		t.Fatalf("missing point command was rejected: %+v", rejected)
+	}
+	missingResult := waitResult(t, missingReply)
+	if missingResult.Success || missingResult.Code != CodePointNotFound {
+		t.Fatalf("missing point result = %+v", missingResult)
+	}
+	if reads := adapter.readCalls(); len(reads) != 1 {
+		t.Fatalf("invalid command triggered an extra poll: %#v", reads)
+	}
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "manual.test.uint16", Action: "set", Value: 1.5})
+	if !accepted {
+		t.Fatalf("invalid numeric set was rejected: %+v", rejected)
+	}
+	result := waitResult(t, reply)
+	if result.Success || result.Code != CodeInvalidRequest {
+		t.Fatalf("numeric validation result = %+v", result)
+	}
+	if writes := adapter.registerWriteCalls(); len(writes) != 0 {
+		t.Fatalf("invalid numeric set reached PLC: %#v", writes)
+	}
+
+	select {
+	case <-time.After(PollInterval / 2):
+	}
+	if reads := adapter.readCalls(); len(reads) != 1 {
+		t.Fatalf("numeric validation failure triggered an extra poll: %#v", reads)
 	}
 }
 
@@ -392,7 +652,7 @@ func newWorker(t *testing.T, config runtimeconfig.Config, adapter *fakeAdapter, 
 }
 
 func testConfig(mode string, pulseMs int) runtimeconfig.Config {
-	return runtimeconfig.Config{ScanIntervalMs: 50, Points: []runtimeconfig.PointDefinition{
+	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{
 		{
 			PointID: "command", Address: "D504.1", Type: "bool", Access: "read_write",
 			ReadPoint: "feedback", WritePoint: "command", WriteMethod: "maskWrite",
@@ -495,10 +755,17 @@ type readCall struct {
 	quantity uint16
 }
 
+type readEvent struct {
+	call        readCall
+	startedAt   time.Time
+	completedAt time.Time
+}
+
 type writeCall struct {
 	word  uint16
 	bit   uint8
 	value bool
+	at    time.Time
 }
 
 type registerWriteCall struct {
@@ -515,7 +782,12 @@ type fakeAdapter struct {
 	registersWritten []registerWriteCall
 	readErr          error
 	writeErr         error
+	readDelay        time.Duration
+	beforeRead       func(readCall)
 	afterWrite       func(writeCall)
+	readTimeline     []readEvent
+	activeReads      int
+	maxActiveReads   int
 }
 
 func newFakeAdapter(word504 uint16) *fakeAdapter {
@@ -524,8 +796,29 @@ func newFakeAdapter(word504 uint16) *fakeAdapter {
 
 func (f *fakeAdapter) ReadHoldingRegisters(_ context.Context, address, quantity uint16) ([]uint16, error) {
 	f.mu.Lock()
+	call := readCall{address: address, quantity: quantity}
+	f.reads = append(f.reads, call)
+	eventIndex := len(f.readTimeline)
+	f.readTimeline = append(f.readTimeline, readEvent{call: call, startedAt: time.Now()})
+	f.activeReads++
+	if f.activeReads > f.maxActiveReads {
+		f.maxActiveReads = f.activeReads
+	}
+	beforeRead := f.beforeRead
+	delay := f.readDelay
+	f.mu.Unlock()
+
+	if beforeRead != nil {
+		beforeRead(call)
+	}
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+
+	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.reads = append(f.reads, readCall{address: address, quantity: quantity})
+	f.activeReads--
+	f.readTimeline[eventIndex].completedAt = time.Now()
 	if f.readErr != nil {
 		return nil, f.readErr
 	}
@@ -538,7 +831,7 @@ func (f *fakeAdapter) ReadHoldingRegisters(_ context.Context, address, quantity 
 
 func (f *fakeAdapter) MaskWriteBit(_ context.Context, word uint16, bit uint8, value bool) error {
 	f.mu.Lock()
-	call := writeCall{word: word, bit: bit, value: value}
+	call := writeCall{word: word, bit: bit, value: value, at: time.Now()}
 	f.writes = append(f.writes, call)
 	if f.writeErr == nil {
 		mask := uint16(1) << bit
@@ -587,6 +880,18 @@ func (f *fakeAdapter) readCalls() []readCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]readCall(nil), f.reads...)
+}
+
+func (f *fakeAdapter) readEvents() []readEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]readEvent(nil), f.readTimeline...)
+}
+
+func (f *fakeAdapter) maxConcurrentReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.maxActiveReads
 }
 
 func (f *fakeAdapter) writeCalls() []writeCall {

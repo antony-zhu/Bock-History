@@ -43,7 +43,7 @@ func TestConfigureThenSnapshotGet(t *testing.T) {
 
 	configure(t, connection)
 	configured := receive(t, connection)
-	if configured["type"] != "runtime.configured" || configured["scanIntervalMs"] != float64(50) {
+	if configured["type"] != "runtime.configured" || configured["scanIntervalMs"] != float64(500) {
 		t.Fatalf("configured event = %#v", configured)
 	}
 	send(t, connection, map[string]any{"type": "points.snapshot.get"})
@@ -58,7 +58,7 @@ func TestConfigureThenSnapshotGet(t *testing.T) {
 		t.Fatal("configured connection did not own the session")
 	}
 	send(t, connection, map[string]any{
-		"type": "runtime.configure", "scanIntervalMs": 50, "points": []any{},
+		"type": "runtime.configure", "scanIntervalMs": 500, "points": []any{},
 	})
 	duplicate := receive(t, connection)
 	if duplicate["type"] != "error" || errorCode(t, duplicate) != "INVALID_REQUEST" {
@@ -283,7 +283,7 @@ func TestAlarmHistoryPersistsLocallyWithoutMQTTS(t *testing.T) {
 	connection := dial(t, address)
 	defer connection.Close()
 	send(t, connection, map[string]any{
-		"protocolVersion": "1.0", "type": "runtime.configure", "scanIntervalMs": 50,
+		"protocolVersion": "1.0", "type": "runtime.configure", "scanIntervalMs": 500,
 		"points": []any{map[string]any{
 			"pointId": "machine.fault", "address": "D600.0", "type": "bool", "access": "read", "readPoint": "machine.fault",
 			"alarm": map[string]any{"normalValue": false, "alarmValue": true, "message": "Machine fault"},
@@ -394,7 +394,7 @@ func configure(t *testing.T, connection *websocket.Conn) {
 	send(t, connection, map[string]any{
 		"protocolVersion": "1.0",
 		"type":            "runtime.configure",
-		"scanIntervalMs":  50,
+		"scanIntervalMs":  500,
 		"points": []any{
 			map[string]any{
 				"pointId": "machine.startCommand", "address": "D504.1", "type": "bool", "access": "read_write",

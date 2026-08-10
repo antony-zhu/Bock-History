@@ -298,7 +298,7 @@ func (w *workflow) openWebSocket() error {
 }
 
 func (w *workflow) configure(points json.RawMessage, pointCount int) error {
-	if err := w.send("runtime.configure", map[string]any{"scanIntervalMs": 50, "points": points}); err != nil {
+	if err := w.send("runtime.configure", map[string]any{"scanIntervalMs": 500, "points": points}); err != nil {
 		return err
 	}
 	message, err := w.receive("runtime.configured")

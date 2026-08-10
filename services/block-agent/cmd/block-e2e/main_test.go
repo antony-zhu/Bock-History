@@ -53,7 +53,7 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 			messageType := stringField(t, message, "type")
 			switch messageType {
 			case "runtime.configure":
-				sendMessage(t, connection, map[string]any{"protocolVersion": "1.0", "type": "runtime.configured", "timestamp": time.Now().UTC().Format(time.RFC3339Nano), "scanIntervalMs": 50})
+				sendMessage(t, connection, map[string]any{"protocolVersion": "1.0", "type": "runtime.configured", "timestamp": time.Now().UTC().Format(time.RFC3339Nano), "scanIntervalMs": 500})
 			case "plc.scan":
 				sendMessage(t, connection, map[string]any{"protocolVersion": "1.0", "type": "plc.scan.result", "timestamp": time.Now().UTC().Format(time.RFC3339Nano), "success": true, "devices": []map[string]any{{"deviceId": "easy521://127.0.0.1:502?unitId=1", "name": "test", "address": "127.0.0.1", "state": "disconnected", "selected": false, "metadata": map[string]any{}}}})
 			case "plc.connect":
@@ -77,7 +77,7 @@ func TestRunExistingAdminExecutesE2EFlow(t *testing.T) {
 	caPath := writeServerCA(t, server)
 
 	pointsPath := writePoints(t, `{
-  "scanIntervalMs": 50,
+  "scanIntervalMs": 500,
   "points": [
     {"pointId":"pulse.point","writePoint":"pulse.point","write":{"mode":"pulse"}},
     {"pointId":"momentary.point","writePoint":"momentary.point","write":{"mode":"momentary"}},

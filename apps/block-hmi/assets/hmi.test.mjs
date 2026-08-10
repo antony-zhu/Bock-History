@@ -87,6 +87,7 @@ const configured = buildRuntimeConfigure([{
   displayPath: "home.machine.start", description: "启动设备"
 }], "configure", timestamp);
 assert.equal(configured.type, "runtime.configure");
+assert.equal(configured.scanIntervalMs, 500);
 assert.equal(JSON.stringify(configured).includes("displayPath"), false);
 assert.equal(JSON.stringify(configured).includes("description"), false);
 const simulatorConfigured = buildRuntimeConfigure([{
@@ -223,6 +224,8 @@ assert.doesNotMatch(graphiteKeyRule, /rgba\(|var\(|\b(?:opacity|filter|backdrop-
 
 const defaultPointsConfiguration = JSON.parse(readFileSync(new URL("./points.json", import.meta.url), "utf8"));
 const simulatorPointsConfiguration = JSON.parse(readFileSync(new URL("./points.simulatorFloat32.json", import.meta.url), "utf8"));
+assert.equal(defaultPointsConfiguration.scanIntervalMs, 500);
+assert.equal(simulatorPointsConfiguration.scanIntervalMs, 500);
 assert.deepEqual(defaultPointsConfiguration.points.map((point) => point.address), [
   "D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4",
   "D522", "D504.6", "D506.0", "D504.12", "D506.5", "D504.11", "D506.7", "D506.9", "D506.10", "D506.11", "D506.12",

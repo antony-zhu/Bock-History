@@ -1,6 +1,6 @@
 {
   "title": "Block 本地控制",
-  "scanIntervalMs": 50,
+  "scanIntervalMs": 500,
   "points": [
     { "pointId": "manual.motion.z.jog.down.action", "address": "D504.0", "type": "bool", "access": "read_write", "readPoint": "manual.motion.z.jog.down.action", "writePoint": "manual.motion.z.jog.down.action", "writeMethod": "maskWrite", "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 } },
     { "pointId": "manual.motion.z.jog.up.action", "address": "D504.1", "type": "bool", "access": "read_write", "readPoint": "manual.motion.z.jog.up.action", "writePoint": "manual.motion.z.jog.up.action", "writeMethod": "maskWrite", "write": { "mode": "pulse", "activeValue": true, "defaultValue": false, "pulseMs": 100 } },

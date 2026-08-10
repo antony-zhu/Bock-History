@@ -49,7 +49,7 @@ export class ActivationFilter {
 }
 export function buildRuntimeConfigure(points, id = requestID(), timestamp = new Date().toISOString()) {
     return request("runtime.configure", {
-        scanIntervalMs: 50,
+        scanIntervalMs: 500,
         points: points.map((point) => ({
             pointId: point.pointId,
             address: point.address,
@@ -114,7 +114,7 @@ function configurationFrom(value) {
         throw new Error("points.json 必须是对象");
     }
     const config = value;
-    if (config.scanIntervalMs !== 50 || !Array.isArray(config.points) || !Array.isArray(config.bindings) || !Array.isArray(config.layout)) {
+    if (config.scanIntervalMs !== 500 || !Array.isArray(config.points) || !Array.isArray(config.bindings) || !Array.isArray(config.layout)) {
         throw new Error("points.json 缺少完整点位或页面配置");
     }
     for (const binding of config.bindings) {
@@ -127,7 +127,7 @@ function configurationFrom(value) {
 function demoConfiguration() {
     return {
         title: "Block 本地控制",
-        scanIntervalMs: 50,
+        scanIntervalMs: 500,
         points: [
             {
                 pointId: "machine.startCommand",

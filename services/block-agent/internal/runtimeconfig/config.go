@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	RequiredScanIntervalMs = 50
+	RequiredScanIntervalMs = 500
 	DefaultPulseMs         = 100
 )
 

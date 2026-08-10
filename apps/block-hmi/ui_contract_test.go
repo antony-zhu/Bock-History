@@ -708,7 +708,7 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 	}
 
 	defaultConfig := readConfig("assets/points.json")
-	if defaultConfig.ScanIntervalMs != 50 || len(defaultConfig.Points) != 27 || len(defaultConfig.Bindings) == 0 {
+	if defaultConfig.ScanIntervalMs != 500 || len(defaultConfig.Points) != 27 || len(defaultConfig.Bindings) == 0 {
 		t.Fatalf("incomplete default points.json: %+v", defaultConfig)
 	}
 	findDefaultPoint := func(pointID string) map[string]any {
@@ -803,7 +803,7 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 	}
 
 	config := readConfig("assets/points.simulatorFloat32.json")
-	if config.ScanIntervalMs != 50 || len(config.Points) != 30 || len(config.Bindings) == 0 {
+	if config.ScanIntervalMs != 500 || len(config.Points) != 30 || len(config.Bindings) == 0 {
 		t.Fatalf("incomplete simulator points.json: %+v", config)
 	}
 	wantAddresses := []string{

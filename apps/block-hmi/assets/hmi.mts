@@ -222,7 +222,7 @@ export function buildRuntimeConfigure(
   timestamp = new Date().toISOString()
 ): object {
   return request("runtime.configure", {
-    scanIntervalMs: 50,
+    scanIntervalMs: 500,
     points: points.map((point) => ({
       pointId: point.pointId,
       address: point.address,
@@ -309,7 +309,7 @@ function configurationFrom(value: unknown): PageConfiguration {
     throw new Error("points.json 必须是对象");
   }
   const config = value as Partial<PageConfiguration>;
-  if (config.scanIntervalMs !== 50 || !Array.isArray(config.points) || !Array.isArray(config.bindings) || !Array.isArray(config.layout)) {
+  if (config.scanIntervalMs !== 500 || !Array.isArray(config.points) || !Array.isArray(config.bindings) || !Array.isArray(config.layout)) {
     throw new Error("points.json 缺少完整点位或页面配置");
   }
   for (const binding of config.bindings) {
@@ -323,7 +323,7 @@ function configurationFrom(value: unknown): PageConfiguration {
 function demoConfiguration(): PageConfiguration {
   return {
     title: "Block 本地控制",
-    scanIntervalMs: 50,
+    scanIntervalMs: 500,
     points: [
       {
         pointId: "machine.startCommand",
