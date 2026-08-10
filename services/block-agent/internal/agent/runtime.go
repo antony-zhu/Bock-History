@@ -23,6 +23,7 @@ import (
 	"block.local/block-agent/internal/pointstore"
 	"block.local/block-agent/internal/runtimeconfig"
 	"block.local/block-agent/internal/sshbootstrap"
+	"block.local/block-agent/internal/storage"
 	"block.local/block-agent/internal/wifi"
 	"golang.org/x/net/websocket"
 )
@@ -34,20 +35,20 @@ const (
 )
 
 type Runtime struct {
-	address         string
-	now             func() time.Time
-	store           *pointstore.Store
-	server          *http.Server
-	factory         plcworker.Factory
-	auth            *auth.Service
-	mqtt            MQTTOptions
-	alarms          *alarmhistory.Service
-	plcEndpointPath string
-	production      *maintenance.Store
-	wifiBackend     wifi.Backend
-	wifiInterface   string
-	testPlaintext   bool
-	alarmID         atomic.Uint64
+	address          string
+	now              func() time.Time
+	store            *pointstore.Store
+	server           *http.Server
+	factory          plcworker.Factory
+	auth             *auth.Service
+	mqtt             MQTTOptions
+	alarms           *alarmhistory.Service
+	plcEndpointStore *storage.Store
+	production       *maintenance.Store
+	wifiBackend      wifi.Backend
+	wifiInterface    string
+	testPlaintext    bool
+	alarmID          atomic.Uint64
 
 	mu         sync.Mutex
 	owner      *wsClient
@@ -65,6 +66,7 @@ type runtimeSession struct {
 	alarms        map[string]bool
 	broadcasts    bool
 	deviceID      string
+	plcState      string
 	disconnecting bool
 }
 
@@ -76,12 +78,12 @@ type MQTTOptions struct {
 }
 
 type RuntimeOptions struct {
-	AlarmStore      alarmhistory.Store
-	MQTT            MQTTOptions
-	PLCEndpointPath string
-	MaintenancePath string
-	WiFiBackend     wifi.Backend
-	WiFiInterface   string
+	AlarmStore       alarmhistory.Store
+	MQTT             MQTTOptions
+	PLCEndpointStore *storage.Store
+	MaintenancePath  string
+	WiFiBackend      wifi.Backend
+	WiFiInterface    string
 }
 
 // NewLocalRuntime creates the empty local runtime. It performs no PLC, MQTT
@@ -120,7 +122,7 @@ func NewLocalRuntimeWithOptions(address string, now func() time.Time, factory pl
 	}
 	runtime := &Runtime{
 		address: address, now: now, store: pointstore.New(), factory: factory, auth: authService,
-		mqtt: options.MQTT, plcEndpointPath: options.PLCEndpointPath, production: production,
+		mqtt: options.MQTT, plcEndpointStore: options.PLCEndpointStore, production: production,
 		wifiBackend: options.WiFiBackend, wifiInterface: options.WiFiInterface,
 	}
 	if options.AlarmStore != nil {
@@ -387,7 +389,7 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	savedEndpoint, hasSavedEndpoint, err := loadPLCEndpoint(r.plcEndpointPath)
+	savedEndpoint, hasSavedEndpoint, err := loadPLCEndpoint(r.plcEndpointStore)
 	if err != nil {
 		return fmt.Errorf("load saved PLC endpoint: %w", err)
 	}
@@ -395,7 +397,7 @@ func (r *Runtime) configure(client *wsClient, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	session := &runtimeSession{config: config, mqtt: mqttSession, mqttCancel: mqttCancel, alarms: make(map[string]bool)}
+	session := &runtimeSession{config: config, mqtt: mqttSession, mqttCancel: mqttCancel, alarms: make(map[string]bool), plcState: "disconnected"}
 
 	r.mu.Lock()
 	if r.owner != nil && r.owner != client {
@@ -468,15 +470,15 @@ func (r *Runtime) handlePointCommand(client *wsClient, raw []byte) {
 
 	r.mu.Lock()
 	session := r.session
-	active := r.owner == client
-	r.mu.Unlock()
-	if !active || session == nil || session.worker == nil {
-		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "PLC_NOT_CONNECTED", "PLC worker is disabled"), false)
+	if r.owner != client || session == nil || session.worker == nil || session.plcState != "connected" || session.worker.Disconnected() {
+		r.mu.Unlock()
+		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, "PLC_NOT_CONNECTED", "PLC is not connected"), false)
 		return
 	}
 	reply, rejected, accepted := session.worker.TrySubmit(plcworker.Command{
 		PointID: request.PointID, Action: request.Action, Value: valueFromRaw(request.Value),
 	})
+	r.mu.Unlock()
 	if !accepted {
 		client.enqueue(pointErrorEnvelope(r.now, request.RequestID, request.PointID, rejected.Code, rejected.Message), false)
 		return

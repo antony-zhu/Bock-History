@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -81,6 +82,50 @@ func TestSQLiteWALSnapshotAuditAndDedupRecovery(t *testing.T) {
 		if count != want {
 			t.Fatalf("%s count = %d, want %d", table, count, want)
 		}
+	}
+}
+
+func TestSQLitePLCEndpointSingletonMigrationAndUpsert(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "block.db"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, found, err := store.LoadPLCEndpoint(ctx); err != nil || found {
+		t.Fatalf("empty PLC endpoint = found=%t error=%v", found, err)
+	}
+	first := PLCEndpoint{Host: "127.0.0.1", Port: 1502, UnitID: 1}
+	if err := store.SavePLCEndpoint(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := PLCEndpoint{Host: "127.0.0.2", Port: 1503, UnitID: 2}
+	if err := store.SavePLCEndpoint(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	loaded, found, err := store.LoadPLCEndpoint(ctx)
+	if err != nil || !found || loaded != second {
+		t.Fatalf("saved PLC endpoint = %#v, found=%t error=%v", loaded, found, err)
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM plc_endpoint").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("PLC endpoint rows = %d, want 1", count)
+	}
+	var schema string
+	if err := store.db.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'plc_endpoint'").Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"point_id", "points_", "value_", "values_", "_json"} {
+		if strings.Contains(strings.ToLower(schema), forbidden) {
+			t.Fatalf("PLC endpoint schema stores more than its connection target: %s", schema)
+		}
+	}
+	if err := store.SavePLCEndpoint(ctx, PLCEndpoint{Host: "127.0.0.1", Port: 0, UnitID: 1}); err == nil {
+		t.Fatal("invalid PLC endpoint was accepted")
 	}
 }
 

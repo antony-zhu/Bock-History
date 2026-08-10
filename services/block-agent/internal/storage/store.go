@@ -65,6 +65,15 @@ type CommandMeta struct {
 	RequestID string
 }
 
+// PLCEndpoint is the one PLC transport target retained by a Block. Device IDs
+// are derived from this endpoint and it does not contain point definitions or
+// point values.
+type PLCEndpoint struct {
+	Host   string
+	Port   int
+	UnitID int
+}
+
 type AuditInput struct {
 	Operator  string
 	Action    string
@@ -137,6 +146,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	for _, migration := range []string{
 		"001_init.sql", "004_auth.sql", "005_alarm_history_v2.sql", "006_cleanup.sql",
+		"007_plc_endpoint.sql",
 	} {
 		contents, err := migrations.ReadFile("migrations/" + migration)
 		if err != nil {
@@ -201,6 +211,55 @@ func (s *Store) JournalMode(ctx context.Context) (string, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&value)
 	return value, err
+}
+
+// SavePLCEndpoint replaces the sole PLC target in the existing Block SQLite
+// database. A Block intentionally retains exactly one PLC connection target.
+func (s *Store) SavePLCEndpoint(ctx context.Context, endpoint PLCEndpoint) error {
+	if err := validatePLCEndpoint(endpoint); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO plc_endpoint (singleton_id, host, port, unit_id)
+		VALUES (1, ?, ?, ?)
+		ON CONFLICT(singleton_id) DO UPDATE SET
+			host=excluded.host,
+			port=excluded.port,
+			unit_id=excluded.unit_id`,
+		endpoint.Host, endpoint.Port, endpoint.UnitID)
+	return err
+}
+
+// LoadPLCEndpoint returns the sole PLC target, if one has been saved.
+func (s *Store) LoadPLCEndpoint(ctx context.Context) (PLCEndpoint, bool, error) {
+	var endpoint PLCEndpoint
+	err := s.db.QueryRowContext(ctx, `
+		SELECT host, port, unit_id
+		FROM plc_endpoint WHERE singleton_id = 1`).Scan(
+		&endpoint.Host, &endpoint.Port, &endpoint.UnitID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PLCEndpoint{}, false, nil
+	}
+	if err != nil {
+		return PLCEndpoint{}, false, err
+	}
+	if err := validatePLCEndpoint(endpoint); err != nil {
+		return PLCEndpoint{}, false, fmt.Errorf("read saved PLC endpoint: %w", err)
+	}
+	return endpoint, true, nil
+}
+
+func validatePLCEndpoint(endpoint PLCEndpoint) error {
+	if endpoint.Host == "" {
+		return errors.New("PLC host is required")
+	}
+	if endpoint.Port < 1 || endpoint.Port > 65535 {
+		return errors.New("PLC port must be 1..65535")
+	}
+	if endpoint.UnitID < 1 || endpoint.UnitID > 247 {
+		return errors.New("PLC unitId must be 1..247")
+	}
+	return nil
 }
 
 // SaveSnapshot is retained for focused storage tests. Production PLC updates

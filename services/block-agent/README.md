@@ -54,7 +54,7 @@ systemd 使用以下 flags（路径来自受保护的 `/etc/block/block.env`）�
   `GET /` 提供无需认证的冻结只读状态/使用页；不进入 Block 本地业务依赖。
 - `internal/mqttv2`：MQTTS/mTLS、QoS 0 发布、两个只读订阅和简单重连；
   不维护可靠投递状态。
-- `internal/storage`：SQLite 本地快照、账号、报警历史、命令和审计数据。
+- `internal/storage`：SQLite 本地快照、唯一 PLC endpoint、账号、报警历史、命令和审计数据。
 - `internal/plccontract`：仅在 Block 仓库内部使用的私有语义协议
   `block-plc-private/v1`，不是 Common 公共契约。
 
@@ -186,7 +186,9 @@ socket 不暴露给 HMI。
 ## 持久化、失联和当前限制
 
 - SQLite 使用 WAL、`synchronous=FULL` 和单连接串行写入。
-- 保存最新快照、当前报警、报警历史、操作历史、命令结果和审计。
+- 保存最新快照、唯一 PLC endpoint、当前报警、报警历史、操作历史、命令结果和审计。
+- PLC endpoint 仅保存 IP、端口和 Unit ID；成功手动连接覆盖同一行，普通断开保留该行，
+  下次运行时点表可用后自动连接。点表和点值不进入该记录，也不再写 `plc-endpoint.json`。
 - Simulator 保存计数器、设置和已处理命令 ID；重启生成新会话 ID，序号在
   会话内单调递增。
 - Simulator 断开后 Agent 继续存活并保留最后快照；超过 `staleAfter` 后

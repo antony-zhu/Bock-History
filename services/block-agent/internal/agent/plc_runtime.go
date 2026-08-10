@@ -128,6 +128,7 @@ func (r *Runtime) connectPLC(client *wsClient, requestID string, endpoint plcEnd
 	session.worker = worker
 	session.cancel = workerCancel
 	session.deviceID = deviceID
+	session.plcState = "connecting"
 	session.disconnecting = false
 	session.broadcasts = false
 	client.enqueue(plcConnectionEnvelope(r.now, deviceID, "connecting"), false)
@@ -159,10 +160,6 @@ func (r *Runtime) handlePLCDisconnect(client *wsClient, raw []byte) {
 	session := r.session
 	if r.owner != client || session == nil {
 		r.mu.Unlock()
-		if err := clearPLCEndpoint(r.plcEndpointPath); err != nil {
-			client.enqueue(errorEnvelope(r.now, request.RequestID, "PLC_ENDPOINT_CLEAR_FAILED", err.Error()), false)
-			return
-		}
 		client.enqueue(plcDisconnectResultEnvelope(r.now, request.RequestID, true), false)
 		return
 	}
@@ -178,10 +175,6 @@ func (r *Runtime) handlePLCDisconnect(client *wsClient, raw []byte) {
 		detachWorkerLocked(session)
 	}
 	r.mu.Unlock()
-	if err := clearPLCEndpoint(r.plcEndpointPath); err != nil {
-		client.enqueue(errorEnvelope(r.now, request.RequestID, "PLC_ENDPOINT_CLEAR_FAILED", err.Error()), false)
-		return
-	}
 	client.enqueue(plcDisconnectResultEnvelope(r.now, request.RequestID, true), false)
 }
 
@@ -197,7 +190,7 @@ func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, wo
 	}
 	persistErr := error(nil)
 	if readyErr == nil && persistOnSuccess {
-		persistErr = savePLCEndpoint(r.plcEndpointPath, endpoint)
+		persistErr = savePLCEndpoint(r.plcEndpointStore, endpoint)
 	}
 	state := "connected"
 	if readyErr != nil {
@@ -206,6 +199,7 @@ func (r *Runtime) finishPLCConnect(client *wsClient, session *runtimeSession, wo
 			state = "disconnected"
 		}
 	}
+	session.plcState = state
 	if state != "disconnected" {
 		client.enqueue(plcConnectionEnvelope(r.now, deviceID, state), false)
 	}
@@ -227,6 +221,7 @@ func (r *Runtime) notifyPLCDisconnected(session *runtimeSession, worker *plcwork
 		r.mu.Unlock()
 		return
 	}
+	session.plcState = "disconnected"
 	client, deviceID := r.owner, session.deviceID
 	r.mu.Unlock()
 	if deviceID != "" {
@@ -294,6 +289,7 @@ func detachWorkerLocked(session *runtimeSession) (*plcworker.Worker, context.Can
 	session.worker = nil
 	session.cancel = nil
 	session.deviceID = ""
+	session.plcState = "disconnected"
 	session.disconnecting = false
 	session.broadcasts = false
 	return worker, cancel

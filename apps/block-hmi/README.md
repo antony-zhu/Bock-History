@@ -46,7 +46,8 @@ PLC 连接状态及安全校验，并对同机 HMI 返回相同的运行时数�
   `POST /api/maintenance/wifi/connect`。密码只用于当前请求，连接成功后清空，
   不会回显。
 - PLC 页仅保留子网、地址、端口和 Unit ID、连接状态、候选，以及扫描、连接、刷新和
-  断开操作；点表不在页面编辑。
+  断开操作；点表不在页面编辑。仅 PLC IP 输入框使用带 `.` 键的专用小数软键盘，其他
+  数字输入仍保留 `00` 键。
 - 账号页使用 Block Agent 的本地认证 API 修改密码和页面空闲时长；维护接口不引入
   Cookie、角色校验或多账户管理 API。
 
@@ -56,10 +57,11 @@ PLC 值未读、stale、error 或断线时，相关数值显示“—”。
 
 ## PLC 连接
 
-手动连接成功后，Block Agent 在本地状态目录保存 PLC endpoint。运行时收到完整
-点位表后仅在已有保存 endpoint 时自动连接；没有保存地址时不扫描、不连接。
-手动断开会清除保存地址。该生命周期属于 Agent，HMI 不使用 `localStorage`
-保存或恢复 PLC 地址。
+手动连接首次读取成功后，Block Agent 在同一个 `block.db` SQLite 中覆盖保存唯一
+PLC endpoint（IP、端口和 Unit ID，deviceId 由其生成），不保存点表或点值。运行时
+收到完整点位表后仅在已有保存 endpoint 时自动连接；没有保存地址时不扫描、不连接。
+普通手动断开只断开当前会话，保留该记录，因此下次上电仍会自动连接。该生命周期属于
+Agent，HMI 不使用 `localStorage` 保存或恢复 PLC 地址，也不再写 `plc-endpoint.json`。
 
 ## 本机真实演示（开发）
 

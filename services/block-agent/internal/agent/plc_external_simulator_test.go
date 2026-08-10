@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -32,8 +31,9 @@ func TestExternalEasy521SimulatorPLCAddressLifecycle(t *testing.T) {
 		t.Fatalf("external simulator scan = %#v", devices)
 	}
 
-	endpointPath := filepath.Join(t.TempDir(), "plc-endpoint.json")
-	_, address, stop, done := startRuntimeWithOptions(t, RuntimeOptions{PLCEndpointPath: endpointPath})
+	store := openPLCEndpointStore(t)
+	options := RuntimeOptions{PLCEndpointStore: store}
+	_, address, stop, done := startRuntimeWithOptions(t, options)
 	connection := dial(t, address)
 	configure(t, connection)
 	if configured := receive(t, connection); configured["type"] != "runtime.configured" {
@@ -46,7 +46,7 @@ func TestExternalEasy521SimulatorPLCAddressLifecycle(t *testing.T) {
 	if result := receiveType(t, connection, "plc.connect.result"); result["success"] != true {
 		t.Fatalf("simulator connect result = %#v", result)
 	}
-	stored, found, err := loadPLCEndpoint(endpointPath)
+	stored, found, err := loadPLCEndpoint(store)
 	if err != nil || !found || stored.DeviceID() != deviceID {
 		t.Fatalf("saved simulator endpoint = %#v, found=%t, error=%v", stored, found, err)
 	}
@@ -55,7 +55,7 @@ func TestExternalEasy521SimulatorPLCAddressLifecycle(t *testing.T) {
 	}
 	stopRuntime(t, stop, done)
 
-	_, address, stop, done = startRuntimeWithOptions(t, RuntimeOptions{PLCEndpointPath: endpointPath})
+	_, address, stop, done = startRuntimeWithOptions(t, options)
 	defer stopRuntime(t, stop, done)
 	connection = dial(t, address)
 	defer connection.Close()
@@ -77,7 +77,7 @@ func TestExternalEasy521SimulatorPLCAddressLifecycle(t *testing.T) {
 	if result := receiveType(t, connection, "plc.disconnect.result"); result["success"] != true {
 		t.Fatalf("simulator disconnect result = %#v", result)
 	}
-	if _, found, err := loadPLCEndpoint(endpointPath); err != nil || found {
-		t.Fatalf("simulator disconnect did not clear endpoint: found=%t error=%v", found, err)
+	if stored, found, err := loadPLCEndpoint(store); err != nil || !found || stored.DeviceID() != deviceID {
+		t.Fatalf("simulator disconnect did not retain endpoint: stored=%#v found=%t error=%v", stored, found, err)
 	}
 }

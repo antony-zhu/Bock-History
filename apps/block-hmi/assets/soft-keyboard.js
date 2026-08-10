@@ -39,6 +39,12 @@
       "1 2 3 {next}",
       "{cancel} 0 00 {done}"
     ],
+    decimal: [
+      "7 8 9 {bksp}",
+      "4 5 6 {clear}",
+      "1 2 3 {next}",
+      "{cancel} 0 . {done}"
+    ],
     "default": [
       "1 2 3 4 5 6 7 8 9 0 - = .",
       "q w e r t y u i o p",
@@ -213,13 +219,14 @@
   }
 
   function getLayout(input) {
-    return input.getAttribute("data-soft-keyboard") === "full" ? "full" : "numeric";
+    var layout = input.getAttribute("data-soft-keyboard");
+    return layout === "full" || layout === "decimal" ? layout : "numeric";
   }
 
   function getMaxLength(input) {
     var explicit = parseInt(input.getAttribute("maxlength"), 10);
     if (Number.isFinite(explicit) && explicit > 0) return explicit;
-    if (getLayout(input) === "numeric") return 15;
+    if (getLayout(input) === "numeric" || getLayout(input) === "decimal") return 15;
     return 200;
   }
 
@@ -294,6 +301,7 @@
     var nextValue = String(value == null ? "" : value);
     var maxLength = getMaxLength(activeInput);
     if (activeLayout === "numeric") nextValue = nextValue.replace(/\D/g, "");
+    if (activeLayout === "decimal") nextValue = nextValue.replace(/[^0-9.]/g, "");
     if (nextValue.length > maxLength) nextValue = nextValue.slice(0, maxLength);
     if (activeInput.value !== nextValue) activeInput.value = nextValue;
     clearError(activeInput);
@@ -397,7 +405,7 @@
     dock.setAttribute("data-layout", layout);
     keyboard.setOptions({
       inputName: activeInputName,
-      layoutName: layout === "numeric" ? "numeric" : "default",
+      layoutName: layout === "full" ? "default" : layout,
       maxLength: getMaxLength(input),
       display: copyDisplay(doneLabel)
     });
@@ -814,7 +822,7 @@
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (activeLayout === "numeric" || findNextInput(activeInput)) {
+      if (activeLayout === "numeric" || activeLayout === "decimal" || findNextInput(activeInput)) {
         moveToNextInput();
       } else {
         handleKeyPress("{done}");
@@ -828,6 +836,7 @@
     }
     if (event.ctrlKey || event.altKey || event.metaKey || event.key.length !== 1) return;
     if (activeLayout === "numeric" && !/^\d$/.test(event.key)) return;
+    if (activeLayout === "decimal" && !/^[0-9.]$/.test(event.key)) return;
     event.preventDefault();
     appendPhysicalCharacter(event.key);
   }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -113,7 +114,7 @@ func TestPointCommandIsValidatedButDoesNotWriteWithoutPLC(t *testing.T) {
 	}
 }
 
-func TestPointCommandUsesWorkerReadbackAndFC22Sequence(t *testing.T) {
+func TestPointCommandWritesAfterInitialPLCReadSucceeds(t *testing.T) {
 	adapter := &runtimeFakeAdapter{registers: map[uint16]uint16{504: 0}}
 	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
 		return plcworker.New(config, adapter, publish, time.Now)
@@ -148,6 +149,78 @@ func TestPointCommandUsesWorkerReadbackAndFC22Sequence(t *testing.T) {
 	writes := adapter.writeCalls()
 	if len(writes) != 2 || !writes[0].value || writes[1].value || writes[0].address != 504 || writes[0].bit != 1 {
 		t.Fatalf("worker did not use FC22 bit sequence: %#v", writes)
+	}
+}
+
+func TestPointCommandDoesNotWriteWhileInitialPLCReadIsBlocked(t *testing.T) {
+	readStarted := make(chan struct{}, 1)
+	releaseRead := make(chan struct{})
+	adapter := &runtimeFakeAdapter{
+		registers:   map[uint16]uint16{504: 0},
+		readStarted: readStarted,
+		releaseRead: releaseRead,
+	}
+	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
+		return plcworker.New(config, adapter, publish, time.Now)
+	})
+	_, address, cancel, done := startRuntimeWithFactory(t, factory)
+	defer stopRuntime(t, cancel, done)
+	defer close(releaseRead)
+	connection := dial(t, address)
+	defer connection.Close()
+
+	configure(t, connection)
+	_ = receive(t, connection)
+	send(t, connection, map[string]any{"type": "plc.connect", "requestId": "connect", "deviceId": "easy521://127.0.0.1:1502?unitId=1"})
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "connecting" {
+		t.Fatalf("connecting event = %#v", event)
+	}
+	select {
+	case <-readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("initial PLC read did not start")
+	}
+
+	send(t, connection, map[string]any{"type": "point.command", "requestId": "blocked", "pointId": "machine.startCommand", "action": "pulse"})
+	result := receiveType(t, connection, "point.result")
+	if result["success"] != false || errorCode(t, result) != "PLC_NOT_CONNECTED" {
+		t.Fatalf("blocked initial read command = %#v", result)
+	}
+	if writes := adapter.writeCalls(); len(writes) != 0 {
+		t.Fatalf("command wrote while initial PLC read was blocked: %#v", writes)
+	}
+}
+
+func TestPointCommandDoesNotWriteAfterInitialPLCReadFails(t *testing.T) {
+	adapter := &runtimeFakeAdapter{registers: map[uint16]uint16{504: 0}, readErr: errors.New("initial read failed")}
+	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
+		return plcworker.New(config, adapter, publish, time.Now)
+	})
+	_, address, cancel, done := startRuntimeWithFactory(t, factory)
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+
+	configure(t, connection)
+	_ = receive(t, connection)
+	send(t, connection, map[string]any{"type": "plc.connect", "requestId": "connect", "deviceId": "easy521://127.0.0.1:1502?unitId=1"})
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "connecting" {
+		t.Fatalf("connecting event = %#v", event)
+	}
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "error" {
+		t.Fatalf("failed initial read event = %#v", event)
+	}
+	if result := receiveType(t, connection, "plc.connect.result"); result["success"] != false || errorCode(t, result) != "PLC_READ_FAILED" {
+		t.Fatalf("failed initial read result = %#v", result)
+	}
+
+	send(t, connection, map[string]any{"type": "point.command", "requestId": "failed", "pointId": "machine.startCommand", "action": "pulse"})
+	result := receiveType(t, connection, "point.result")
+	if result["success"] != false || errorCode(t, result) != "PLC_NOT_CONNECTED" {
+		t.Fatalf("failed initial read command = %#v", result)
+	}
+	if writes := adapter.writeCalls(); len(writes) != 0 {
+		t.Fatalf("command wrote after initial PLC read failed: %#v", writes)
 	}
 }
 
@@ -205,6 +278,14 @@ func TestPLCTransportDisconnectPublishesStaleValuesAndEvent(t *testing.T) {
 	values := runtime.Store().Snapshot()
 	if values["machine.startFeedback"].Quality != "stale" || values["machine.startCommand"].Quality != "stale" {
 		t.Fatalf("transport disconnect values = %#v", values)
+	}
+	send(t, connection, map[string]any{"type": "point.command", "requestId": "disconnected", "pointId": "machine.startCommand", "action": "pulse"})
+	result := receiveType(t, connection, "point.result")
+	if result["success"] != false || errorCode(t, result) != "PLC_NOT_CONNECTED" {
+		t.Fatalf("disconnected command = %#v", result)
+	}
+	if writes := adapter.writeCalls(); len(writes) != 0 {
+		t.Fatalf("command wrote after PLC disconnected: %#v", writes)
 	}
 }
 
@@ -477,18 +558,32 @@ type runtimeWriteCall struct {
 }
 
 type runtimeFakeAdapter struct {
-	mu        sync.Mutex
-	registers map[uint16]uint16
-	writes    []runtimeWriteCall
-	readErr   error
+	mu          sync.Mutex
+	registers   map[uint16]uint16
+	writes      []runtimeWriteCall
+	readErr     error
+	readStarted chan<- struct{}
+	releaseRead <-chan struct{}
 }
 
 func (f *runtimeFakeAdapter) ReadHoldingRegisters(_ context.Context, address, quantity uint16) ([]uint16, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.readErr != nil {
-		return nil, f.readErr
+	readErr, readStarted, releaseRead := f.readErr, f.readStarted, f.releaseRead
+	f.mu.Unlock()
+	if readStarted != nil {
+		select {
+		case readStarted <- struct{}{}:
+		default:
+		}
 	}
+	if releaseRead != nil {
+		<-releaseRead
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	values := make([]uint16, quantity)
 	for index := range values {
 		values[index] = f.registers[address+uint16(index)]

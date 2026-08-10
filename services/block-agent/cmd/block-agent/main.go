@@ -66,13 +66,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize Block authentication: %v", err)
 	}
-	dataDirectory := filepath.Dir(*stateDatabase)
 	runtime, err := agentapp.NewLocalRuntimeWithOptions(*localHTTPSAddress, time.Now, nil, hmi, authService, agentapp.RuntimeOptions{
-		AlarmStore:      store,
-		PLCEndpointPath: filepath.Join(dataDirectory, "plc-endpoint.json"),
-		MaintenancePath: filepath.Join(dataDirectory, "maintenance.json"),
-		WiFiBackend:     wifi.NewNetworkManager(nil, filepath.Join(dataDirectory, "wifi-tmp")),
-		WiFiInterface:   *wifiInterface,
+		AlarmStore:       store,
+		PLCEndpointStore: store,
+		MaintenancePath:  filepath.Join(filepath.Dir(*stateDatabase), "maintenance.json"),
+		WiFiBackend:      wifi.NewNetworkManager(nil, filepath.Join(filepath.Dir(*stateDatabase), "wifi-tmp")),
+		WiFiInterface:    *wifiInterface,
 		MQTT: agentapp.MQTTOptions{
 			Enabled: *mqttsV2Enabled,
 			Connection: mqttv2.ConnectionConfig{

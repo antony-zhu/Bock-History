@@ -487,7 +487,7 @@ assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\
 assert.match(index, /const mode = state\.mode === "auto" \|\| state\.mode === "manual" \? state\.mode : null;[\s\S]*?modeToggle\.classList\.toggle\("is-auto", mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", mode === "manual"\);/);
 for (const asset of [
   'assets/soft-keyboard.css?v=20260809.1',
-  'assets/soft-keyboard.js?v=20260808.3',
+  'assets/soft-keyboard.js?v=20260810.1',
   './assets/hmi.mjs?v=20260808.4'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
@@ -594,7 +594,8 @@ assert.match(index, /"\/api\/maintenance\/production"/);
 assert.match(index, /"\/api\/maintenance\/connectivity"/);
 assert.match(index, /"\/api\/maintenance\/wifi\/connect"/);
 assert.match(index, /id="plcSubnetInput"[^>]*value="192\.168\.1\.0\/24"[^>]*data-soft-keyboard="full"/);
-assert.match(index, /id="plcHostInput"[^>]*data-soft-keyboard="decimal"/);
+assert.match(index, /id="plcHostInput" type="text" inputmode="decimal"[^>]*data-soft-keyboard="decimal"/);
+assert.equal([...index.matchAll(/data-soft-keyboard="decimal"/g)].length, 1);
 assert.match(index, /id="plcPortInput"[^>]*min="1"[^>]*max="65535"[^>]*data-soft-keyboard="numeric"/);
 assert.match(index, /id="plcUnitInput"[^>]*min="1"[^>]*max="247"[^>]*data-soft-keyboard="numeric"/);
 assert.match(index, /id="savePlcButton"[^>]*>保存地址并连接/);
@@ -659,6 +660,11 @@ assert.match(keyboardSource, /value: "切换大小写"[\s\S]*?value: "退格"/);
 assert.match(keyboardSource, /function isAuthenticationInput\(input\) \{[\s\S]*?data-soft-submit/);
 assert.match(keyboardSource, /function validateInput\(input, focusOnError\) \{[\s\S]*?isAuthenticationInput\(input\)/);
 assert.match(keyboardSource, /function syncActiveValue\(value, emitInput\) \{[\s\S]*?if \(activeInput\.value !== nextValue\) activeInput\.value = nextValue;[\s\S]*?clearError\(activeInput\);/);
+assert.match(keyboardSource, /numeric:\s*\[[\s\S]*?"\{cancel\} 0 00 \{done\}"[\s\S]*?\],\s*decimal:/);
+assert.match(keyboardSource, /decimal:\s*\[[\s\S]*?"\{cancel\} 0 \. \{done\}"[\s\S]*?\]/);
+assert.match(keyboardSource, /function getLayout\(input\) \{[\s\S]*?layout === "full" \|\| layout === "decimal"/);
+assert.match(keyboardSource, /activeLayout === "decimal"[\s\S]*?replace\(\/\[\^0-9\.\]\/g, ""\)/);
+assert.match(keyboardSource, /activeLayout === "decimal" && !\/\^\[0-9\.\]\$\/\.test\(event\.key\)/);
 assert.match(keyboardSource, /function clearError\(input\) \{[\s\S]*?input\.hasAttribute\("aria-invalid"\)[\s\S]*?validationLine\.textContent !== ""/);
 assert.match(keyboardSource, /disableButtonHold: true/);
 assert.match(keyboardSource, /function ensureKeyboard\(\) \{\s*if \(keyboard\) return true;/);
@@ -668,11 +674,12 @@ assert.match(keyboardSource, /function clearInput\(input\) \{[\s\S]*?if \(input 
 const keyboardHarnessSource = keyboardSource.replace(
   "  window.HMISoftKeyboard = {",
   `  window.__keyboardCancelHarness = {
-    setActive: function (input, nextKeyboard, nextDock, original) {
+    setActive: function (input, nextKeyboard, nextDock, original, layout) {
       activeInput = input;
       activeInputName = getInputName(input);
       keyboard = nextKeyboard;
       dock = nextDock;
+      activeLayout = layout || "numeric";
       isOpen = true;
       pinned = false;
       enabled = true;
@@ -683,6 +690,9 @@ const keyboardHarnessSource = keyboardSource.replace(
     },
     state: function () {
       return { activeInput: activeInput, originalValue: originalValue, committedValue: committedValue };
+    },
+    sync: function (value) {
+      syncActiveValue(value, true);
     }
   };
 
@@ -793,6 +803,19 @@ vm.runInNewContext(keyboardHarnessSource, { window: keyboardTestWindow, document
 });
 
 const keyboardCancelHarness = keyboardTestWindow.__keyboardCancelHarness;
+const plcIPAddressInput = keyboardTestInput("plcHostInput", "");
+plcIPAddressInput.setAttribute("data-soft-keyboard", "decimal");
+const plcIPAddressKeyboard = new KeyboardCancelTestKeyboard();
+keyboardCancelHarness.setActive(plcIPAddressInput, plcIPAddressKeyboard, keyboardTestDock(), "", "decimal");
+keyboardCancelHarness.sync("192.168.10.87");
+assert.equal(plcIPAddressInput.value, "192.168.10.87");
+keyboardCancelHarness.sync("192x.168.10.87");
+assert.equal(plcIPAddressInput.value, "192.168.10.87");
+const ordinaryNumericInput = keyboardTestInput("ordinaryNumeric", "");
+const ordinaryNumericKeyboard = new KeyboardCancelTestKeyboard();
+keyboardCancelHarness.setActive(ordinaryNumericInput, ordinaryNumericKeyboard, keyboardTestDock(), "", "numeric");
+keyboardCancelHarness.sync("12.3");
+assert.equal(ordinaryNumericInput.value, "123");
 const failedWifiPassword = keyboardTestInput("wifiPasswordInput", "failed-password");
 const failedWifiKeyboard = new KeyboardCancelTestKeyboard();
 const failedWifiDock = keyboardTestDock();

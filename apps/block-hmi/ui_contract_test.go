@@ -47,7 +47,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`/api/maintenance/wifi/connect`,
 		`id="operatorName"`,
 		`assets/soft-keyboard.css?v=20260809.1`,
-		`assets/soft-keyboard.js?v=20260808.3`,
+		`assets/soft-keyboard.js?v=20260810.1`,
 		`import("./assets/hmi.mjs?v=20260808.4")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
@@ -394,6 +394,17 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!regexp.MustCompile(`function bindInput\(input\) \{\s*if \(input\.getAttribute\("data-soft-keyboard-bound"\) === "true"\) return;`).MatchString(keyboard) ||
 		!regexp.MustCompile(`(?s)function clearInput\(input\) \{.*?if \(input === activeInput\) \{\s*originalValue = "";\s*committedValue = "";\s*\}.*?keyboard\.setInput\("", inputName\);.*?dispatchFieldEvent\(input, "input"\);`).MatchString(keyboard) {
 		t.Fatal("soft keyboard does not bind once, suppress held-key repeats, and fully clear successful secret input")
+	}
+	if strings.Count(page, `data-soft-keyboard="decimal"`) != 1 ||
+		!regexp.MustCompile(`id="plcHostInput" type="text" inputmode="decimal"[^>]*data-soft-keyboard="decimal"`).MatchString(page) {
+		t.Fatal("PLC IP must be the only text input using the decimal soft keyboard")
+	}
+	if !regexp.MustCompile(`(?s)numeric:\s*\[.*?"\{cancel\} 0 00 \{done\}".*?\],\s*decimal:`).MatchString(keyboard) ||
+		!regexp.MustCompile(`(?s)decimal:\s*\[.*?"\{cancel\} 0 \. \{done\}".*?\]`).MatchString(keyboard) ||
+		!regexp.MustCompile(`(?s)function getLayout\(input\) \{.*?layout === "full" \|\| layout === "decimal"`).MatchString(keyboard) ||
+		!regexp.MustCompile(`(?s)activeLayout === "decimal".*?replace\(/\[\^0-9\.\]/g, ""\)`).MatchString(keyboard) ||
+		!regexp.MustCompile(`activeLayout === "decimal" && !/\^\[0-9\.\]\$/.test\(event.key\)`).MatchString(keyboard) {
+		t.Fatal("PLC IP decimal keyboard does not preserve dot input while numeric inputs retain their layout")
 	}
 	for _, asset := range []string{
 		"assets/demo-shell.mjs",
