@@ -19,7 +19,7 @@ type PLCDevice = {
 type PointDefinition = {
   pointId: string;
   address: string;
-  type: "bool" | "int" | "float" | "string" | "int16" | "uint16" | "float32";
+  type: "bool" | "int" | "float" | "string" | "int16" | "uint16" | "int32" | "float32";
   access: "read" | "write" | "read_write";
   readPoint: string | null;
   writePoint: string | null;
@@ -91,22 +91,22 @@ type LegacyHistory = {
 
 type LegacyState = {
   revision: number;
-  running: boolean;
-  mode: "auto" | "manual";
-  singlePaused: boolean;
-  framePaused: boolean;
-  target: number;
-  output: number;
-  cycle: number;
-  oee: number;
-  inspected: number;
-  passed: number;
-  ng: number;
-  pending: number;
-  blank: number;
-  finished: number;
-  toolLimit: number;
-  inspectInterval: number;
+  running: boolean | null;
+  mode: "auto" | "manual" | null;
+  singlePaused: boolean | null;
+  framePaused: boolean | null;
+  target: number | null;
+  output: number | null;
+  cycle: number | null;
+  oee: number | null;
+  inspected: number | null;
+  passed: number | null;
+  ng: number | null;
+  pending: number | null;
+  blank: number | null;
+  finished: number | null;
+  toolLimit: number | null;
+  inspectInterval: number | null;
   bins: LegacyBin[];
   alarms: LegacyAlarm[];
   history: LegacyHistory[];
@@ -119,6 +119,12 @@ type LegacyBackend = {
   acknowledgeAlarm(alarmID: number, context?: unknown): Promise<{ state: LegacyState }>;
   getAudit(options?: unknown): Promise<{ events: LegacyHistory[] }>;
   manual: {
+    binding(displayPath: string): Binding | null;
+    value(displayPath: string): Scalar | undefined;
+    canWrite(displayPath: string): boolean;
+    command(displayPath: string, value?: number): Promise<void>;
+  };
+  points: {
     binding(displayPath: string): Binding | null;
     value(displayPath: string): Scalar | undefined;
     canWrite(displayPath: string): boolean;
@@ -742,6 +748,12 @@ class AppleBridge {
         value: (displayPath) => this.manualValue(displayPath),
         canWrite: (displayPath) => this.manualCanWrite(displayPath),
         command: (displayPath, value) => this.manualCommand(displayPath, value)
+      },
+      points: {
+        binding: (displayPath) => this.pointBinding(displayPath),
+        value: (displayPath) => this.pointValue(displayPath),
+        canWrite: (displayPath) => this.pointCanWrite(displayPath),
+        command: (displayPath, value) => this.pointCommand(displayPath, value)
       }
     };
   }
@@ -1241,6 +1253,7 @@ class AppleBridge {
       this.socket = null;
       this.configured = false;
       clearTransientRuntime(this.values, this.plcDevices);
+      this.publishLiveState(true);
       this.plcState = "disconnected";
       this.renderPLCCandidates();
       this.setPLCStatus("本机服务连接中断");
@@ -1371,7 +1384,7 @@ class AppleBridge {
     }
     if (message.type === "runtime.configured") {
       this.configured = true;
-      this.setPLCStatus("点位表已同步，等待 PLC 读取");
+      this.setPLCStatus(plcStateText(this.plcState));
       this.renderPLCCandidates();
       this.emitState();
       return;
@@ -1441,23 +1454,26 @@ class AppleBridge {
       return this.demoState;
     }
     const state = initialDemoState();
-    const startFeedback = this.valueFor("home.machine.start.feedback");
-    const enabled = this.valueFor("home.machine.enabled");
+    const manual = this.valueFor("footer.mode.manual");
+    const singlePaused = this.valueFor("home.cycle.single");
+    const framePaused = this.valueFor("home.cycle.frame");
     state.revision = this.revision;
-    state.running = startFeedback === true;
-    state.mode = enabled === true ? "auto" : "manual";
-    state.target = 0;
-    state.output = 0;
-    state.cycle = 0;
-    state.oee = 0;
-    state.inspected = 0;
-    state.passed = 0;
-    state.ng = 0;
-    state.pending = 0;
-    state.blank = 0;
-    state.finished = 0;
-    state.toolLimit = 0;
-    state.inspectInterval = 0;
+    state.running = null;
+    state.mode = manual === true ? "manual" : manual === false ? "auto" : null;
+    state.singlePaused = typeof singlePaused === "boolean" ? singlePaused : null;
+    state.framePaused = typeof framePaused === "boolean" ? framePaused : null;
+    state.target = this.numberFor("maintenance.production.target");
+    state.output = this.numberFor("production.output.today");
+    state.cycle = this.numberFor("production.cycle.single");
+    state.oee = null;
+    state.inspected = null;
+    state.passed = this.numberFor("production.quality.passed");
+    state.ng = this.numberFor("production.quality.ng");
+    state.pending = this.numberFor("production.quality.pending");
+    state.blank = this.numberFor("production.bin.blank");
+    state.finished = this.numberFor("production.bin.finished");
+    state.toolLimit = null;
+    state.inspectInterval = null;
     state.bins = [
       { type: "empty", label: "暂无数据" },
       { type: "empty", label: "暂无数据" },
@@ -1472,24 +1488,30 @@ class AppleBridge {
     return state;
   }
 
+  private numberFor(displayPath: string): number | null {
+    const value = this.valueFor(displayPath);
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+
   private valueFor(displayPath: string): Scalar | undefined {
     const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
     if (binding === undefined || binding.readPoint === null) {
       return undefined;
     }
-    return this.values.get(binding.readPoint)?.value;
+    const point = this.values.get(binding.readPoint);
+    return point?.quality === "good" ? point.value : undefined;
   }
 
-  private manualBinding(displayPath: string): Binding | null {
+  private pointBinding(displayPath: string): Binding | null {
     const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
     return binding === undefined ? null : { ...binding };
   }
 
-  private manualValue(displayPath: string): Scalar | undefined {
+  private pointValue(displayPath: string): Scalar | undefined {
     return this.valueFor(displayPath);
   }
 
-  private manualCanWrite(displayPath: string): boolean {
+  private pointCanWrite(displayPath: string): boolean {
     const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
     if (binding === undefined || binding.state === "pending" || binding.writePoint === null || binding.writePoint === undefined ||
       (binding.action !== "pulse" && binding.action !== "toggle" && binding.action !== "set")) {
@@ -1501,7 +1523,7 @@ class AppleBridge {
     return this.demo || this.canSendRuntime();
   }
 
-  private manualCommand(displayPath: string, value?: number): Promise<void> {
+  private pointCommand(displayPath: string, value?: number): Promise<void> {
     const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
     const action = binding?.action;
     const writePoint = binding?.writePoint;
@@ -1532,6 +1554,22 @@ class AppleBridge {
         action === "set" ? value : undefined
       )));
     });
+  }
+
+  private manualBinding(displayPath: string): Binding | null {
+    return this.pointBinding(displayPath);
+  }
+
+  private manualValue(displayPath: string): Scalar | undefined {
+    return this.pointValue(displayPath);
+  }
+
+  private manualCanWrite(displayPath: string): boolean {
+    return this.pointCanWrite(displayPath);
+  }
+
+  private manualCommand(displayPath: string, value?: number): Promise<void> {
+    return this.pointCommand(displayPath, value);
   }
 
   private sendCommand(command: string, payload: Record<string, unknown> = {}): Promise<{ state: LegacyState }> {
@@ -1592,8 +1630,8 @@ class AppleBridge {
       state.output = 0;
       state.cycle = 0;
     } else if (command === "inspect") {
-      state.inspected += 1;
-      state.passed += 1;
+      state.inspected = (state.inspected ?? 0) + 1;
+      state.passed = (state.passed ?? 0) + 1;
     } else if (command === "clear_bins") {
       state.bins = state.bins.map(() => ({ type: "empty", label: "已清空" }));
     } else if (command === "set_single_paused") {
@@ -1759,14 +1797,14 @@ class AppleBridge {
       nativeKeyboardInput;
   }
 
-  private publishLiveState(): void {
-    if (this.isUserInputActive()) {
+  private publishLiveState(force = false): void {
+    if (this.isUserInputActive() && !force) {
       this.deferredLiveState = true;
       return;
     }
     this.deferredLiveState = false;
     this.renderPLCReadOnly();
-    this.emitState();
+    this.emitState(force);
   }
 
   private flushDeferredLiveState(): boolean {
@@ -1781,21 +1819,10 @@ class AppleBridge {
 
   private renderPLCReadOnly(): void {
     const connection = document.querySelector<HTMLElement>("#plc-connection-value");
-    const sample = document.querySelector<HTMLElement>("#plc-last-sample");
-    const error = document.querySelector<HTMLElement>("#plc-last-error");
-    const pointCount = document.querySelector<HTMLElement>("#plc-point-count");
-    const livePoints = document.querySelector<HTMLElement>("#plc-live-points");
-    if (connection === null || sample === null || error === null || pointCount === null || livePoints === null) {
+    if (connection === null) {
       return;
     }
     connection.textContent = plcStateText(this.plcState);
-    sample.textContent = this.lastPLCSampleAt ?? "—";
-    error.textContent = this.lastPLCError || "—";
-    pointCount.textContent = String(this.config.points.length || this.values.size);
-    const entries = [...this.values.entries()].slice(0, 50);
-    livePoints.textContent = entries.length === 0
-      ? "等待 PLC 实时点值"
-      : entries.map(([pointID, point]) => pointID + ": " + String(point.value) + " · " + point.quality + " · " + point.updatedAt).join("\n");
   }
 
   private renderPLCCandidates(): void {
@@ -1837,9 +1864,15 @@ class AppleBridge {
     }
   }
 
-  private emitState(): void {
-    if (this.isUserInputActive()) {
+  private emitState(force = false): void {
+    if (this.isUserInputActive() && !force) {
       this.deferredLiveState = true;
+      return;
+    }
+    if (force) {
+      window.dispatchEvent(new CustomEvent("block-hmi-state", {
+        detail: { state: cloneState(this.currentState()), forceRender: true }
+      }));
       return;
     }
     window.dispatchEvent(new Event("block-hmi-state"));
@@ -1850,13 +1883,13 @@ class AppleBridge {
       return;
     }
     window.setTimeout(() => {
-      const start = document.querySelector<HTMLButtonElement>('[data-action="start"]');
       const runtimeEnabled = this.canSendRuntime();
-      const startConfigured = this.config.bindings.some((binding) =>
-        binding.displayPath === "home.machine.start" && binding.state !== "pending" && binding.writePoint !== null && binding.action === "pulse"
-      );
-      document.querySelectorAll<HTMLButtonElement>(".control-button:not(.manual-entry-button)").forEach((button) => {
-        const available = runtimeEnabled && startConfigured && button === start;
+      document.querySelectorAll<HTMLButtonElement>(".control-button").forEach((button) => {
+        const displayPath = button.dataset.pointAction;
+        const configured = displayPath !== undefined && this.config.bindings.some((binding) =>
+          binding.displayPath === displayPath && binding.state !== "pending" && binding.writePoint !== null && binding.action === "pulse"
+        );
+        const available = runtimeEnabled && configured;
         button.dataset.backendUnavailable = available ? "false" : "true";
       });
       const mode = document.querySelector<HTMLButtonElement>("#modeToggle");

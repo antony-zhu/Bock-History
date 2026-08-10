@@ -89,6 +89,30 @@ func TestNormalizeAcceptsExplicitSimulatorFloat32Profile(t *testing.T) {
 	}
 }
 
+func TestNormalizeRequiresHighLowInt32FC10Profile(t *testing.T) {
+	valid := Config{ScanIntervalMs: RequiredScanIntervalMs, Points: []PointDefinition{{
+		PointID: "maintenance.production.target", Address: "D1000", Type: "int32", Access: "read_write",
+		ReadPoint: "maintenance.production.target", WritePoint: "maintenance.production.target", WriteMethod: "fc10",
+		RegisterCount: 2, WordOrder: "high-low", Write: &WriteDefinition{Mode: "set"},
+	}}}
+	if _, err := Normalize(valid); err != nil {
+		t.Fatalf("Normalize high-low int32: %v", err)
+	}
+
+	for _, change := range []func(*PointDefinition){
+		func(point *PointDefinition) { point.RegisterCount = 1 },
+		func(point *PointDefinition) { point.WordOrder = "low-high" },
+		func(point *PointDefinition) { point.WriteMethod = "fc06" },
+	} {
+		invalid := valid
+		invalid.Points = append([]PointDefinition(nil), valid.Points...)
+		change(&invalid.Points[0])
+		if _, err := Normalize(invalid); err == nil {
+			t.Fatal("Normalize unexpectedly accepted an invalid int32 profile")
+		}
+	}
+}
+
 func TestNormalizeAllowsWriteOnlyPulseAndRejectsUndeclaredFloat32Layout(t *testing.T) {
 	writeOnly := Config{ScanIntervalMs: RequiredScanIntervalMs, Points: []PointDefinition{{
 		PointID: "manual.motion.x.relative.trigger.action", Address: "D550.3", Type: "bool", Access: "write",

@@ -224,10 +224,55 @@ assert.doesNotMatch(graphiteKeyRule, /rgba\(|var\(|\b(?:opacity|filter|backdrop-
 const defaultPointsConfiguration = JSON.parse(readFileSync(new URL("./points.json", import.meta.url), "utf8"));
 const simulatorPointsConfiguration = JSON.parse(readFileSync(new URL("./points.simulatorFloat32.json", import.meta.url), "utf8"));
 assert.deepEqual(defaultPointsConfiguration.points.map((point) => point.address), [
-  "D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4"
+  "D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4",
+  "D522", "D504.6", "D506.0", "D504.12", "D506.5", "D504.11", "D506.7", "D506.9", "D506.10", "D506.11", "D506.12",
+  "D1000", "D900", "D902", "D904", "D906", "D908", "D910", "D912"
 ]);
-assert.ok(defaultPointsConfiguration.points.every((point) => point.type === "bool" && point.writeMethod === "maskWrite"));
-assert.doesNotMatch(JSON.stringify(defaultPointsConfiguration), /D800|D812|float32|fc10/);
+assert.ok(defaultPointsConfiguration.points.slice(0, 8).every((point) => point.type === "bool" && point.writeMethod === "maskWrite"));
+assert.doesNotMatch(JSON.stringify(defaultPointsConfiguration), /D800|D812/);
+assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "home.speed.automatic"), {
+  pointId: "home.speed.automatic", address: "D522", type: "float32", access: "read_write",
+  readPoint: "home.speed.automatic", writePoint: "home.speed.automatic", writeMethod: "fc10",
+  registerCount: 2, wordOrder: "high-low", write: { mode: "set" }
+});
+assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "maintenance.production.target"), {
+  pointId: "maintenance.production.target", address: "D1000", type: "int32", access: "read_write",
+  readPoint: "maintenance.production.target", writePoint: "maintenance.production.target", writeMethod: "fc10",
+  registerCount: 2, wordOrder: "high-low", write: { mode: "set" }
+});
+assert.deepEqual(defaultPointsConfiguration.bindings.find((binding) => binding.displayPath === "maintenance.production.target"), {
+  displayPath: "maintenance.production.target", description: "今日目标产能", component: "number",
+  readPoint: "maintenance.production.target", writePoint: "maintenance.production.target", action: "set",
+  permission: "operate", state: "configured", sourceRow: 36, sourceAddress: "D1000"
+});
+for (const pointId of ["home.homing", "home.action.reset", "home.action.restart", "home.action.pause", "home.action.clear", "home.cycle.single", "home.cycle.frame"]) {
+  const point = defaultPointsConfiguration.points.find((item) => item.pointId === pointId);
+  assert.deepEqual(point.write, { mode: "pulse", activeValue: true, defaultValue: false, pulseMs: 100 });
+  assert.equal(point.writeMethod, "maskWrite");
+}
+assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "home.cycle.single.feedback"), {
+  pointId: "home.cycle.single.feedback", address: "D506.11", type: "bool", access: "read",
+  readPoint: "home.cycle.single.feedback", writePoint: null, writeMethod: null
+});
+assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "home.cycle.frame.feedback"), {
+  pointId: "home.cycle.frame.feedback", address: "D506.12", type: "bool", access: "read",
+  readPoint: "home.cycle.frame.feedback", writePoint: null, writeMethod: null
+});
+for (const [displayPath, readPoint, writePoint] of [
+  ["home.cycle.single", "home.cycle.single.feedback", "home.cycle.single"],
+  ["home.cycle.frame", "home.cycle.frame.feedback", "home.cycle.frame"]
+]) {
+  const binding = defaultPointsConfiguration.bindings.find((item) => item.displayPath === displayPath);
+  assert.deepEqual({ readPoint: binding.readPoint, writePoint: binding.writePoint, action: binding.action, permission: binding.permission, state: binding.state }, {
+    readPoint, writePoint, action: "pulse", permission: "operate", state: "configured"
+  });
+}
+for (const pointId of ["production.output.today", "production.quality.passed"]) {
+  const point = defaultPointsConfiguration.points.find((item) => item.pointId === pointId);
+  assert.deepEqual({ type: point.type, registerCount: point.registerCount, wordOrder: point.wordOrder }, {
+    type: "int32", registerCount: 2, wordOrder: "high-low"
+  });
+}
 for (const displayPath of [
   "manual.motion.x.absolute.target.parameter", "manual.motion.z.absolute.target.parameter",
   "manual.motion.x.relative.distance.parameter", "manual.motion.z.relative.distance.parameter"
@@ -340,16 +385,23 @@ assert.match(publicNavigationCancellation[0], /if \(!this\.authPanel\(\)\.hidden
 assert.doesNotMatch(publicNavigationCancellation[0], /else/);
 assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?requirePermission\("maintenance"\)/);
 assert.match(source, /private sendCommand\([\s\S]*?requirePermission\("operate"\)/);
-const pointCommand = source.match(/private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{[\s\S]*?\n  \}\n\n  private acknowledgeAlarm/);
-assert.notEqual(pointCommand, null);
-assert.match(pointCommand[0], /command === "set_mode"[\s\S]*?displayPath: "home\.machine\.enabled", action: "toggle"[\s\S]*?buildPointCommand\(pointID, operation\.action, requestId\)/);
-assert.match(pointCommand[0], /pendingPointCommand\.dispatch\(requestId, \(\) => \{[\s\S]*?this\.socket!\.send/);
-assert.match(source, /const enabled = this\.valueFor\("home\.machine\.enabled"\);[\s\S]*?state\.mode = enabled === true \? "auto" : "manual";/);
+const legacyPointCommand = source.match(/private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{[\s\S]*?\n  \}\n\n  private acknowledgeAlarm/);
+assert.notEqual(legacyPointCommand, null);
+assert.match(legacyPointCommand[0], /command === "set_mode"[\s\S]*?displayPath: "home\.machine\.enabled", action: "toggle"[\s\S]*?buildPointCommand\(pointID, operation\.action, requestId\)/);
+assert.match(legacyPointCommand[0], /pendingPointCommand\.dispatch\(requestId, \(\) => \{[\s\S]*?this\.socket!\.send/);
+assert.match(source, /const manual = this\.valueFor\("footer\.mode\.manual"\);[\s\S]*?state\.running = null;[\s\S]*?state\.mode = manual === true \? "manual" : manual === false \? "auto" : null;/);
+assert.match(source, /const singlePaused = this\.valueFor\("home\.cycle\.single"\);[\s\S]*?state\.singlePaused = typeof singlePaused === "boolean" \? singlePaused : null;/);
+assert.match(source, /const framePaused = this\.valueFor\("home\.cycle\.frame"\);[\s\S]*?state\.framePaused = typeof framePaused === "boolean" \? framePaused : null;/);
+assert.match(source, /private numberFor\(displayPath: string\): number \| null \{[\s\S]*?return typeof value === "number" && Number\.isFinite\(value\) \? value : null;/);
+assert.match(source, /const point = this\.values\.get\(binding\.readPoint\);[\s\S]*?return point\?\.quality === "good" \? point\.value : undefined;/);
+assert.match(source, /clearTransientRuntime\(this\.values, this\.plcDevices\);\s*this\.publishLiveState\(true\);\s*this\.plcState = "disconnected";/);
+assert.match(compiledSource, /clearTransientRuntime\(this\.values, this\.plcDevices\);\s*this\.publishLiveState\(true\);\s*this\.plcState = "disconnected";/);
 const productionPolicy = source.match(/private deferProductionPolicy\(\): void \{[\s\S]*?\n  \}\n\}/);
 assert.notEqual(productionPolicy, null);
-assert.match(productionPolicy[0], /\.control-button:not\(\.manual-entry-button\)/);
-assert.match(productionPolicy[0], /const startConfigured = this\.config\.bindings\.some/);
-assert.match(productionPolicy[0], /const available = runtimeEnabled && startConfigured && button === start;/);
+assert.match(productionPolicy[0], /document\.querySelectorAll<HTMLButtonElement>\("\.control-button"\)/);
+assert.match(productionPolicy[0], /const displayPath = button\.dataset\.pointAction;/);
+assert.match(productionPolicy[0], /const configured = displayPath !== undefined && this\.config\.bindings\.some/);
+assert.match(productionPolicy[0], /const available = runtimeEnabled && configured;/);
 assert.match(productionPolicy[0], /mode\.dataset\.backendUnavailable = runtimeEnabled \? "false" : "true";/);
 assert.doesNotMatch(productionPolicy[0], /mode\.dataset\.backendUnavailable = "true"/);
 assert.doesNotMatch(source, /\/api\/auth\/status/);
@@ -365,6 +417,35 @@ assert.match(source, /function websocketURL\(\): string \{[\s\S]*?window\.locati
 assert.doesNotMatch(source, /"ws:"/);
 assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(index, /window\.BlockHMIReady\.then\(syncFrontendPermissions\)/);
+assert.match(index, /id="dataTargetForm"[\s\S]*?id="dataTargetInput" type="number" min="1" max="9999" step="1"[\s\S]*?id="dataTargetSave" type="submit"/);
+const dataTargetSave = index.match(/async function saveDataTarget\(\) \{[\s\S]*?\n      \}\n\n      async function loadProductionSettings/);
+assert.notEqual(dataTargetSave, null);
+assert.match(dataTargetSave[0], /requireFrontendPermission\("operate"\)/);
+assert.match(dataTargetSave[0], /runtime\.command\("maintenance\.production\.target", value\)/);
+assert.doesNotMatch(dataTargetSave[0], /\/api\/maintenance\/production/);
+assert.match(index, /\$\("#dataTargetForm"\)\.addEventListener\("submit", event => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?void saveDataTarget\(\);/);
+const maintenanceProductionSave = index.match(/async function saveProductionSettings\(manual = false\) \{[\s\S]*?\n      \}\n\n      async function savePiecesPerBox/);
+assert.notEqual(maintenanceProductionSave, null);
+assert.match(maintenanceProductionSave[0], /requireFrontendPermission\("maintenance"\)/);
+const initialPageState = index.match(/const state = \{[\s\S]*?\n      \};/);
+assert.notEqual(initialPageState, null);
+assert.match(initialPageState[0], /running: null,[\s\S]*?mode: null,[\s\S]*?target: null,[\s\S]*?output: null,[\s\S]*?cycle: null/);
+const statusRenderer = index.match(/function renderStatus\(\) \{[\s\S]*?\n      \}\n\n      function renderBins/);
+assert.notEqual(statusRenderer, null);
+assert.match(statusRenderer[0], /running === true \? "运行中" : running === false \? "运行停止" : "—"/);
+assert.match(statusRenderer[0], /mode === null \? "mixed"/);
+assert.match(statusRenderer[0], /known \? item\.paused \? "恢复" : "暂停" : "—"/);
+const metricsRenderer = index.match(/function renderMetrics\(\) \{[\s\S]*?\n      \}\n\n      function renderEvents/);
+assert.notEqual(metricsRenderer, null);
+assert.match(index, /function renderNumericReadout\(selector, value\) \{[\s\S]*?output\.textContent = known \? String\(value\) : "—";/);
+assert.match(metricsRenderer[0], /"目标完成度 —"/);
+assert.match(metricsRenderer[0], /progressFill\.hidden = true;/);
+assert.doesNotMatch(metricsRenderer[0], /: 100|Math\.max\(1, state\.target\)/);
+const automaticSpeedRenderer = index.match(/function renderAutomaticSpeed\(\) \{[\s\S]*?\n      \}\n\n      function updateAutomaticSpeedDraft/);
+assert.notEqual(automaticSpeedRenderer, null);
+assert.match(automaticSpeedRenderer[0], /const known = hasNumericValue\(incoming\);[\s\S]*?slider\.hidden = !known;[\s\S]*?slider\.disabled = pending \|\| !backendConnected \|\| !known;/);
+assert.match(automaticSpeedRenderer[0], /automaticSpeedDraft = null;[\s\S]*?\$\("#automaticSpeedHint"\)\.textContent = "—";/);
+assert.doesNotMatch(automaticSpeedRenderer[0], /: 100/);
 assert.match(index, /query\.get\("demo"\) !== "1" \|\| query\.get\("__demoFrame"\) === "1"/);
 assert.match(index, /new URL\("demo-shell\.html", window\.location\.href\)/);
 assert.match(demoShell, /<iframe[\s\S]*?id="demoFrame"[\s\S]*?width="1920"[\s\S]*?height="1080"/);
@@ -400,7 +481,7 @@ assert.match(index, /#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\
 assert.match(index, /#hmi-footer #operatorName::before \{[\s\S]*?data:image\/svg\+xml/);
 assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]*?background: #e8f7ec;/);
 assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
-assert.match(index, /modeToggle\.classList\.toggle\("is-auto", state\.mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", state\.mode === "manual"\);/);
+assert.match(index, /const mode = state\.mode === "auto" \|\| state\.mode === "manual" \? state\.mode : null;[\s\S]*?modeToggle\.classList\.toggle\("is-auto", mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", mode === "manual"\);/);
 for (const asset of [
   'assets/soft-keyboard.css?v=20260809.1',
   'assets/soft-keyboard.js?v=20260808.3',
@@ -421,11 +502,10 @@ assert.match(modeChange[0], /state\.mode === "auto" \? "manual" : "auto"/);
 assert.match(modeChange[0], /backend\.sendCommand\("set_mode"/);
 assert.match(modeChange[0], /runBackendMutation\(/);
 assert.match(index, /data-page="manual"[\s\S]*?id="manualPageTitle"/);
-assert.match(index, /id="manualPageEntry" type="button">手动模式<\/button>/);
-assert.doesNotMatch(index, /id="manualPageEntry"[^>]*data-action=/);
-assert.match(index, /\$\("#manualPageEntry"\)\.addEventListener\("click", \(\) => switchPage\("manual"\)\);/);
+assert.match(index, /id="manualPageEntry" type="button" data-point-action="home\.homing">回原<\/button>/);
+assert.doesNotMatch(index, /\$\("#manualPageEntry"\)\.addEventListener\("click", \(\) => switchPage\("manual"\)\);/);
 assert.match(index, /\["home", "manual", "data", "alarm", "history"\]\.includes\(name\)/);
-assert.match(index, /\.control-button:not\(\.manual-entry-button\)/);
+assert.match(index, /\$\$\("\.control-button"\)\.forEach\(button =>/);
 assert.match(index, /id="manualXSpeedInput" type="number" step="any" inputmode="decimal"/);
 assert.match(index, /id="manualZSpeedInput" type="number" step="any" inputmode="decimal"/);
 assert.match(index, /input\.type = "number";\s*input\.step = "any";\s*input\.inputMode = "decimal";/);
@@ -452,7 +532,7 @@ for (const manualAction of [
 assert.doesNotMatch(index, /manual-plane|manual-jog-pad|manual-axis-x|manual-axis-z|manual-carriage|manualCarriage|manualHomeState|manualState\.home/);
 assert.match(index, /\.manual-side-rail\.has-admin #manualAdvancedMount \{[\s\S]*?flex: 1 1 auto;[\s\S]*?min-height: 0;/);
 assert.match(index, /\.manual-admin-panel \{[\s\S]*?height: 100%;[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
-const manualStyles = index.slice(index.indexOf('.manual-entry-button'), index.indexOf('</style>', index.indexOf('.manual-entry-button')));
+const manualStyles = index.slice(index.indexOf('.home-homing-button'), index.indexOf('</style>', index.indexOf('.home-homing-button')));
 assert.doesNotMatch(manualStyles, /transition:|box-shadow:|linear-gradient|radial-gradient|backdrop-filter/);
 assert.doesNotMatch(manualStyles, /min-height: 72px;/);
 const manualHandler = index.match(/function handleManualAction\(button\) \{[\s\S]*?\n      \}\n\n      function commitManualNumber/);
@@ -486,11 +566,14 @@ assert.match(manualAdminRender[0], /mount\.replaceChildren\(panel\);[\s\S]*?rend
 assert.match(index, /权限来自当前产品会话；绝对执行 BOOL 未确认，数值参数按已配置点位读写。/);
 assert.match(index, /function updateManualNumberInput\(input, displayPath, fallback = ""\) \{/);
 assert.match(index, /input\[data-manual-speed\], input\[data-manual-admin-input\]/);
+const configuredPointCommand = source.match(/private pointCommand\(displayPath: string, value\?: number\): Promise<void> \{[\s\S]*?\n  \}\n\n  private manualBinding/);
+assert.notEqual(configuredPointCommand, null);
+assert.match(configuredPointCommand[0], /this\.hasPermission\(permission\)/);
+assert.match(configuredPointCommand[0], /this\.pendingPointCommand\.dispatch/);
+assert.match(configuredPointCommand[0], /buildPointCommand\([\s\S]*?writePoint,[\s\S]*?action,[\s\S]*?requestId,[\s\S]*?action === "set" \? value : undefined/);
 const manualCommand = source.match(/private manualCommand\(displayPath: string, value\?: number\): Promise<void> \{[\s\S]*?\n  \}\n\n  private sendCommand/);
 assert.notEqual(manualCommand, null);
-assert.match(manualCommand[0], /this\.hasPermission\(permission\)/);
-assert.match(manualCommand[0], /this\.pendingPointCommand\.dispatch/);
-assert.match(manualCommand[0], /buildPointCommand\([\s\S]*?writePoint,[\s\S]*?action,[\s\S]*?requestId,[\s\S]*?action === "set" \? value : undefined/);
+assert.match(manualCommand[0], /return this\.pointCommand\(displayPath, value\);/);
 assert.match(source, /private manualCanWrite\(displayPath: string\): boolean/);
 const staticMarkup = index.slice(0, index.indexOf('<script src="assets/vendor/simple-keyboard/index.js"></script>'));
 assert.doesNotMatch(staticMarkup, /data-manual-admin=/);
@@ -512,7 +595,19 @@ assert.match(index, /id="plcHostInput"[^>]*data-soft-keyboard="decimal"/);
 assert.match(index, /id="plcPortInput"[^>]*min="1"[^>]*max="65535"[^>]*data-soft-keyboard="numeric"/);
 assert.match(index, /id="plcUnitInput"[^>]*min="1"[^>]*max="247"[^>]*data-soft-keyboard="numeric"/);
 assert.match(index, /id="savePlcButton"[^>]*>保存地址并连接/);
-assert.match(index, /扫描、连接和轮询均由本机 Agent 执行/);
+for (const removedPLCCopy of [
+  "由本机 Agent 扫描、连接和轮询；在此填写独立子网和 PLC 地址。",
+  "扫描、连接和轮询均由本机 Agent 执行。保存地址会在首次读取成功后生效；本页不直接访问 PLC。",
+  "最近采样",
+  "最近错误",
+  "点位数",
+  "等待 PLC 实时点值"
+]) {
+  assert.equal(index.includes(removedPLCCopy), false, `${removedPLCCopy} should not remain in the PLC maintenance UI`);
+}
+for (const removedPLCDiagnostic of ["#plc-last-sample", "#plc-last-error", "#plc-point-count", "#plc-live-points", "点位表已同步，等待 PLC 读取"]) {
+  assert.equal((source + compiledSource).includes(removedPLCDiagnostic), false, `${removedPLCDiagnostic} should not remain in PLC rendering`);
+}
 assert.match(source, /export function buildPLCDeviceID\(host: string, port = defaultPLCPort, unitID = defaultPLCUnitID\): string/);
 assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?readPLCScanSettings\(\)[\s\S]*?buildPLCScan\(settings\.addressRange, settings\.port, settings\.unitID\)/);
 assert.match(source, /private sendPLCSave\(\): void \{[\s\S]*?readPLCEndpoint\(\)[\s\S]*?buildPLCDeviceID\(endpoint\.host, endpoint\.port, endpoint\.unitID\)/);
@@ -731,9 +826,17 @@ assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: true \}/)
 assert.match(keyboardSource, /hmi-soft-keyboard-statechange", \{ open: false \}/);
 assert.match(keyboardCSS, /\.soft-keyboard-dock \{[\s\S]*?box-shadow: none;[\s\S]*?transition: none;/);
 assert.match(keyboardCSS, /\.hmi-simple-keyboard\.hg-theme-default \.hg-button \{[\s\S]*?box-shadow: none;[\s\S]*?transition: none;/);
-assert.match(source, /private publishLiveState\(\): void \{[\s\S]*?this\.isUserInputActive\(\)[\s\S]*?this\.deferredLiveState = true;/);
+assert.match(source, /private publishLiveState\(force = false\): void \{[\s\S]*?this\.isUserInputActive\(\) && !force[\s\S]*?this\.emitState\(force\);/);
 assert.match(source, /message\.type === "points\.changed"[\s\S]*?this\.publishLiveState\(\);/);
-assert.match(index, /function applyServerState\(nextState, options = \{\}\) \{[\s\S]*?if \(inputInteractionActive\(\)\) \{[\s\S]*?deferredServerRender = true;[\s\S]*?return true;[\s\S]*?renderAll\(\);/);
+assert.match(source, /private emitState\(force = false\): void \{[\s\S]*?if \(force\) \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: true/);
+assert.match(compiledSource, /emitState\(force = false\) \{[\s\S]*?if \(force\) \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: true/);
+assert.match(source, /private getState\(\): Promise<\{ state: LegacyState \}> \{[\s\S]*?if \(!this\.demo && !this\.canSendRuntime\(\)\) \{[\s\S]*?runtime_unavailable/);
+assert.match(index, /function applyServerState\(nextState, options = \{\}\) \{[\s\S]*?incomingRevision < state\.revision && !options\.forceRender[\s\S]*?if \(inputInteractionActive\(\) && !options\.forceRender\) \{[\s\S]*?deferredServerRender = true;[\s\S]*?return true;[\s\S]*?renderAll\(\);/);
+assert.match(index, /window\.addEventListener\("block-hmi-state", event => \{[\s\S]*?const liveState = event\.detail && event\.detail\.state;[\s\S]*?applyServerState\(liveState, \{ forceRender: event\.detail\.forceRender === true \}\);[\s\S]*?void refreshBackendState\(\);/);
+assert.match(index, /id="targetInput" name="target" type="number"[^>]*value=""[^>]*placeholder="—"[^>]*required/);
+assert.doesNotMatch(index, /id="targetInput"[^>]*value="30"/);
+assert.match(index, /function syncPLCTargetInput\(\) \{[\s\S]*?\$\("#targetInput"\)\.value = isValidProductionTarget\(state\.target\) \? String\(state\.target\) : "";/);
+assert.match(index, /if \(demoMode\) assign\("#targetInput", Number\(production\.targetProduction\)/);
 assert.match(index, /window\.addEventListener\("hmi-soft-keyboard-statechange", \(\) => \{[\s\S]*?flushDeferredServerRender/);
 assert.match(index, /document\.addEventListener\("contextmenu", event => event\.preventDefault\(\)\);/);
 assert.doesNotMatch(index, /requestFullscreen|exitFullscreen|\balert\(|\bconfirm\(|\bprompt\(/);

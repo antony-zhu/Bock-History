@@ -222,7 +222,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`if (session === null || !frontendSessionIsActive(session, now))`,
 		`const renewed = renewFrontendSession(this.session, this.idleTimeoutSeconds);`,
 		`private setAuthSubmitBusy(form: HTMLFormElement, busy: boolean): void`,
-		`private publishLiveState(): void`,
+		`private publishLiveState(force = false): void`,
 		`window.addEventListener("hmi-soft-keyboard-statechange", () => this.flushDeferredLiveState());`,
 		`this.becomeGuest();`,
 		`new Event("block-hmi-guest")`,
@@ -264,15 +264,27 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!strings.Contains(modeCommand, `buildPointCommand(pointID, operation.action, requestId)`) {
 		t.Fatal("mode switching does not use the configured PLC toggle point")
 	}
-	if !regexp.MustCompile(`(?s)const enabled = this\.valueFor\("home\.machine\.enabled"\);.*?state\.mode = enabled === true \? "auto" : "manual";`).MatchString(source) {
-		t.Fatal("mode display is not derived from the PLC enabled point")
+	if !regexp.MustCompile(`(?s)const manual = this\.valueFor\("footer\.mode\.manual"\);.*?state\.running = null;.*?state\.mode = manual === true \? "manual" : manual === false \? "auto" : null;`).MatchString(source) {
+		t.Fatal("mode display must preserve an unknown PLC feedback state")
 	}
-	if !strings.Contains(source, `document.querySelectorAll<HTMLButtonElement>(".control-button:not(.manual-entry-button)")`) ||
-		!strings.Contains(source, `const startConfigured = this.config.bindings.some`) ||
-		!strings.Contains(source, `const available = runtimeEnabled && startConfigured && button === start;`) ||
+	if !regexp.MustCompile(`(?s)const singlePaused = this\.valueFor\("home\.cycle\.single"\);.*?state\.singlePaused = typeof singlePaused === "boolean" \? singlePaused : null;`).MatchString(source) ||
+		!regexp.MustCompile(`(?s)const framePaused = this\.valueFor\("home\.cycle\.frame"\);.*?state\.framePaused = typeof framePaused === "boolean" \? framePaused : null;`).MatchString(source) {
+		t.Fatal("cycle button state must preserve an unknown PLC feedback state")
+	}
+	if !regexp.MustCompile(`(?s)private numberFor\(displayPath: string\): number \| null \{.*?return typeof value === "number" && Number\.isFinite\(value\) \? value : null;`).MatchString(source) ||
+		!regexp.MustCompile(`(?s)const point = this\.values\.get\(binding\.readPoint\);.*?return point\?\.quality === "good" \? point\.value : undefined;`).MatchString(source) {
+		t.Fatal("non-good PLC values must not be rendered as numeric readings")
+	}
+	if !regexp.MustCompile(`(?s)clearTransientRuntime\(this\.values, this\.plcDevices\);\s*this\.publishLiveState\(true\);\s*this\.plcState = "disconnected";`).MatchString(source) {
+		t.Fatal("socket close does not publish the cleared PLC state")
+	}
+	if !strings.Contains(source, `document.querySelectorAll<HTMLButtonElement>(".control-button")`) ||
+		!strings.Contains(source, `const displayPath = button.dataset.pointAction;`) ||
+		!strings.Contains(source, `const configured = displayPath !== undefined && this.config.bindings.some`) ||
+		!strings.Contains(source, `const available = runtimeEnabled && configured;`) ||
 		!strings.Contains(source, `mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";`) ||
 		strings.Contains(source, `mode.dataset.backendUnavailable = "true";`) {
-		t.Fatal("production mode controls are not enabled only while the runtime is writable")
+		t.Fatal("home controls are not enabled only while their configured runtime point is writable")
 	}
 	modeChange := regexp.MustCompile(`(?s)async function requestModeChange\(\) \{.*?\n      \}\n\n      async function handleAction`).FindString(page)
 	if modeChange == "" ||
@@ -284,6 +296,32 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?s)async function runBackendMutation\(factory, options = \{\}\) \{.*?showToast\(\s*backendErrorMessage\(mutationError\)`).MatchString(page) {
 		t.Fatal("mode command failures are not surfaced through the HMI toast")
+	}
+	if !regexp.MustCompile(`(?s)id="dataTargetForm".*?id="dataTargetInput" type="number" min="1" max="9999" step="1".*?id="dataTargetSave" type="submit"`).MatchString(page) {
+		t.Fatal("production data page does not expose the bounded D1000 target control")
+	}
+	dataTargetSave := regexp.MustCompile(`(?s)async function saveDataTarget\(\) \{.*?\n      \}\n\n      async function loadProductionSettings`).FindString(page)
+	if dataTargetSave == "" ||
+		!strings.Contains(dataTargetSave, `requireFrontendPermission("operate")`) ||
+		!strings.Contains(dataTargetSave, `runtime.command("maintenance.production.target", value)`) ||
+		strings.Contains(dataTargetSave, `/api/maintenance/production`) {
+		t.Fatal("D1000 operator write does not use the configured PLC point directly")
+	}
+	if !regexp.MustCompile(`(?s)\$\("#dataTargetForm"\)\.addEventListener\("submit", event => \{.*?event\.preventDefault\(\);.*?void saveDataTarget\(\);`).MatchString(page) {
+		t.Fatal("D1000 target form is not bound to its save handler")
+	}
+	maintenanceProductionSave := regexp.MustCompile(`(?s)async function saveProductionSettings\(manual = false\) \{.*?\n      \}\n\n      async function savePiecesPerBox`).FindString(page)
+	if maintenanceProductionSave == "" || !strings.Contains(maintenanceProductionSave, `requireFrontendPermission("maintenance")`) {
+		t.Fatal("D1000 operator write unexpectedly relaxes maintenance page access")
+	}
+	if !regexp.MustCompile(`(?s)const state = \{.*?running: null,.*?mode: null,.*?target: null,.*?output: null,.*?cycle: null,`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)function renderStatus\(\) \{.*?running === true \? "运行中" : running === false \? "运行停止" : "—".*?mode === null \? "mixed".*?known \? item\.paused \? "恢复" : "暂停" : "—"`).MatchString(page) {
+		t.Fatal("missing PLC values still fall back to an operating status")
+	}
+	if !regexp.MustCompile(`(?s)function renderNumericReadout\(selector, value\) \{.*?output\.textContent = known \? String\(value\) : "—";`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)function renderMetrics\(\) \{.*?"目标完成度 —".*?progressFill\.hidden = true;`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)function renderAutomaticSpeed\(\) \{.*?const known = hasNumericValue\(incoming\);.*?slider\.hidden = !known;.*?slider\.disabled = pending \|\| !backendConnected \|\| !known;`).MatchString(page) {
+		t.Fatal("missing PLC numeric values are not rendered as unknown")
 	}
 	visibleCopy := regexp.MustCompile(`/api(?:/[a-z-]+)+`).ReplaceAllString(page+source, "")
 	if regexp.MustCompile(`(?i)\bv2\b`).MatchString(visibleCopy) {
@@ -304,9 +342,20 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)message\.type === "points\.changed".*?this\.publishLiveState\(\);`).MatchString(source) {
 		t.Fatal("PLC updates still render through the full input path instead of coalescing while an input is active")
 	}
+	if !regexp.MustCompile(`(?s)private emitState\(force = false\): void \{.*?if \(force\) \{.*?new CustomEvent\("block-hmi-state", \{.*?state: cloneState\(this\.currentState\(\)\), forceRender: true`).MatchString(source) ||
+		!regexp.MustCompile(`(?s)private getState\(\): Promise<\{ state: LegacyState \}> \{.*?if \(!this\.demo && !this\.canSendRuntime\(\)\) \{.*?runtime_unavailable`).MatchString(source) {
+		t.Fatal("disconnect state event does not carry an unknown snapshot while preserving the normal read gate")
+	}
 	if !strings.Contains(page, `function flushDeferredServerRender()`) ||
-		!regexp.MustCompile(`(?s)function applyServerState\(nextState, options = \{\}\).*?if \(inputInteractionActive\(\)\).*?deferredServerRender = true;.*?return true;`).MatchString(page) {
-		t.Fatal("input interaction does not defer full-page state rendering")
+		!regexp.MustCompile(`(?s)function applyServerState\(nextState, options = \{\}\).*?incomingRevision < state\.revision && !options\.forceRender.*?if \(inputInteractionActive\(\) && !options\.forceRender\).*?deferredServerRender = true;.*?return true;`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)window\.addEventListener\("block-hmi-state", event => \{.*?const liveState = event\.detail && event\.detail\.state;.*?applyServerState\(liveState, \{ forceRender: event\.detail\.forceRender === true \}\);.*?void refreshBackendState\(\);`).MatchString(page) {
+		t.Fatal("disconnect event does not immediately apply the cleared PLC state while normal input renders stay deferred")
+	}
+	if !regexp.MustCompile(`id="targetInput" name="target" type="number"[^>]*value=""[^>]*placeholder="—"[^>]*required`).MatchString(page) ||
+		regexp.MustCompile(`id="targetInput"[^>]*value="30"`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)function syncPLCTargetInput\(\) \{.*?\$\("#targetInput"\)\.value = isValidProductionTarget\(state\.target\) \? String\(state\.target\) : "";`).MatchString(page) ||
+		!strings.Contains(page, `if (demoMode) assign("#targetInput", Number(production.targetProduction)`) {
+		t.Fatal("maintenance D1000 input does not stay blank until a valid PLC point arrives")
 	}
 	for _, forbidden := range []string{`requestFullscreen`, `exitFullscreen`, `alert(`, `confirm(`, `prompt(`} {
 		if strings.Contains(page, forbidden) {
@@ -363,6 +412,69 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 }
 
+func TestPLCMaintenancePageKeepsOnlyConnectionControls(t *testing.T) {
+	index, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(index)
+	for _, required := range []string{
+		`<h2>PLC 通信</h2>`,
+		`id="plc-connection-value"`,
+		`id="plc-scan-button"`,
+		`id="savePlcButton"`,
+		`id="snapshot-button"`,
+		`id="plc-disconnect-button"`,
+		`id="plcSubnetInput"`,
+		`id="plcHostInput"`,
+		`id="plcPortInput"`,
+		`id="plcUnitInput"`,
+	} {
+		if !strings.Contains(page, required) {
+			t.Fatalf("PLC maintenance page is missing %q", required)
+		}
+	}
+	for _, removed := range []string{
+		`由本机 Agent 扫描、连接和轮询；在此填写独立子网和 PLC 地址。`,
+		`最近采样`,
+		`最近错误`,
+		`点位数`,
+		`id="plc-last-sample"`,
+		`id="plc-last-error"`,
+		`id="plc-point-count"`,
+		`id="plc-live-points"`,
+		`等待 PLC 实时点值`,
+		`id="plc-write-warning"`,
+	} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("PLC maintenance page still contains removed content %q", removed)
+		}
+	}
+
+	for _, path := range []string{"assets/hmi.mts", "assets/hmi.mjs"} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(contents)
+		for _, removed := range []string{
+			`点位表已同步，等待 PLC 读取`,
+			`#plc-last-sample`,
+			`#plc-last-error`,
+			`#plc-point-count`,
+			`#plc-live-points`,
+			`等待 PLC 实时点值`,
+		} {
+			if strings.Contains(source, removed) {
+				t.Fatalf("%s still renders removed PLC diagnostics %q", path, removed)
+			}
+		}
+		if !strings.Contains(source, `connection.textContent = plcStateText(this.plcState);`) {
+			t.Fatalf("%s no longer updates the retained PLC connection state", path)
+		}
+	}
+}
+
 func TestDemoShellUsesFixedIndustrialViewport(t *testing.T) {
 	contents, err := os.ReadFile("demo-shell.html")
 	if err != nil {
@@ -412,7 +524,7 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 		`function updateManualNumberInput(input, displayPath, fallback = "") {`,
 		`if (demoManualStart) switchPage("manual");`,
 		`["home", "manual", "data", "alarm", "history"].includes(name)`,
-		`.control-button:not(.manual-entry-button)`,
+		`.control-button`,
 		`id="manualXSpeedInput" type="number" step="any" inputmode="decimal"`,
 		`id="manualZSpeedInput" type="number" step="any" inputmode="decimal"`,
 		`input.step = "any";`,
@@ -445,9 +557,9 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 			t.Fatalf("manual page is missing %q", required)
 		}
 	}
-	if strings.Contains(page, `id="manualPageEntry" type="button" data-action=`) ||
-		!strings.Contains(page, `$("#manualPageEntry").addEventListener("click", () => switchPage("manual"));`) {
-		t.Fatal("home manual entry no longer performs public-only page navigation")
+	if !strings.Contains(page, `id="manualPageEntry" type="button" data-point-action="home.homing"`) ||
+		strings.Contains(page, `$("#manualPageEntry").addEventListener("click", () => switchPage("manual"));`) {
+		t.Fatal("home manual entry is not replaced by the configured homing action")
 	}
 	markup := strings.Split(page, `<script src="assets/vendor/simple-keyboard/index.js"></script>`)[0]
 	if strings.Contains(markup, `data-manual-admin=`) {
@@ -518,12 +630,15 @@ func TestManualPageKeepsDemoInteractionsSeparateFromPLCCommands(t *testing.T) {
 		}
 	}
 	manualCommand := regexp.MustCompile(`(?s)private manualCommand\(displayPath: string, value\?: number\): Promise<void> \{.*?\n  \}\n\n  private sendCommand`).FindString(source)
+	pointCommand := regexp.MustCompile(`(?s)private pointCommand\(displayPath: string, value\?: number\): Promise<void> \{.*?\n  \}\n\n  private manualBinding`).FindString(source)
 	if manualCommand == "" ||
-		!strings.Contains(manualCommand, `this.hasPermission(permission)`) ||
-		!strings.Contains(manualCommand, `this.pendingPointCommand.dispatch`) ||
-		!strings.Contains(manualCommand, `buildPointCommand(`) ||
-		!strings.Contains(manualCommand, `action === "set" ? value : undefined`) {
-		t.Fatal("manual command bridge does not enforce permissions and dispatch configured PLC writes")
+		!strings.Contains(manualCommand, `return this.pointCommand(displayPath, value);`) ||
+		pointCommand == "" ||
+		!strings.Contains(pointCommand, `this.hasPermission(permission)`) ||
+		!strings.Contains(pointCommand, `this.pendingPointCommand.dispatch`) ||
+		!strings.Contains(pointCommand, `buildPointCommand(`) ||
+		!strings.Contains(pointCommand, `action === "set" ? value : undefined`) {
+		t.Fatal("manual command bridge does not delegate to the permission-gated configured PLC writer")
 	}
 }
 
@@ -593,13 +708,81 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 	}
 
 	defaultConfig := readConfig("assets/points.json")
-	if defaultConfig.ScanIntervalMs != 50 || len(defaultConfig.Points) != 8 || len(defaultConfig.Bindings) == 0 {
+	if defaultConfig.ScanIntervalMs != 50 || len(defaultConfig.Points) != 27 || len(defaultConfig.Bindings) == 0 {
 		t.Fatalf("incomplete default points.json: %+v", defaultConfig)
 	}
-	for _, point := range defaultConfig.Points {
-		if point["type"] != "bool" || point["writeMethod"] != "maskWrite" || point["registerCount"] != nil || point["wordOrder"] != nil {
-			t.Fatalf("default profile exposes an unverified numeric point: %+v", point)
+	findDefaultPoint := func(pointID string) map[string]any {
+		t.Helper()
+		for _, point := range defaultConfig.Points {
+			if point["pointId"] == pointID {
+				return point
+			}
 		}
+		t.Fatalf("default profile omits point %q", pointID)
+		return nil
+	}
+	for _, pointID := range []string{
+		"home.homing", "home.action.reset", "home.action.restart", "home.action.pause", "home.action.clear", "home.cycle.single", "home.cycle.frame",
+	} {
+		point := findDefaultPoint(pointID)
+		if point["type"] != "bool" || point["writeMethod"] != "maskWrite" {
+			t.Fatalf("default profile pulse point %q is incomplete: %+v", pointID, point)
+		}
+	}
+	for _, expected := range []struct {
+		pointID string
+		address string
+	}{
+		{pointID: "home.cycle.single.feedback", address: "D506.11"},
+		{pointID: "home.cycle.frame.feedback", address: "D506.12"},
+	} {
+		point := findDefaultPoint(expected.pointID)
+		if point["address"] != expected.address || point["type"] != "bool" || point["access"] != "read" || point["readPoint"] != expected.pointID || point["writePoint"] != nil || point["writeMethod"] != nil {
+			t.Fatalf("default profile feedback point %q is incomplete: %+v", expected.pointID, point)
+		}
+	}
+	automaticSpeed := findDefaultPoint("home.speed.automatic")
+	if automaticSpeed["address"] != "D522" || automaticSpeed["type"] != "float32" || automaticSpeed["access"] != "read_write" || automaticSpeed["writeMethod"] != "fc10" || automaticSpeed["registerCount"] != float64(2) || automaticSpeed["wordOrder"] != "high-low" {
+		t.Fatalf("default profile automatic-speed point is incomplete: %+v", automaticSpeed)
+	}
+	productionTarget := findDefaultPoint("maintenance.production.target")
+	if productionTarget["address"] != "D1000" || productionTarget["type"] != "int32" || productionTarget["access"] != "read_write" || productionTarget["writeMethod"] != "fc10" || productionTarget["registerCount"] != float64(2) || productionTarget["wordOrder"] != "high-low" {
+		t.Fatalf("default profile production target point is incomplete: %+v", productionTarget)
+	}
+	for _, pointID := range []string{"production.output.today", "production.quality.passed"} {
+		point := findDefaultPoint(pointID)
+		if point["type"] != "int32" || point["access"] != "read" || point["registerCount"] != float64(2) || point["wordOrder"] != "high-low" {
+			t.Fatalf("default profile production read point %q is incomplete: %+v", pointID, point)
+		}
+	}
+	findDefaultBinding := func(displayPath string) *binding {
+		t.Helper()
+		for index := range defaultConfig.Bindings {
+			if defaultConfig.Bindings[index].DisplayPath == displayPath {
+				return &defaultConfig.Bindings[index]
+			}
+		}
+		t.Fatalf("default profile omits binding %q", displayPath)
+		return nil
+	}
+	for _, expected := range []struct {
+		displayPath string
+		readPoint   string
+		writePoint  string
+	}{
+		{displayPath: "home.cycle.single", readPoint: "home.cycle.single.feedback", writePoint: "home.cycle.single"},
+		{displayPath: "home.cycle.frame", readPoint: "home.cycle.frame.feedback", writePoint: "home.cycle.frame"},
+	} {
+		binding := findDefaultBinding(expected.displayPath)
+		if binding.ReadPoint == nil || *binding.ReadPoint != expected.readPoint || binding.WritePoint == nil || *binding.WritePoint != expected.writePoint || binding.Action != "pulse" || binding.Permission != "operate" || binding.State != "configured" {
+			t.Fatalf("default profile cycle binding %q is incomplete: %+v", expected.displayPath, binding)
+		}
+	}
+	productionTargetBinding := findDefaultBinding("maintenance.production.target")
+	if productionTargetBinding.ReadPoint == nil || *productionTargetBinding.ReadPoint != "maintenance.production.target" ||
+		productionTargetBinding.WritePoint == nil || *productionTargetBinding.WritePoint != "maintenance.production.target" ||
+		productionTargetBinding.Action != "set" || productionTargetBinding.Permission != "operate" || productionTargetBinding.State != "configured" {
+		t.Fatalf("default profile production target binding is incomplete: %+v", productionTargetBinding)
 	}
 	for _, displayPath := range []string{
 		"manual.motion.x.absolute.target.parameter", "manual.motion.z.absolute.target.parameter",

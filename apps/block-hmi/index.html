@@ -191,6 +191,45 @@
       border-right: 1px solid rgba(255, 255, 255, 0.16);
     }
 
+    .home-speed-control {
+      display: grid;
+      grid-template-columns: auto minmax(120px, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 32px;
+      color: inherit;
+    }
+
+    .home-speed-copy {
+      display: grid;
+      gap: 1px;
+    }
+
+    .home-speed-copy strong {
+      font-size: 13px;
+      font-weight: 620;
+    }
+
+    .home-speed-copy small {
+      color: #6e6e73;
+      font-size: 10px;
+    }
+
+    .home-speed-control input[type="range"] {
+      width: 100%;
+      min-width: 0;
+      accent-color: var(--blue);
+    }
+
+    .home-speed-control output {
+      min-width: 42px;
+      color: #005fbd;
+      font-size: 16px;
+      font-weight: 650;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
     .system-row {
       display: flex;
       align-items: center;
@@ -230,6 +269,14 @@
         0 0 0 6px rgba(255, 190, 11, 0.1),
         inset 0 2px 5px rgba(255, 255, 255, 0.5),
         0 4px 9px rgba(0, 0, 0, 0.35);
+    }
+
+    .lamp.unknown {
+      background: #8e8e93;
+      box-shadow:
+        0 0 0 6px rgba(142, 142, 147, 0.12),
+        inset 0 2px 5px rgba(255, 255, 255, 0.45),
+        0 4px 9px rgba(0, 0, 0, 0.28);
     }
 
     .lamp.fault {
@@ -1547,6 +1594,49 @@
       letter-spacing: -0.04em;
     }
 
+    .data-target-form {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .data-target-form input {
+      width: 104px;
+      height: 34px;
+      padding: 0 10px;
+      color: #1d1d1f;
+      border: 1px solid rgba(29, 29, 31, 0.14);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.9);
+      font: inherit;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .data-target-form input:focus {
+      outline: none;
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.14);
+    }
+
+    .data-target-form button {
+      min-width: 52px;
+      height: 34px;
+      padding: 0 12px;
+      color: #fff;
+      border: 0;
+      border-radius: 10px;
+      background: var(--blue);
+      font: inherit;
+      font-weight: 620;
+    }
+
+    .data-target-form input:disabled,
+    .data-target-form button:disabled {
+      cursor: not-allowed;
+      opacity: 0.48;
+    }
+
     .data-footnote {
       margin-top: 28px;
       padding: 0 4px;
@@ -2166,6 +2256,28 @@
 
       .data-readout output {
         font-size: 24px;
+      }
+
+      .data-target-form {
+        gap: 4px;
+        margin-top: 6px;
+      }
+
+      .data-target-form input,
+      .data-target-form button {
+        height: 24px;
+        border-radius: 7px;
+        font-size: 9px;
+      }
+
+      .data-target-form input {
+        width: 62px;
+        padding: 0 6px;
+      }
+
+      .data-target-form button {
+        min-width: 36px;
+        padding: 0 7px;
       }
 
       .data-footnote {
@@ -3886,25 +3998,6 @@
       width: 100%;
     }
 
-    .plc-live-points {
-      background: rgba(29, 29, 31, 0.05);
-      border-radius: 14px;
-      color: #405866;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 13px;
-      line-height: 1.55;
-      margin: 16px 0;
-      max-height: 180px;
-      overflow: auto;
-      padding: 13px 14px;
-      white-space: pre-wrap;
-    }
-
-    .plc-write-warning {
-      border-left: 3px solid #ff9f0a;
-      padding-left: 12px;
-    }
-
     .account-settings-panel #authAccount {
       padding-bottom: 18px;
     }
@@ -4063,8 +4156,7 @@
       background: #ffefbc;
     }
 
-    /* 手动页只呈现本地演示交互；角色分组和点位写入保持在现有桥接之外。 */
-    .manual-entry-button {
+    .home-homing-button {
       color: #005fbd;
       border-color: #bfd7f4;
       background: #eef6ff;
@@ -4602,11 +4694,19 @@
         <section class="page page-home" data-page="home">
           <div class="home-grid">
             <div class="home-left">
+              <section class="home-speed-control" aria-labelledby="automaticSpeedTitle">
+                <div class="home-speed-copy">
+                  <strong id="automaticSpeedTitle">自动运行速度</strong>
+                  <small id="automaticSpeedHint">—</small>
+                </div>
+                <input id="automaticSpeedSlider" type="range" min="0" max="300" step="1" value="0" aria-describedby="automaticSpeedHint" hidden>
+                <output id="automaticSpeedPercent">—</output>
+              </section>
               <div class="system-row">
                 <strong>系统状态</strong>
                 <span class="colon">:</span>
-                <span class="lamp running" id="systemLamp" aria-hidden="true"></span>
-                <span class="status-text" id="systemStatus">运行中</span>
+                <span class="lamp unknown" id="systemLamp" aria-hidden="true"></span>
+                <span class="status-text" id="systemStatus">—</span>
               </div>
 
               <div class="pick-status" aria-label="抓取位置状态">
@@ -4634,36 +4734,36 @@
 
             <div class="home-right">
               <div class="action-grid" aria-label="设备控制">
-                <button class="control-button" type="button" data-action="clear">清空料仓</button>
-                <button class="control-button" type="button" data-action="start">启动</button>
-                <button class="control-button" type="button" data-action="pause">暂停</button>
-                <button class="control-button" type="button" data-action="reset">复位</button>
-                <button class="control-button" type="button" data-action="single" aria-pressed="false">单件循环<br>暂停</button>
-                <button class="control-button" type="button" data-action="frame" aria-pressed="false">单框循环<br>暂停</button>
+                <button class="control-button" type="button" data-action="clear" data-point-action="home.action.clear">清空料仓</button>
+                <button class="control-button" type="button" data-action="start" data-point-action="home.action.restart">启动</button>
+                <button class="control-button" type="button" data-action="pause" data-point-action="home.action.pause">暂停</button>
+                <button class="control-button" type="button" data-action="reset" data-point-action="home.action.reset">复位</button>
+                <button class="control-button" type="button" data-action="single" data-point-action="home.cycle.single" aria-pressed="false">单件循环<br>暂停</button>
+                <button class="control-button" type="button" data-action="frame" data-point-action="home.cycle.frame" aria-pressed="false">单框循环<br>暂停</button>
                 <button class="control-button" type="button" data-action="inspect">抽检</button>
-                <button class="control-button manual-entry-button" id="manualPageEntry" type="button">手动模式</button>
+                <button class="control-button home-homing-button" id="manualPageEntry" type="button" data-point-action="home.homing">回原</button>
               </div>
 
               <div class="metric-row" aria-label="生产指标">
                 <div class="metric">
                   <div class="metric-label">单件节拍</div>
                   <div class="metric-value">
-                    <output class="value-box" id="homeCycle">30</output>
-                    <span>秒（S）</span>
+                    <output class="value-box" id="homeCycle">—</output>
+                    <span hidden>秒（S）</span>
                   </div>
                 </div>
                 <div class="metric">
                   <div class="metric-label">当日产能</div>
                   <div class="metric-value">
-                    <output class="value-box" id="homeOutput">30</output>
-                    <span>件</span>
+                    <output class="value-box" id="homeOutput">—</output>
+                    <span hidden>件</span>
                   </div>
                 </div>
                 <div class="metric">
                   <div class="metric-label">合格率</div>
                   <div class="metric-value">
-                    <output class="value-box" id="homePassRate">100</output>
-                    <span>%</span>
+                    <output class="value-box" id="homePassRate">—</output>
+                    <span hidden>%</span>
                   </div>
                 </div>
               </div>
@@ -4734,53 +4834,58 @@
         <section class="page" data-page="data" hidden>
           <div class="data-layout">
             <div class="data-grid">
-              <div class="data-point">
+              <div class="data-point data-target-point">
                 <div class="data-label">当日目标产能</div>
-                <div class="data-readout"><output id="dataTarget">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataTarget">—</output><span hidden>件</span></div>
+                <form class="data-target-form" id="dataTargetForm">
+                  <label class="sr-only" for="dataTargetInput">今日目标产能</label>
+                  <input id="dataTargetInput" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" placeholder="—" data-soft-keyboard="numeric" data-soft-label="今日目标产能">
+                  <button id="dataTargetSave" type="submit">保存</button>
+                </form>
               </div>
               <div class="data-point">
                 <div class="data-label">单件节拍</div>
-                <div class="data-readout"><output id="dataCycle">30</output><span>秒（S）</span></div>
+                <div class="data-readout"><output id="dataCycle">—</output><span hidden>秒（S）</span></div>
               </div>
               <div class="data-point">
-                <div class="data-label">当前产能</div>
-                <div class="data-readout"><output id="dataOutput">30</output><span>件</span></div>
+                <div class="data-label">当日产能</div>
+                <div class="data-readout"><output id="dataOutput">—</output><span hidden>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">设备稼动率</div>
-                <div class="data-readout"><output id="dataOee">92</output><span>%</span></div>
+                <div class="data-readout"><output id="dataOee">—</output><span hidden>%</span></div>
               </div>
 
               <div class="data-point">
                 <div class="data-label">抽检数量</div>
-                <div class="data-readout"><output id="dataInspected">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataInspected">—</output><span hidden>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">合格数量</div>
-                <div class="data-readout"><output id="dataPassed">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataPassed">—</output><span hidden>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">NG数量</div>
-                <div class="data-readout"><output id="dataNg">0</output><span>件</span></div>
+                <div class="data-readout"><output id="dataNg">—</output><span hidden>件</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">待检数量</div>
-                <div class="data-readout"><output id="dataPending">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataPending">—</output><span hidden>件</span></div>
               </div>
 
               <div class="data-point wide">
                 <div class="data-label">料仓毛坯</div>
-                <div class="data-readout"><output id="dataBlank">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataBlank">—</output><span hidden>件</span></div>
               </div>
               <div class="data-point wide">
                 <div class="data-label">料仓成品</div>
-                <div class="data-readout"><output id="dataFinished">30</output><span>件</span></div>
+                <div class="data-readout"><output id="dataFinished">—</output><span hidden>件</span></div>
               </div>
             </div>
 
             <div class="data-footnote">
-              <span id="progressText">目标完成度 100%</span>
-              <div class="progress-track" aria-hidden="true"><span id="progressFill"></span></div>
+              <span id="progressText">目标完成度 —</span>
+              <div class="progress-track" aria-hidden="true"><span id="progressFill" hidden></span></div>
               <span id="dataFreshness">数据刷新：正在连接</span>
             </div>
           </div>
@@ -4805,7 +4910,7 @@
                 <form class="settings-form production-settings-form" id="settingsForm">
                   <div class="settings-row">
                     <label for="targetInput">产能设定：</label>
-                    <input id="targetInput" name="target" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="30" required data-soft-keyboard="numeric" data-soft-label="产能设定" data-production-setting aria-describedby="settingsValidation productionSaveState">
+                    <input id="targetInput" name="target" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="" placeholder="—" required data-soft-keyboard="numeric" data-soft-label="产能设定" data-production-setting aria-describedby="settingsValidation productionSaveState">
                     <span>件</span>
                   </div>
                   <div class="settings-row">
@@ -4862,7 +4967,7 @@
               </section>
 
               <section class="maintenance-panel" id="plcSettingsPanel" role="tabpanel" tabindex="0" aria-labelledby="maintenancePLCTab" data-maintenance-panel="plc" hidden>
-                <header class="maintenance-panel-head"><span>03</span><div><h2>PLC 通信</h2><p>由本机 Agent 扫描、连接和轮询；在此填写独立子网和 PLC 地址。</p></div></header>
+                <header class="maintenance-panel-head"><span>03</span><div><h2>PLC 通信</h2></div></header>
                 <section class="plc-control-sheet" id="plc-control-sheet" aria-labelledby="plc-title">
                   <div class="auth-account-head"><strong id="plc-title">PLC 连接</strong><span id="plc-status" role="status">PLC 未连接</span></div>
                   <div class="plc-config-grid" aria-label="PLC 扫描与连接配置">
@@ -4871,14 +4976,9 @@
                     <label for="plcPortInput"><span>端口</span><input id="plcPortInput" type="number" min="1" max="65535" step="1" inputmode="numeric" autocomplete="off" value="502" data-soft-keyboard="numeric" data-soft-label="端口" aria-describedby="plc-status"></label>
                     <label for="plcUnitInput"><span>Unit ID</span><input id="plcUnitInput" type="number" min="1" max="247" step="1" inputmode="numeric" autocomplete="off" value="1" data-soft-keyboard="numeric" data-soft-label="Unit ID" aria-describedby="plc-status"></label>
                   </div>
-                  <dl class="connection-facts plc-facts" aria-label="PLC 当前只读状态">
+                  <dl class="connection-facts plc-facts" aria-label="PLC 连接状态">
                     <div><dt>连接</dt><dd id="plc-connection-value">PLC 未连接</dd></div>
-                    <div><dt>最近采样</dt><dd id="plc-last-sample">—</dd></div>
-                    <div><dt>最近错误</dt><dd id="plc-last-error">—</dd></div>
-                    <div><dt>点位数</dt><dd id="plc-point-count">—</dd></div>
                   </dl>
-                  <div class="plc-live-points" id="plc-live-points" aria-live="polite">等待 PLC 实时点值</div>
-                  <p class="settings-note plc-write-warning" id="plc-write-warning">扫描、连接和轮询均由本机 Agent 执行。保存地址会在首次读取成功后生效；本页不直接访问 PLC。</p>
                   <div class="plc-actions"><button id="plc-scan-button" type="button" disabled>扫描 PLC</button><button id="savePlcButton" type="button" disabled>保存地址并连接</button><button id="snapshot-button" type="button" disabled>刷新状态</button><button id="plc-disconnect-button" type="button" disabled>断开 PLC</button></div>
                   <ul id="plc-candidates" aria-live="polite"><li>尚未扫描 PLC</li></ul>
                 </section>
@@ -5002,6 +5102,12 @@
         value: function (displayPath) { return window.HMIBackend && window.HMIBackend !== hmiBackendProxy ? window.HMIBackend.manual.value(displayPath) : undefined; },
         canWrite: function (displayPath) { return Boolean(window.HMIBackend && window.HMIBackend !== hmiBackendProxy && window.HMIBackend.manual.canWrite(displayPath)); },
         command: function (displayPath, value) { return window.BlockHMIReady.then(function (backend) { return backend.manual.command(displayPath, value); }); }
+      },
+      points: {
+        binding: function (displayPath) { return window.HMIBackend && window.HMIBackend !== hmiBackendProxy ? window.HMIBackend.points.binding(displayPath) : null; },
+        value: function (displayPath) { return window.HMIBackend && window.HMIBackend !== hmiBackendProxy ? window.HMIBackend.points.value(displayPath) : undefined; },
+        canWrite: function (displayPath) { return Boolean(window.HMIBackend && window.HMIBackend !== hmiBackendProxy && window.HMIBackend.points.canWrite(displayPath)); },
+        command: function (displayPath, value) { return window.BlockHMIReady.then(function (backend) { return backend.points.command(displayPath, value); }); }
       }
     };
     window.HMIBackend = hmiBackendProxy;
@@ -5049,23 +5155,23 @@
 
       const state = {
         revision: 0,
-        running: true,
-        mode: "auto",
-        singlePaused: false,
-        framePaused: false,
+        running: null,
+        mode: null,
+        singlePaused: null,
+        framePaused: null,
         theme: "light",
-        target: 30,
-        output: 30,
-        cycle: 30,
-        oee: 92,
-        inspected: 30,
-        passed: 30,
-        ng: 0,
-        pending: 30,
-        blank: 30,
-        finished: 30,
-        toolLimit: 100,
-        inspectInterval: 30,
+        target: null,
+        output: null,
+        cycle: null,
+        oee: null,
+        inspected: null,
+        passed: null,
+        ng: null,
+        pending: null,
+        blank: null,
+        finished: null,
+        toolLimit: null,
+        inspectInterval: null,
         bins: [
           { type: "full", label: "满料" },
           { type: "warning", label: "需换料" },
@@ -5123,6 +5229,9 @@
       let backendPollTimer = 0;
       let deferredServerRender = false;
       let settingsDirty = false;
+      let automaticSpeedDraft = null;
+      let automaticSpeedWriteInFlight = false;
+      let productionTargetWriteInFlight = false;
       const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
       const demoManualStart = demoMode && new URLSearchParams(window.location.search).get("manual") === "1";
       const manualState = {
@@ -5269,7 +5378,7 @@
 
       function updateControlAvailability() {
         const unavailable = !backendConnected || backendWriteInFlight;
-        $$(".control-button:not(.manual-entry-button)").forEach(button => {
+        $$(".control-button").forEach(button => {
           const blocked = unavailable || button.dataset.backendUnavailable === "true";
           button.disabled = frontendPermissions.operate && blocked;
           button.setAttribute("aria-disabled", String(!frontendPermissions.operate || blocked));
@@ -5287,6 +5396,7 @@
           button.disabled = frontendPermissions.operate && blocked;
           button.setAttribute("aria-disabled", String(!frontendPermissions.operate || blocked));
         });
+        renderDataTargetControl();
         root.dataset.backendBusy = backendWriteInFlight ? "true" : "false";
       }
 
@@ -5309,7 +5419,7 @@
       function applyServerState(nextState, options = {}) {
         if (!nextState || typeof nextState !== "object") return false;
         const incomingRevision = Number(nextState.revision) || 0;
-        if (incomingRevision && state.revision && incomingRevision < state.revision) return false;
+        if (incomingRevision && state.revision && incomingRevision < state.revision && !options.forceRender) return false;
 
         serverStateFields.forEach(key => {
           if (Object.prototype.hasOwnProperty.call(nextState, key)) state[key] = nextState[key];
@@ -5317,8 +5427,9 @@
         if (!Array.isArray(state.bins)) state.bins = [];
         if (!Array.isArray(state.alarms)) state.alarms = [];
         if (!Array.isArray(state.history)) state.history = [];
+        syncPLCTargetInput();
 
-        if (inputInteractionActive()) {
+        if (inputInteractionActive() && !options.forceRender) {
           deferredServerRender = true;
           return true;
         }
@@ -5515,14 +5626,78 @@
           if (!Number.isInteger(value) || value < 1 || (!force && canSkip)) return;
           input.value = String(value);
         };
-        assign("#targetInput", Number(production.targetProduction), settingsDirty || document.activeElement === $("#targetInput"));
+        if (demoMode) assign("#targetInput", Number(production.targetProduction), settingsDirty || document.activeElement === $("#targetInput"));
         assign("#toolInput", Number(production.toolChangePieces), settingsDirty || document.activeElement === $("#toolInput"));
         assign("#inspectInput", Number(production.inspectionInterval), settingsDirty || document.activeElement === $("#inspectInput"));
         assign("#piecesPerBoxInput", Number(production.piecesPerBox), document.activeElement === $("#piecesPerBoxInput"));
-        if (Number.isInteger(Number(production.targetProduction))) state.target = Number(production.targetProduction);
+        if (demoMode && Number.isInteger(Number(production.targetProduction))) state.target = Number(production.targetProduction);
         if (Number.isInteger(Number(production.toolChangePieces))) state.toolLimit = Number(production.toolChangePieces);
         if (Number.isInteger(Number(production.inspectionInterval))) state.inspectInterval = Number(production.inspectionInterval);
         renderMetrics();
+      }
+
+      function syncPLCTargetInput() {
+        if (demoMode || settingsDirty || document.activeElement === $("#targetInput")) return;
+        $("#targetInput").value = isValidProductionTarget(state.target) ? String(state.target) : "";
+      }
+
+      function isValidProductionTarget(value) {
+        return Number.isInteger(value) && value >= 1 && value <= 9999;
+      }
+
+      function renderDataTargetControl() {
+        const input = $("#dataTargetInput");
+        const save = $("#dataTargetSave");
+        const binding = pointBinding("maintenance.production.target");
+        const configured = Boolean(
+          binding &&
+          binding.state === "configured" &&
+          binding.writePoint &&
+          binding.action === "set"
+        );
+        const unavailable = !backendConnected || backendWriteInFlight || productionTargetWriteInFlight || !configured;
+        const disabled = frontendPermissions.operate && unavailable;
+        input.disabled = disabled;
+        save.disabled = disabled;
+        input.setAttribute("aria-disabled", String(!frontendPermissions.operate || unavailable));
+        save.setAttribute("aria-disabled", String(!frontendPermissions.operate || unavailable));
+
+        if (document.activeElement === input || productionTargetWriteInFlight) return;
+        input.value = isValidProductionTarget(state.target) ? String(state.target) : "";
+      }
+
+      async function saveDataTarget() {
+        if (productionTargetWriteInFlight || !requireFrontendPermission("operate")) return false;
+
+        const input = $("#dataTargetInput");
+        const value = Number(input.value);
+        if (!isValidProductionTarget(value)) {
+          showToast("今日目标产能必须为 1 到 9999 的整数", "warning");
+          return false;
+        }
+
+        const runtime = pointRuntime();
+        const binding = pointBinding("maintenance.production.target");
+        if (!runtime || !binding || binding.state !== "configured" || !binding.writePoint || binding.action !== "set" || !backendConnected) {
+          showToast("今日目标产能点位当前不可写", "danger");
+          return false;
+        }
+
+        productionTargetWriteInFlight = true;
+        updateControlAvailability();
+        try {
+          await runtime.command("maintenance.production.target", value);
+          state.target = value;
+          renderMetrics();
+          showToast("今日目标产能已写入 PLC", "success");
+          return true;
+        } catch (error) {
+          showToast(backendErrorMessage(error), "danger");
+          return false;
+        } finally {
+          productionTargetWriteInFlight = false;
+          updateControlAvailability();
+        }
       }
 
       async function loadProductionSettings() {
@@ -5565,7 +5740,22 @@
         updateControlAvailability();
         setMaintenanceSaveState("#productionSaveState", "正在保存生产参数…", "saving");
         try {
-          const production = await maintenanceRequest("/api/maintenance/production", "PATCH", patch);
+          let production;
+          if (demoMode) {
+            production = await maintenanceRequest("/api/maintenance/production", "PATCH", patch);
+          } else {
+            const runtime = pointRuntime();
+            const binding = pointBinding("maintenance.production.target");
+            if (!runtime || !binding || binding.state === "pending" || !binding.writePoint) {
+              throw new Error("今日目标产能点位未配置");
+            }
+            await runtime.command("maintenance.production.target", patch.targetProduction);
+            state.target = patch.targetProduction;
+            production = await maintenanceRequest("/api/maintenance/production", "PATCH", {
+              toolChangePieces: patch.toolChangePieces,
+              inspectionInterval: patch.inspectionInterval
+            });
+          }
           updateProductionInputs(production, true);
           settingsDirty = false;
           setMaintenanceSaveState("#productionSaveState", "生产参数已保存", "saved");
@@ -5759,29 +5949,46 @@
         }
       }
 
+      function hasNumericValue(value) {
+        return typeof value === "number" && Number.isFinite(value);
+      }
+
+      function renderNumericReadout(selector, value) {
+        const output = $(selector);
+        const known = hasNumericValue(value);
+        output.textContent = known ? String(value) : "—";
+        const unit = output.nextElementSibling;
+        if (unit instanceof HTMLElement) unit.hidden = !known;
+      }
+
       function renderStatus() {
         const lamp = $("#systemLamp");
         const modeToggle = $("#modeToggle");
-        lamp.className = `lamp ${state.running ? "running" : "paused"}`;
-        $("#systemStatus").textContent = state.running ? "运行中" : "运行停止";
+        const running = state.running === true ? true : state.running === false ? false : null;
+        lamp.className = `lamp ${running === true ? "running" : running === false ? "paused" : "unknown"}`;
+        $("#systemStatus").textContent = running === true ? "运行中" : running === false ? "运行停止" : "—";
 
-        $("#modeCn").textContent = state.mode === "auto" ? "自动" : "手动";
-        modeToggle.classList.toggle("is-auto", state.mode === "auto");
-        modeToggle.classList.toggle("is-manual", state.mode === "manual");
-        modeToggle.setAttribute("aria-pressed", String(state.mode === "manual"));
+        const mode = state.mode === "auto" || state.mode === "manual" ? state.mode : null;
+        $("#modeCn").textContent = mode === "auto" ? "自动" : mode === "manual" ? "手动" : "—";
+        modeToggle.classList.toggle("is-auto", mode === "auto");
+        modeToggle.classList.toggle("is-manual", mode === "manual");
+        modeToggle.setAttribute("aria-pressed", mode === null ? "mixed" : String(mode === "manual"));
         modeToggle.setAttribute(
           "aria-label",
-          state.mode === "auto"
+          mode === "auto"
             ? "当前为自动模式，点击切换为手动模式"
-            : "当前为手动模式，点击切换为自动模式"
+            : mode === "manual"
+              ? "当前为手动模式，点击切换为自动模式"
+              : "当前模式未确认"
         );
         [
-          { action: "single", label: "单件循环", paused: Boolean(state.singlePaused) },
-          { action: "frame", label: "单框循环", paused: Boolean(state.framePaused) }
+          { action: "single", label: "单件循环", paused: state.singlePaused },
+          { action: "frame", label: "单框循环", paused: state.framePaused }
         ].forEach(item => {
           const button = $(`[data-action="${item.action}"]`);
-          button.setAttribute("aria-pressed", String(item.paused));
-          button.innerHTML = `${item.label}<br>${item.paused ? "恢复" : "暂停"}`;
+          const known = typeof item.paused === "boolean";
+          button.setAttribute("aria-pressed", known ? String(item.paused) : "mixed");
+          button.innerHTML = `${item.label}<br>${known ? item.paused ? "恢复" : "暂停" : "—"}`;
         });
       }
 
@@ -5797,27 +6004,39 @@
       }
 
       function renderMetrics() {
-        const passRate = state.inspected > 0
+        const passRate = hasNumericValue(state.inspected) && state.inspected > 0 && hasNumericValue(state.passed)
           ? Math.round((state.passed / state.inspected) * 100)
-          : 100;
-        const progress = Math.min(100, Math.round((state.output / Math.max(1, state.target)) * 100));
+          : null;
+        const progress = hasNumericValue(state.output) && hasNumericValue(state.target) && state.target > 0
+          ? Math.min(100, Math.round((state.output / state.target) * 100))
+          : null;
 
-        $("#homeCycle").textContent = state.cycle;
-        $("#homeOutput").textContent = state.output;
-        $("#homePassRate").textContent = passRate;
+        renderNumericReadout("#homeCycle", state.cycle);
+        renderNumericReadout("#homeOutput", state.output);
+        renderNumericReadout("#homePassRate", passRate);
 
-        $("#dataTarget").textContent = state.target;
-        $("#dataCycle").textContent = state.cycle;
-        $("#dataOutput").textContent = state.output;
-        $("#dataOee").textContent = state.oee;
-        $("#dataInspected").textContent = state.inspected;
-        $("#dataPassed").textContent = state.passed;
-        $("#dataNg").textContent = state.ng;
-        $("#dataPending").textContent = state.pending;
-        $("#dataBlank").textContent = state.blank;
-        $("#dataFinished").textContent = state.finished;
-        $("#progressText").textContent = `目标完成度 ${progress}%`;
-        $("#progressFill").style.width = `${progress}%`;
+        renderNumericReadout("#dataTarget", state.target);
+        renderNumericReadout("#dataCycle", state.cycle);
+        renderNumericReadout("#dataOutput", state.output);
+        renderNumericReadout("#dataOee", state.oee);
+        renderNumericReadout("#dataInspected", state.inspected);
+        renderNumericReadout("#dataPassed", state.passed);
+        renderNumericReadout("#dataNg", state.ng);
+        renderNumericReadout("#dataPending", state.pending);
+        renderNumericReadout("#dataBlank", state.blank);
+        renderNumericReadout("#dataFinished", state.finished);
+
+        const progressText = $("#progressText");
+        const progressFill = $("#progressFill");
+        if (hasNumericValue(progress)) {
+          progressText.textContent = `目标完成度 ${progress}%`;
+          progressFill.style.width = `${progress}%`;
+          progressFill.hidden = false;
+        } else {
+          progressText.textContent = "目标完成度 —";
+          progressFill.style.width = "0%";
+          progressFill.hidden = true;
+        }
       }
 
       function renderEvents() {
@@ -5874,6 +6093,78 @@
       function manualRuntime() {
         const runtime = window.HMIBackend && window.HMIBackend.manual;
         return runtime && typeof runtime.binding === "function" ? runtime : null;
+      }
+
+      function pointRuntime() {
+        const runtime = window.HMIBackend && window.HMIBackend.points;
+        return runtime && typeof runtime.binding === "function" ? runtime : null;
+      }
+
+      function pointBinding(displayPath) {
+        const runtime = pointRuntime();
+        return runtime ? runtime.binding(displayPath) : null;
+      }
+
+      function pointValue(displayPath) {
+        const runtime = pointRuntime();
+        return runtime ? runtime.value(displayPath) : undefined;
+      }
+
+      function renderAutomaticSpeed() {
+        const slider = $("#automaticSpeedSlider");
+        const binding = pointBinding("home.speed.automatic");
+        const pending = !binding || binding.state === "pending" || !binding.writePoint;
+        const incoming = pointValue("home.speed.automatic");
+        const known = hasNumericValue(incoming);
+        slider.hidden = !known;
+        slider.disabled = pending || !backendConnected || !known;
+        slider.setAttribute("aria-disabled", String(slider.disabled));
+        if (!known) {
+          automaticSpeedDraft = null;
+          $("#automaticSpeedHint").textContent = "—";
+          $("#automaticSpeedPercent").textContent = "—";
+          return;
+        }
+        if (automaticSpeedDraft !== null) return;
+        const value = Math.max(0, Math.min(300, Math.round(incoming)));
+        slider.value = String(value);
+        $("#automaticSpeedHint").textContent = `原始值 ${value} / 300`;
+        $("#automaticSpeedPercent").textContent = `${Math.round(value / 3)}%`;
+      }
+
+      function updateAutomaticSpeedDraft(raw) {
+        const value = Math.max(0, Math.min(300, Math.round(Number(raw) || 0)));
+        automaticSpeedDraft = value;
+        $("#automaticSpeedSlider").value = String(value);
+        $("#automaticSpeedHint").textContent = `原始值 ${value} / 300`;
+        $("#automaticSpeedPercent").textContent = `${Math.round(value / 3)}%`;
+      }
+
+      function commitAutomaticSpeed() {
+        if (automaticSpeedDraft === null || automaticSpeedWriteInFlight) return;
+        const runtime = pointRuntime();
+        const binding = pointBinding("home.speed.automatic");
+        if (!runtime || !binding || binding.state === "pending" || !binding.writePoint) {
+          automaticSpeedDraft = null;
+          renderAutomaticSpeed();
+          return;
+        }
+        if (!requireFrontendPermission("operate")) {
+          automaticSpeedDraft = null;
+          renderAutomaticSpeed();
+          return;
+        }
+        const value = automaticSpeedDraft;
+        automaticSpeedWriteInFlight = true;
+        runtime.command("home.speed.automatic", value).then(() => {
+          showToast("自动运行速度已写入");
+        }).catch(error => {
+          showToast(backendErrorMessage(error), "danger");
+        }).finally(() => {
+          automaticSpeedWriteInFlight = false;
+          automaticSpeedDraft = null;
+          renderAutomaticSpeed();
+        });
       }
 
       function manualBinding(displayPath) {
@@ -6184,6 +6475,8 @@
         renderStatus();
         renderBins();
         renderMetrics();
+        renderDataTargetControl();
+        renderAutomaticSpeed();
         renderEvents();
         renderHistory();
         renderManual();
@@ -6245,9 +6538,32 @@
         );
       }
 
+      async function sendHomePointAction(displayPath) {
+        const runtime = pointRuntime();
+        const binding = pointBinding(displayPath);
+        if (!runtime || !binding || binding.state === "pending" || !binding.writePoint || binding.action !== "pulse") {
+          showToast("点位读写映射待确认", "warning");
+          return false;
+        }
+        backendWriteInFlight = true;
+        updateControlAvailability();
+        try {
+          await runtime.command(displayPath);
+          showToast("PLC 指令已确认");
+          return true;
+        } catch (error) {
+          showToast(backendErrorMessage(error), "danger");
+          return false;
+        } finally {
+          backendWriteInFlight = false;
+          updateControlAvailability();
+        }
+      }
+
       async function handleAction(button) {
         if (!requireFrontendPermission("operate")) return false;
         const action = button.dataset.action;
+        const pointAction = button.dataset.pointAction;
         pulseButton(button);
 
         if (action !== "clear") resetClearConfirmation();
@@ -6261,52 +6577,41 @@
             return;
           }
           resetClearConfirmation();
-          return runBackendMutation(
-            () => backend.sendCommand("clear_bins", {
-              expectedRevision: state.revision
-            }, backendContext()),
-            { pendingMessage: "正在发送清空料仓命令…" }
-          );
+          return sendHomePointAction(pointAction);
         }
 
-        if (["start", "pause", "reset", "inspect"].indexOf(action) >= 0) {
-          const pendingMessages = {
-            start: "正在发送启动命令…",
-            pause: "正在发送暂停命令…",
-            reset: "正在发送复位命令…",
-            inspect: "正在触发抽检…"
-          };
-          return runBackendMutation(
-            () => backend.sendCommand(action, {
-              expectedRevision: state.revision
-            }, backendContext()),
-            { pendingMessage: pendingMessages[action] }
-          );
+        if (pointAction) {
+          return sendHomePointAction(pointAction);
         }
 
-        if (action === "single" || action === "frame") {
-          const paused = action === "single" ? !state.singlePaused : !state.framePaused;
-          const command = action === "single" ? "set_single_paused" : "set_frame_paused";
-          return runBackendMutation(
-            () => backend.sendCommand(command, {
-              paused,
-              expectedRevision: state.revision
-            }, backendContext()),
-            { pendingMessage: "正在发送循环控制命令…" }
-          );
+        if (action === "inspect") {
+          showToast("抽检点位待确认", "info");
         }
-
+        return false;
       }
 
       $$(".nav-button").forEach(button => {
         button.addEventListener("click", () => switchPage(button.dataset.nav));
       });
 
-      $("#manualPageEntry").addEventListener("click", () => switchPage("manual"));
       $("#manualReturnHome").addEventListener("click", () => switchPage("home"));
       bindManualPage();
 
-      $$(".control-button:not(.manual-entry-button)").forEach(button => {
+      $("#dataTargetForm").addEventListener("submit", event => {
+        event.preventDefault();
+        void saveDataTarget();
+      });
+
+      const automaticSpeedSlider = $("#automaticSpeedSlider");
+      automaticSpeedSlider.addEventListener("pointerdown", () => updateAutomaticSpeedDraft(automaticSpeedSlider.value));
+      automaticSpeedSlider.addEventListener("input", () => updateAutomaticSpeedDraft(automaticSpeedSlider.value));
+      automaticSpeedSlider.addEventListener("change", () => commitAutomaticSpeed());
+      automaticSpeedSlider.addEventListener("pointercancel", () => {
+        automaticSpeedDraft = null;
+        renderAutomaticSpeed();
+      });
+
+      $$(".control-button").forEach(button => {
         button.addEventListener("click", () => handleAction(button));
       });
 
@@ -6473,7 +6778,11 @@
       window.addEventListener("hmi-soft-keyboard-statechange", () => {
         window.setTimeout(flushDeferredServerRender, 0);
       });
-      window.addEventListener("block-hmi-state", () => {
+      window.addEventListener("block-hmi-state", event => {
+        const liveState = event.detail && event.detail.state;
+        if (liveState && typeof liveState === "object") {
+          applyServerState(liveState, { forceRender: event.detail.forceRender === true });
+        }
         void refreshBackendState();
       });
     })();

@@ -424,6 +424,12 @@ func numericWords(definition runtimeconfig.PointDefinition, value any) ([]uint16
 		return []uint16{uint16(int16(number))}, nil
 	case "uint16":
 		return []uint16{uint16(number)}, nil
+	case "int32":
+		if definition.WordOrder != "high-low" {
+			return nil, fmt.Errorf("unsupported int32 word order %q", definition.WordOrder)
+		}
+		bits := uint32(int32(number))
+		return []uint16{uint16(bits >> 16), uint16(bits)}, nil
 	case "float32":
 		bits := math.Float32bits(float32(number))
 		low, high := uint16(bits), uint16(bits>>16)
@@ -451,6 +457,11 @@ func decodePointValue(point pointPlan, words []uint16) (any, error) {
 		return int16(words[0]), nil
 	case "uint16":
 		return words[0], nil
+	case "int32":
+		if point.definition.WordOrder != "high-low" {
+			return nil, fmt.Errorf("unsupported int32 word order %q", point.definition.WordOrder)
+		}
+		return int32(uint32(words[0])<<16 | uint32(words[1])), nil
 	case "float32":
 		var bits uint32
 		if point.definition.WordOrder == "low-high" {
@@ -731,7 +742,7 @@ func planAddress(definition runtimeconfig.PointDefinition) (pointAddress, error)
 		}
 		return pointAddress{word: address.word, bit: address.bit, count: 1, bitIO: true}, nil
 	}
-	if definition.Type != "int16" && definition.Type != "uint16" && definition.Type != "float32" {
+	if definition.Type != "int16" && definition.Type != "uint16" && definition.Type != "int32" && definition.Type != "float32" {
 		return pointAddress{}, fmt.Errorf("Easy521 FC03 numeric path does not support type %q", definition.Type)
 	}
 	address, err := parseRegisterAddress(definition.Address)

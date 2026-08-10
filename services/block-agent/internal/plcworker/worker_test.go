@@ -72,6 +72,74 @@ func TestFloat32ProfileReadsD800SpanAndWritesFC10(t *testing.T) {
 	}
 }
 
+func TestFloat32HighLowProfileReadsD522SpanAndWritesFC10(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.registers[522] = 0x4148 // float32 12.5, high-low word order.
+	adapter.registers[523] = 0x0000
+	published := make(chan map[string]pointstore.PointValue, 4)
+	worker := newWorker(t, float32HighLowConfig(), adapter, func(values map[string]pointstore.PointValue) error {
+		published <- values
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Run(ctx)
+	initial := <-published
+	if value, ok := initial["home.speed.automatic"]; !ok || value.Value != float64(12.5) {
+		t.Fatalf("initial high-low float32 value = %#v", initial)
+	}
+	reads := adapter.readCalls()
+	if len(reads) == 0 || reads[0].address != 522 || reads[0].quantity != 2 {
+		t.Fatalf("high-low float32 FC03 span = %#v, want D522-D523", reads)
+	}
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "home.speed.automatic", Action: "set", Value: float64(8.25)})
+	if !accepted {
+		t.Fatalf("numeric set was rejected: %+v", rejected)
+	}
+	if result := waitResult(t, reply); !result.Success || result.ActualValue != float64(8.25) {
+		t.Fatalf("numeric result = %+v", result)
+	}
+	writes := adapter.registerWriteCalls()
+	wantBits := math.Float32bits(8.25)
+	wantWords := []uint16{uint16(wantBits >> 16), uint16(wantBits)}
+	if len(writes) != 1 || writes[0].method != "fc10" || writes[0].address != 522 || !equalWords(writes[0].values, wantWords) {
+		t.Fatalf("high-low FC10 numeric write = %#v, want %#v", writes, wantWords)
+	}
+}
+
+func TestProductionDINTHighLowReadsAndWritesFC10(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.registers[902], adapter.registers[903] = 0x0000, 0x04D2   // 1234
+	adapter.registers[904], adapter.registers[905] = 0xFFFF, 0xFF9C   // -100
+	adapter.registers[1000], adapter.registers[1001] = 0x075B, 0xCD15 // 123456789
+	published := make(chan map[string]pointstore.PointValue, 4)
+	worker := newWorker(t, productionDINTConfig(), adapter, func(values map[string]pointstore.PointValue) error {
+		published <- values
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Run(ctx)
+	initial := <-published
+	if initial["production.output.today"].Value != int32(1234) || initial["production.quality.passed"].Value != int32(-100) || initial["maintenance.production.target"].Value != int32(123456789) {
+		t.Fatalf("initial DINT values = %#v", initial)
+	}
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "maintenance.production.target", Action: "set", Value: float64(-123456789)})
+	if !accepted {
+		t.Fatalf("DINT set was rejected: %+v", rejected)
+	}
+	if result := waitResult(t, reply); !result.Success || result.ActualValue != int32(-123456789) {
+		t.Fatalf("DINT result = %+v", result)
+	}
+	writes := adapter.registerWriteCalls()
+	wantWords := []uint16{0xF8A4, 0x32EB}
+	if len(writes) != 1 || writes[0].method != "fc10" || writes[0].address != 1000 || !equalWords(writes[0].values, wantWords) {
+		t.Fatalf("DINT FC10 write = %#v, want %#v", writes, wantWords)
+	}
+}
+
 func TestUint16ProfileWritesFC06(t *testing.T) {
 	adapter := newFakeAdapter(0)
 	adapter.registers[820] = 7
@@ -91,6 +159,28 @@ func TestUint16ProfileWritesFC06(t *testing.T) {
 	writes := adapter.registerWriteCalls()
 	if len(writes) != 1 || writes[0].method != "fc06" || writes[0].address != 820 || !equalWords(writes[0].values, []uint16{9}) {
 		t.Fatalf("FC06 numeric write = %#v", writes)
+	}
+}
+
+func TestInt16ProfileReadsAndWritesFC06(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.registers[520] = 0xFF8F // -113
+	worker := newWorker(t, int16Config(), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Run(ctx)
+	waitFor(t, time.Second, func() bool { return len(adapter.readCalls()) > 0 })
+
+	reply, rejected, accepted := worker.TrySubmit(Command{PointID: "maintenance.frame.height", Action: "set", Value: float64(113)})
+	if !accepted {
+		t.Fatalf("int16 set was rejected: %+v", rejected)
+	}
+	if result := waitResult(t, reply); !result.Success || result.ActualValue != int16(113) {
+		t.Fatalf("int16 result = %+v", result)
+	}
+	writes := adapter.registerWriteCalls()
+	if len(writes) != 1 || writes[0].method != "fc06" || writes[0].address != 520 || !equalWords(writes[0].values, []uint16{113}) {
+		t.Fatalf("int16 FC06 write = %#v", writes)
 	}
 }
 
@@ -320,10 +410,38 @@ func float32Config() runtimeconfig.Config {
 	}}}
 }
 
+func float32HighLowConfig() runtimeconfig.Config {
+	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{{
+		PointID: "home.speed.automatic", Address: "D522", Type: "float32", Access: "read_write",
+		ReadPoint: "home.speed.automatic", WritePoint: "home.speed.automatic", WriteMethod: "fc10",
+		RegisterCount: 2, WordOrder: "high-low", Write: &runtimeconfig.WriteDefinition{Mode: "set"},
+	}}}
+}
+
+func productionDINTConfig() runtimeconfig.Config {
+	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{
+		{
+			PointID: "maintenance.production.target", Address: "D1000", Type: "int32", Access: "read_write",
+			ReadPoint: "maintenance.production.target", WritePoint: "maintenance.production.target", WriteMethod: "fc10",
+			RegisterCount: 2, WordOrder: "high-low", Write: &runtimeconfig.WriteDefinition{Mode: "set"},
+		},
+		{PointID: "production.output.today", Address: "D902", Type: "int32", Access: "read", ReadPoint: "production.output.today", RegisterCount: 2, WordOrder: "high-low"},
+		{PointID: "production.quality.passed", Address: "D904", Type: "int32", Access: "read", ReadPoint: "production.quality.passed", RegisterCount: 2, WordOrder: "high-low"},
+	}}
+}
+
 func uint16Config() runtimeconfig.Config {
 	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{{
 		PointID: "manual.test.uint16", Address: "D820", Type: "uint16", Access: "read_write",
 		ReadPoint: "manual.test.uint16", WritePoint: "manual.test.uint16", WriteMethod: "fc06",
+		RegisterCount: 1, Write: &runtimeconfig.WriteDefinition{Mode: "set"},
+	}}}
+}
+
+func int16Config() runtimeconfig.Config {
+	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{{
+		PointID: "maintenance.frame.height", Address: "D520", Type: "int16", Access: "read_write",
+		ReadPoint: "maintenance.frame.height", WritePoint: "maintenance.frame.height", WriteMethod: "fc06",
 		RegisterCount: 1, Write: &runtimeconfig.WriteDefinition{Mode: "set"},
 	}}}
 }

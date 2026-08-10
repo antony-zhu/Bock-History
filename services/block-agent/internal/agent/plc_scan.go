@@ -20,6 +20,10 @@ const (
 	defaultPLCUnitID   = 1
 	maxScanCandidates  = 256
 	maxScanWorkers     = 16
+	// D504 is a confirmed Easy521 D-word in the current Block point table.
+	// The PC simulator exposes the imported D-word map, so probing D0 would
+	// reject a reachable Easy521 before the HMI can connect.
+	plcProbeRegister = 504
 )
 
 type plcEndpoint struct {
@@ -141,7 +145,7 @@ func probePLC(ctx context.Context, address netip.Addr, port int, unitID byte, se
 	defer client.Close()
 	probeContext, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
 	defer cancel()
-	if _, err := client.ReadHoldingRegisters(probeContext, 0, 1); err != nil {
+	if _, err := client.ReadHoldingRegisters(probeContext, plcProbeRegister, 1); err != nil {
 		return plcDevice{}, false
 	}
 	deviceID := endpoint.DeviceID()

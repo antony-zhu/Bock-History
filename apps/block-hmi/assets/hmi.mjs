@@ -505,6 +505,12 @@ class AppleBridge {
                 value: (displayPath) => this.manualValue(displayPath),
                 canWrite: (displayPath) => this.manualCanWrite(displayPath),
                 command: (displayPath, value) => this.manualCommand(displayPath, value)
+            },
+            points: {
+                binding: (displayPath) => this.pointBinding(displayPath),
+                value: (displayPath) => this.pointValue(displayPath),
+                canWrite: (displayPath) => this.pointCanWrite(displayPath),
+                command: (displayPath, value) => this.pointCommand(displayPath, value)
             }
         };
     }
@@ -969,6 +975,7 @@ class AppleBridge {
             this.socket = null;
             this.configured = false;
             clearTransientRuntime(this.values, this.plcDevices);
+            this.publishLiveState(true);
             this.plcState = "disconnected";
             this.renderPLCCandidates();
             this.setPLCStatus("本机服务连接中断");
@@ -1080,7 +1087,7 @@ class AppleBridge {
         }
         if (message.type === "runtime.configured") {
             this.configured = true;
-            this.setPLCStatus("点位表已同步，等待 PLC 读取");
+            this.setPLCStatus(plcStateText(this.plcState));
             this.renderPLCCandidates();
             this.emitState();
             return;
@@ -1148,23 +1155,26 @@ class AppleBridge {
             return this.demoState;
         }
         const state = initialDemoState();
-        const startFeedback = this.valueFor("home.machine.start.feedback");
-        const enabled = this.valueFor("home.machine.enabled");
+        const manual = this.valueFor("footer.mode.manual");
+        const singlePaused = this.valueFor("home.cycle.single");
+        const framePaused = this.valueFor("home.cycle.frame");
         state.revision = this.revision;
-        state.running = startFeedback === true;
-        state.mode = enabled === true ? "auto" : "manual";
-        state.target = 0;
-        state.output = 0;
-        state.cycle = 0;
-        state.oee = 0;
-        state.inspected = 0;
-        state.passed = 0;
-        state.ng = 0;
-        state.pending = 0;
-        state.blank = 0;
-        state.finished = 0;
-        state.toolLimit = 0;
-        state.inspectInterval = 0;
+        state.running = null;
+        state.mode = manual === true ? "manual" : manual === false ? "auto" : null;
+        state.singlePaused = typeof singlePaused === "boolean" ? singlePaused : null;
+        state.framePaused = typeof framePaused === "boolean" ? framePaused : null;
+        state.target = this.numberFor("maintenance.production.target");
+        state.output = this.numberFor("production.output.today");
+        state.cycle = this.numberFor("production.cycle.single");
+        state.oee = null;
+        state.inspected = null;
+        state.passed = this.numberFor("production.quality.passed");
+        state.ng = this.numberFor("production.quality.ng");
+        state.pending = this.numberFor("production.quality.pending");
+        state.blank = this.numberFor("production.bin.blank");
+        state.finished = this.numberFor("production.bin.finished");
+        state.toolLimit = null;
+        state.inspectInterval = null;
         state.bins = [
             { type: "empty", label: "暂无数据" },
             { type: "empty", label: "暂无数据" },
@@ -1178,21 +1188,26 @@ class AppleBridge {
         ];
         return state;
     }
+    numberFor(displayPath) {
+        const value = this.valueFor(displayPath);
+        return typeof value === "number" && Number.isFinite(value) ? value : null;
+    }
     valueFor(displayPath) {
         const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
         if (binding === undefined || binding.readPoint === null) {
             return undefined;
         }
-        return this.values.get(binding.readPoint)?.value;
+        const point = this.values.get(binding.readPoint);
+        return point?.quality === "good" ? point.value : undefined;
     }
-    manualBinding(displayPath) {
+    pointBinding(displayPath) {
         const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
         return binding === undefined ? null : { ...binding };
     }
-    manualValue(displayPath) {
+    pointValue(displayPath) {
         return this.valueFor(displayPath);
     }
-    manualCanWrite(displayPath) {
+    pointCanWrite(displayPath) {
         const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
         if (binding === undefined || binding.state === "pending" || binding.writePoint === null || binding.writePoint === undefined ||
             (binding.action !== "pulse" && binding.action !== "toggle" && binding.action !== "set")) {
@@ -1203,7 +1218,7 @@ class AppleBridge {
         }
         return this.demo || this.canSendRuntime();
     }
-    manualCommand(displayPath, value) {
+    pointCommand(displayPath, value) {
         const binding = this.config.bindings.find((item) => item.displayPath === displayPath);
         const action = binding?.action;
         const writePoint = binding?.writePoint;
@@ -1228,6 +1243,18 @@ class AppleBridge {
         return this.pendingPointCommand.dispatch(requestId, () => {
             this.socket.send(JSON.stringify(buildPointCommand(writePoint, action, requestId, undefined, action === "set" ? value : undefined)));
         });
+    }
+    manualBinding(displayPath) {
+        return this.pointBinding(displayPath);
+    }
+    manualValue(displayPath) {
+        return this.pointValue(displayPath);
+    }
+    manualCanWrite(displayPath) {
+        return this.pointCanWrite(displayPath);
+    }
+    manualCommand(displayPath, value) {
+        return this.pointCommand(displayPath, value);
     }
     sendCommand(command, payload = {}) {
         if (!this.requirePermission("operate")) {
@@ -1288,8 +1315,8 @@ class AppleBridge {
             state.cycle = 0;
         }
         else if (command === "inspect") {
-            state.inspected += 1;
-            state.passed += 1;
+            state.inspected = (state.inspected ?? 0) + 1;
+            state.passed = (state.passed ?? 0) + 1;
         }
         else if (command === "clear_bins") {
             state.bins = state.bins.map(() => ({ type: "empty", label: "已清空" }));
@@ -1446,14 +1473,14 @@ class AppleBridge {
             window.HMISoftKeyboard?.isOpen() === true ||
             nativeKeyboardInput;
     }
-    publishLiveState() {
-        if (this.isUserInputActive()) {
+    publishLiveState(force = false) {
+        if (this.isUserInputActive() && !force) {
             this.deferredLiveState = true;
             return;
         }
         this.deferredLiveState = false;
         this.renderPLCReadOnly();
-        this.emitState();
+        this.emitState(force);
     }
     flushDeferredLiveState() {
         if (!this.deferredLiveState || this.isUserInputActive()) {
@@ -1466,21 +1493,10 @@ class AppleBridge {
     }
     renderPLCReadOnly() {
         const connection = document.querySelector("#plc-connection-value");
-        const sample = document.querySelector("#plc-last-sample");
-        const error = document.querySelector("#plc-last-error");
-        const pointCount = document.querySelector("#plc-point-count");
-        const livePoints = document.querySelector("#plc-live-points");
-        if (connection === null || sample === null || error === null || pointCount === null || livePoints === null) {
+        if (connection === null) {
             return;
         }
         connection.textContent = plcStateText(this.plcState);
-        sample.textContent = this.lastPLCSampleAt ?? "—";
-        error.textContent = this.lastPLCError || "—";
-        pointCount.textContent = String(this.config.points.length || this.values.size);
-        const entries = [...this.values.entries()].slice(0, 50);
-        livePoints.textContent = entries.length === 0
-            ? "等待 PLC 实时点值"
-            : entries.map(([pointID, point]) => pointID + ": " + String(point.value) + " · " + point.quality + " · " + point.updatedAt).join("\n");
     }
     renderPLCCandidates() {
         const list = document.querySelector("#plc-candidates");
@@ -1520,9 +1536,15 @@ class AppleBridge {
             list.append(item);
         }
     }
-    emitState() {
-        if (this.isUserInputActive()) {
+    emitState(force = false) {
+        if (this.isUserInputActive() && !force) {
             this.deferredLiveState = true;
+            return;
+        }
+        if (force) {
+            window.dispatchEvent(new CustomEvent("block-hmi-state", {
+                detail: { state: cloneState(this.currentState()), forceRender: true }
+            }));
             return;
         }
         window.dispatchEvent(new Event("block-hmi-state"));
@@ -1532,11 +1554,11 @@ class AppleBridge {
             return;
         }
         window.setTimeout(() => {
-            const start = document.querySelector('[data-action="start"]');
             const runtimeEnabled = this.canSendRuntime();
-            const startConfigured = this.config.bindings.some((binding) => binding.displayPath === "home.machine.start" && binding.state !== "pending" && binding.writePoint !== null && binding.action === "pulse");
-            document.querySelectorAll(".control-button:not(.manual-entry-button)").forEach((button) => {
-                const available = runtimeEnabled && startConfigured && button === start;
+            document.querySelectorAll(".control-button").forEach((button) => {
+                const displayPath = button.dataset.pointAction;
+                const configured = displayPath !== undefined && this.config.bindings.some((binding) => binding.displayPath === displayPath && binding.state !== "pending" && binding.writePoint !== null && binding.action === "pulse");
+                const available = runtimeEnabled && configured;
                 button.dataset.backendUnavailable = available ? "false" : "true";
             });
             const mode = document.querySelector("#modeToggle");

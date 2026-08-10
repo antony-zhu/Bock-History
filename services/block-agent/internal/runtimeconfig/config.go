@@ -224,16 +224,23 @@ func validateRegisterLayout(prefix string, point PointDefinition) error {
 		if point.WordOrder != "low-high" && point.WordOrder != "high-low" {
 			return fmt.Errorf("%s.wordOrder must be low-high or high-low for float32", prefix)
 		}
+	case "int32":
+		if point.RegisterCount != 2 {
+			return fmt.Errorf("%s.registerCount must be 2 for int32", prefix)
+		}
+		if point.WordOrder != "high-low" {
+			return fmt.Errorf("%s.wordOrder must be high-low for int32", prefix)
+		}
 	case "int16", "uint16":
 		if point.RegisterCount != 1 {
 			return fmt.Errorf("%s.registerCount must be 1 for %s", prefix, point.Type)
 		}
 		if point.WordOrder != "" {
-			return fmt.Errorf("%s.wordOrder is only valid for float32", prefix)
+			return fmt.Errorf("%s.wordOrder is only valid for int32 or float32", prefix)
 		}
 	default:
 		if point.RegisterCount != 0 || point.WordOrder != "" {
-			return fmt.Errorf("%s register layout is only valid for int16, uint16, or float32", prefix)
+			return fmt.Errorf("%s register layout is only valid for int16, uint16, int32, or float32", prefix)
 		}
 	}
 	return nil
@@ -249,9 +256,9 @@ func validateWriteMethod(prefix string, point PointDefinition) error {
 		if point.WriteMethod != "fc06" {
 			return fmt.Errorf("%s %s writes require writeMethod fc06", prefix, point.Type)
 		}
-	case "float32":
+	case "int32", "float32":
 		if point.WriteMethod != "fc10" {
-			return fmt.Errorf("%s float32 writes require writeMethod fc10", prefix)
+			return fmt.Errorf("%s %s writes require writeMethod fc10", prefix, point.Type)
 		}
 	default:
 		return fmt.Errorf("%s type %q has no approved Easy521 write method", prefix, point.Type)
@@ -272,6 +279,10 @@ func ValidateValue(pointType string, value any) error {
 			if pointType == "int16" && (numberAsFloat64(value) < -32768 || numberAsFloat64(value) > 32767) {
 				break
 			}
+			return nil
+		}
+	case "int32":
+		if isInteger(value) && numberAsFloat64(value) >= -2147483648 && numberAsFloat64(value) <= 2147483647 {
 			return nil
 		}
 	case "uint16":
@@ -358,7 +369,7 @@ func numberAsFloat64(value any) float64 {
 }
 
 func validType(value string) bool {
-	return value == "bool" || value == "int" || value == "float" || value == "string" || value == "int16" || value == "uint16" || value == "float32"
+	return value == "bool" || value == "int" || value == "float" || value == "string" || value == "int16" || value == "uint16" || value == "int32" || value == "float32"
 }
 
 func cloneDefinition(value PointDefinition) PointDefinition {
