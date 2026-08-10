@@ -1428,10 +1428,10 @@ class AppleBridge {
     isUserInputActive() {
         const active = document.activeElement;
         const authPanel = this.authPanel();
-        const activeInHiddenAuthPanel = authPanel.hidden && authPanel.contains(active);
         const nativeKeyboardInput = window.HMISoftKeyboard?.getMode() === "native" &&
             (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
-            !activeInHiddenAuthPanel;
+            active.isConnected &&
+            active.closest("[hidden], [inert]") === null;
         return !authPanel.hidden ||
             window.HMISoftKeyboard?.isOpen() === true ||
             nativeKeyboardInput;

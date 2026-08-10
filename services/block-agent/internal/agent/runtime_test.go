@@ -97,6 +97,86 @@ func TestChangedEventContainsAbsoluteValue(t *testing.T) {
 	}
 }
 
+func TestAlarmHistoryWriteFailureDoesNotSuppressLiveAlarmEvents(t *testing.T) {
+	historyErr := errors.New("alarm history unavailable")
+	runtime, address, cancel, done := startRuntimeWithOptions(t, RuntimeOptions{
+		AlarmStore: failingAlarmStore{err: historyErr},
+	})
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+
+	send(t, connection, map[string]any{
+		"protocolVersion": "1.0", "type": "runtime.configure", "scanIntervalMs": 500,
+		"points": []any{map[string]any{
+			"pointId": "alarm.light.curtain", "address": "D500.2", "type": "bool", "access": "read", "readPoint": "alarm.light.curtain",
+			"alarm": map[string]any{"normalValue": false, "alarmValue": true, "message": "Light curtain"},
+		}},
+	})
+	if configured := receive(t, connection); configured["type"] != "runtime.configured" {
+		t.Fatalf("configured event = %#v", configured)
+	}
+
+	now := time.Date(2026, 8, 11, 9, 0, 0, 0, time.UTC)
+	active := true
+	if err := runtime.UpdateConfirmed(map[string]pointstore.PointValue{
+		"alarm.light.curtain": {Value: true, Quality: "good", UpdatedAt: now, AlarmActive: &active},
+	}); err != nil {
+		t.Fatalf("raised alarm update error = %v", err)
+	}
+	assertLiveAlarmValue(t, receiveType(t, connection, "points.changed"), true)
+
+	inactive := false
+	if err := runtime.UpdateConfirmed(map[string]pointstore.PointValue{
+		"alarm.light.curtain": {Value: false, Quality: "good", UpdatedAt: now.Add(time.Second), AlarmActive: &inactive},
+	}); err != nil {
+		t.Fatalf("cleared alarm update error = %v", err)
+	}
+	assertLiveAlarmValue(t, receiveType(t, connection, "points.changed"), false)
+}
+
+func TestPLCConnectionAndLiveAlarmUpdatesSurviveHistoryFailure(t *testing.T) {
+	historyErr := errors.New("alarm history unavailable")
+	adapter := &runtimeFakeAdapter{registers: map[uint16]uint16{500: 1 << 2}}
+	factory := plcworker.Factory(func(config runtimeconfig.Config, publish func(map[string]pointstore.PointValue) error) (*plcworker.Worker, error) {
+		return plcworker.New(config, adapter, publish, time.Now)
+	})
+	_, address, cancel, done := startRuntimeWithOptionsAndFactory(t, factory, RuntimeOptions{
+		AlarmStore: failingAlarmStore{err: historyErr},
+	})
+	defer stopRuntime(t, cancel, done)
+	connection := dial(t, address)
+	defer connection.Close()
+
+	send(t, connection, map[string]any{
+		"protocolVersion": "1.0", "type": "runtime.configure", "scanIntervalMs": 500,
+		"points": []any{map[string]any{
+			"pointId": "alarm.light.curtain", "address": "D500.2", "type": "bool", "access": "read", "readPoint": "alarm.light.curtain",
+			"alarm": map[string]any{"normalValue": false, "alarmValue": true, "message": "Light curtain"},
+		}},
+	})
+	if configured := receive(t, connection); configured["type"] != "runtime.configured" {
+		t.Fatalf("configured event = %#v", configured)
+	}
+
+	send(t, connection, map[string]any{
+		"type": "plc.connect", "requestId": "connect", "deviceId": "easy521://127.0.0.1:1502?unitId=1",
+	})
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "connecting" {
+		t.Fatalf("connecting event = %#v", event)
+	}
+	if event := receiveType(t, connection, "plc.connection.changed"); event["state"] != "connected" {
+		t.Fatalf("connected event = %#v", event)
+	}
+	if result := receiveType(t, connection, "plc.connect.result"); result["success"] != true || result["state"] != "connected" {
+		t.Fatalf("connect result = %#v", result)
+	}
+	assertLiveAlarmValue(t, receiveType(t, connection, "points.snapshot"), true)
+
+	adapter.setRegister(500, 0)
+	assertLiveAlarmValue(t, receiveType(t, connection, "points.changed"), false)
+}
+
 func TestPointCommandIsValidatedButDoesNotWriteWithoutPLC(t *testing.T) {
 	_, address, cancel, done := startRuntime(t)
 	defer stopRuntime(t, cancel, done)
@@ -539,6 +619,28 @@ func errorCode(t *testing.T, message map[string]any) string {
 	return code
 }
 
+func assertLiveAlarmValue(t *testing.T, event map[string]any, want bool) {
+	t.Helper()
+	values, ok := event["values"].(map[string]any)
+	if !ok {
+		t.Fatalf("live alarm event values = %#v", event)
+	}
+	value, ok := values["alarm.light.curtain"].(map[string]any)
+	if !ok || value["value"] != want || value["quality"] != "good" {
+		t.Fatalf("live alarm value = %#v, want %t/good", value, want)
+	}
+}
+
+type failingAlarmStore struct{ err error }
+
+func (s failingAlarmStore) Append(context.Context, alarmhistory.Record) (alarmhistory.Record, error) {
+	return alarmhistory.Record{}, s.err
+}
+
+func (failingAlarmStore) List(context.Context, alarmhistory.Query) ([]alarmhistory.Record, bool, error) {
+	return nil, false, nil
+}
+
 func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -631,5 +733,11 @@ func (f *runtimeFakeAdapter) writeCalls() []runtimeWriteCall {
 func (f *runtimeFakeAdapter) setReadErr(err error) {
 	f.mu.Lock()
 	f.readErr = err
+	f.mu.Unlock()
+}
+
+func (f *runtimeFakeAdapter) setRegister(address, value uint16) {
+	f.mu.Lock()
+	f.registers[address] = value
 	f.mu.Unlock()
 }

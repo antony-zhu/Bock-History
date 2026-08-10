@@ -5114,7 +5114,7 @@
   <script src="assets/vendor/simple-keyboard/index.js"></script>
   <script src="assets/soft-keyboard.js?v=20260810.1"></script>
   <script>
-    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260810.10").then(function (module) {
+    window.BlockHMIReady = import("./assets/hmi.mjs?v=20260811.1").then(function (module) {
       return module.installHMIBackend();
     });
     const hmiBackendProxy = {
@@ -5439,9 +5439,9 @@
       function inputInteractionActive() {
         const active = document.activeElement;
         const authPanel = $("#auth-panel");
-        const activeInHiddenAuthPanel = authPanel.hidden && authPanel.contains(active);
         const nativeKeyboardInput = window.HMISoftKeyboard && window.HMISoftKeyboard.getMode() === "native" &&
-          (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) && !activeInHiddenAuthPanel;
+          (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
+          active.isConnected && active.closest("[hidden], [inert]") === null;
         return !authPanel.hidden ||
           Boolean(window.HMISoftKeyboard && window.HMISoftKeyboard.isOpen()) ||
           nativeKeyboardInput;

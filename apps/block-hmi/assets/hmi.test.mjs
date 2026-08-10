@@ -200,6 +200,8 @@ const originalWindow = globalThis.window;
 const originalDocument = globalThis.document;
 const originalEvent = globalThis.Event;
 const originalCustomEvent = globalThis.CustomEvent;
+const originalHTMLInputElement = globalThis.HTMLInputElement;
+const originalHTMLTextAreaElement = globalThis.HTMLTextAreaElement;
 class HMIStateEvent {
   constructor(type) {
     this.type = type;
@@ -211,13 +213,31 @@ class HMIStateCustomEvent extends HMIStateEvent {
     this.detail = options.detail;
   }
 }
+class HMIStateInput {
+  constructor({ connected = true, hidden = false, inert = false } = {}) {
+    this.connected = connected;
+    this.hidden = hidden;
+    this.inert = inert;
+  }
+
+  get isConnected() {
+    return this.connected;
+  }
+
+  closest(selector) {
+    assert.equal(selector, "[hidden], [inert]");
+    return this.hidden || this.inert ? {} : null;
+  }
+}
 const hmiStateEvents = [];
 const hmiAuthPanel = { hidden: true, contains: () => false };
 const hmiStatus = { textContent: "" };
 globalThis.Event = HMIStateEvent;
 globalThis.CustomEvent = HMIStateCustomEvent;
+globalThis.HTMLInputElement = HMIStateInput;
+globalThis.HTMLTextAreaElement = HMIStateInput;
 globalThis.window = {
-  HMISoftKeyboard: undefined,
+  HMISoftKeyboard: { getMode: () => "native", isOpen: () => false },
   dispatchEvent: (event) => {
     hmiStateEvents.push(event);
     return true;
@@ -242,19 +262,38 @@ try {
   }));
   const bridge = new bridgeModule.AppleBridge({ points: d500Points, bindings: [] }, false, null, "GUEST");
   const pointValue = { value: true, quality: "good", updatedAt: timestamp };
+  globalThis.document.activeElement = new HMIStateInput({ hidden: true });
   bridge.handleSocketMessage(JSON.stringify({
     type: "points.snapshot",
     values: Object.fromEntries([2, 9, 10].map((bit) => [`alarm.d500.${bit}`, pointValue]))
   }));
+  assert.equal(hmiStateEvents.length, 1);
+  assert.deepEqual(hmiStateEvents.at(-1).detail.state.alarms.map((alarm) => alarm.id), ["D500.2", "D500.9", "D500.10"]);
   bridge.handleSocketMessage(JSON.stringify({
     type: "points.changed",
     values: Object.fromEntries([0, 1, 3, 4, 5, 6, 7, 8].map((bit) => [`alarm.d500.${bit}`, pointValue]))
   }));
+  assert.equal(hmiStateEvents.length, 2, "a hidden retained input must not suppress live state dispatch");
   const latestStateEvent = hmiStateEvents.at(-1);
   assert.equal(latestStateEvent.type, "block-hmi-state");
   assert.equal(latestStateEvent.detail.forceRender, false);
   assert.equal(latestStateEvent.detail.state.revision, 2);
   assert.deepEqual(latestStateEvent.detail.state.alarms.map((alarm) => alarm.id), d500Points.map((point) => point.address));
+
+  globalThis.document.activeElement = new HMIStateInput({ inert: true });
+  assert.equal(bridge.isUserInputActive(), false, "an inert input must not defer live rendering");
+  globalThis.document.activeElement = new HMIStateInput();
+  bridge.handleSocketMessage(JSON.stringify({
+    type: "points.changed",
+    values: { "alarm.d500.0": { value: false, quality: "good", updatedAt: timestamp } }
+  }));
+  assert.equal(hmiStateEvents.length, 2, "a visible native input must defer live rendering while edited");
+  assert.equal(bridge.deferredLiveState, true);
+  assert.equal(bridge.flushDeferredLiveState(), false);
+  globalThis.document.activeElement = null;
+  assert.equal(bridge.flushDeferredLiveState(), true);
+  assert.equal(hmiStateEvents.length, 3);
+  assert.equal(hmiStateEvents.at(-1).detail.state.alarms.some((alarm) => alarm.id === "D500.0"), false);
 } finally {
   if (originalWindow === undefined) delete globalThis.window;
   else globalThis.window = originalWindow;
@@ -264,7 +303,101 @@ try {
   else globalThis.Event = originalEvent;
   if (originalCustomEvent === undefined) delete globalThis.CustomEvent;
   else globalThis.CustomEvent = originalCustomEvent;
+  if (originalHTMLInputElement === undefined) delete globalThis.HTMLInputElement;
+  else globalThis.HTMLInputElement = originalHTMLInputElement;
+  if (originalHTMLTextAreaElement === undefined) delete globalThis.HTMLTextAreaElement;
+  else globalThis.HTMLTextAreaElement = originalHTMLTextAreaElement;
 }
+
+function htmlFunctionSource(name) {
+  const start = index.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `missing ${name}`);
+  let parenthesisDepth = 0;
+  let bodyStart = -1;
+  for (let position = index.indexOf("(", start); position < index.length; position += 1) {
+    if (index[position] === "(") parenthesisDepth += 1;
+    if (index[position] === ")" && --parenthesisDepth === 0) {
+      bodyStart = index.indexOf("{", position);
+      break;
+    }
+  }
+  assert.notEqual(bodyStart, -1, `missing ${name} body`);
+  let braceDepth = 0;
+  for (let position = bodyStart; position < index.length; position += 1) {
+    if (index[position] === "{") braceDepth += 1;
+    if (index[position] === "}" && --braceDepth === 0) return index.slice(start, position + 1);
+  }
+  assert.fail(`unterminated ${name}`);
+}
+
+const serverRenderHarness = `
+  class TestInput {
+    constructor(options = {}) {
+      this.connected = options.connected !== false;
+      this.hidden = options.hidden === true;
+      this.inert = options.inert === true;
+    }
+    get isConnected() { return this.connected; }
+    closest(selector) {
+      if (selector !== "[hidden], [inert]") throw new Error(selector);
+      return this.hidden || this.inert ? {} : null;
+    }
+  }
+  class TestTextarea extends TestInput {}
+  const HTMLInputElement = TestInput;
+  const HTMLTextAreaElement = TestTextarea;
+  const authPanel = { hidden: true, contains: () => false };
+  const document = { activeElement: null };
+  const window = { HMISoftKeyboard: { getMode: () => "native", isOpen: () => false } };
+  function $(selector) {
+    if (selector === "#auth-panel") return authPanel;
+    throw new Error(selector);
+  }
+  let deferredServerRender = false;
+  let renderCount = 0;
+  let renderedAlarms = [];
+  const state = { revision: 0, bins: [], alarms: [], history: [] };
+  const serverStateFields = ["revision", "alarms", "updatedAt"];
+  function syncPLCTargetInput() {}
+  function renderAll() { renderCount += 1; renderedAlarms = state.alarms.slice(); }
+  function renderDataFreshness() {}
+  ${htmlFunctionSource("applyServerState")}
+  ${htmlFunctionSource("inputInteractionActive")}
+  ${htmlFunctionSource("flushDeferredServerRender")}
+  globalThis.hmiRenderDiagnostic = {
+    document,
+    hiddenInput: new TestInput({ hidden: true }),
+    visibleInput: new TestInput(),
+    apply: applyServerState,
+    flush: flushDeferredServerRender,
+    get deferred() { return deferredServerRender; },
+    get renderCount() { return renderCount; },
+    get renderedAlarms() { return renderedAlarms; }
+  };
+`;
+const serverRenderContext = {};
+vm.runInNewContext(serverRenderHarness, serverRenderContext, { filename: "index.html live render harness" });
+const serverRender = serverRenderContext.hmiRenderDiagnostic;
+const initialAlarmIDs = ["D500.2", "D500.9", "D500.10"];
+const allAlarmIDs = Array.from({ length: 11 }, (_, bit) => `D500.${bit}`);
+serverRender.document.activeElement = serverRender.hiddenInput;
+serverRender.apply({ revision: 1, alarms: initialAlarmIDs, updatedAt: timestamp });
+assert.equal(serverRender.renderCount, 1, "a hidden retained input must render an incoming snapshot");
+assert.deepEqual([...serverRender.renderedAlarms], initialAlarmIDs);
+serverRender.apply({ revision: 2, alarms: allAlarmIDs, updatedAt: timestamp });
+assert.equal(serverRender.renderCount, 2, "a hidden retained input must render a live change");
+assert.deepEqual([...serverRender.renderedAlarms], allAlarmIDs);
+assert.equal(serverRender.deferred, false);
+serverRender.document.activeElement = serverRender.visibleInput;
+serverRender.apply({ revision: 3, alarms: allAlarmIDs.filter((alarm) => alarm !== "D500.0"), updatedAt: timestamp });
+assert.equal(serverRender.renderCount, 2, "a visible input edit must defer rendering");
+assert.equal(serverRender.deferred, true);
+serverRender.flush();
+assert.equal(serverRender.renderCount, 2, "a focused visible input must keep rendering deferred");
+serverRender.document.activeElement = null;
+serverRender.flush();
+assert.equal(serverRender.renderCount, 3, "focus loss must flush the deferred server render");
+assert.equal(serverRender.renderedAlarms.includes("D500.0"), false);
 
 function cssRule(selector) {
   const start = keyboardCSS.indexOf(`${selector} {`);
@@ -619,11 +752,12 @@ assert.doesNotMatch(index, /id="(?:modeToggle|modeCn)"|当前为(?:自动|手动
 for (const asset of [
   'assets/soft-keyboard.css?v=20260809.1',
   'assets/soft-keyboard.js?v=20260810.1',
-  './assets/hmi.mjs?v=20260810.10'
+  './assets/hmi.mjs?v=20260811.1'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
 }
 assert.doesNotMatch(index, /\.\/assets\/hmi\.mjs\?v=20260808\.4/);
+assert.doesNotMatch(index, /\.\/assets\/hmi\.mjs\?v=20260810\.10/);
 assert.match(index, /function requireFrontendPermission\(permission\)/);
 assert.match(index, /name === "maintenance" && !requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S]*?overflow: hidden;/);
@@ -986,6 +1120,10 @@ assert.match(source, /private publishLiveState\(force = false\): void \{[\s\S]*?
 assert.match(source, /message\.type === "points\.changed"[\s\S]*?this\.publishLiveState\(\);/);
 assert.match(source, /private emitState\(force = false\): void \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: force/);
 assert.match(compiledSource, /emitState\(force = false\) \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: force/);
+const visibleNativeInputGuard = /nativeKeyboardInput[\s\S]*?active\.isConnected[\s\S]*?active\.closest\("\[hidden\], \[inert\]"\) === null/;
+assert.match(source, visibleNativeInputGuard);
+assert.match(compiledSource, visibleNativeInputGuard);
+assert.match(index, visibleNativeInputGuard);
 assert.match(source, /private getState\(\): Promise<\{ state: LegacyState \}> \{[\s\S]*?if \(!this\.demo && !this\.canSendRuntime\(\)\) \{[\s\S]*?runtime_unavailable/);
 assert.match(index, /function applyServerState\(nextState, options = \{\}\) \{[\s\S]*?incomingRevision < state\.revision && !options\.forceRender[\s\S]*?if \(inputInteractionActive\(\) && !options\.forceRender\) \{[\s\S]*?deferredServerRender = true;[\s\S]*?return true;[\s\S]*?renderAll\(\);/);
 assert.match(index, /window\.addEventListener\("block-hmi-state", event => \{[\s\S]*?const liveState = event\.detail && event\.detail\.state;[\s\S]*?applyServerState\(liveState, \{ forceRender: event\.detail\.forceRender === true \}\);[\s\S]*?void refreshBackendState\(\);/);

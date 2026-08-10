@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -272,8 +273,17 @@ func (r *Runtime) applyValues(session *runtimeSession, owner *wsClient, broadcas
 	if err != nil || len(changed) == 0 {
 		return err
 	}
+	// The current PLC state is the HMI's direct control/display path.  Alarm
+	// history is recorded after this event so a local SQLite history failure
+	// cannot hide an otherwise confirmed alarm transition from the operator.
+	if broadcasts {
+		owner.enqueue(eventEnvelope(r.now, "points.changed", changed), false)
+	}
 	if err := r.recordAlarmChanges(session, changed); err != nil {
-		return err
+		// Alarm history is best-effort observability.  A local history fault must
+		// not turn a confirmed PLC read into PLC_READ_FAILED, nor block the HMI's
+		// current-state path.
+		log.Printf("block-agent: record alarm history: %v", err)
 	}
 	r.mu.Lock()
 	mqtt := (*mqttv2.Session)(nil)
@@ -283,9 +293,6 @@ func (r *Runtime) applyValues(session *runtimeSession, owner *wsClient, broadcas
 	r.mu.Unlock()
 	if mqtt != nil {
 		mqtt.ObserveSnapshot(toMQTTSnapshot(r.store.Snapshot(), r.now))
-	}
-	if broadcasts {
-		owner.enqueue(eventEnvelope(r.now, "points.changed", changed), false)
 	}
 	return nil
 }
