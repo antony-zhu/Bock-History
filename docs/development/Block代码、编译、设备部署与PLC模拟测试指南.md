@@ -32,7 +32,7 @@ Get-Content -LiteralPath "$BlockRepo\COMMON_BASELINE" -Encoding UTF8
 
 发布必须冻结一个明确提交、一个未复用的新版本字符串和一个单一制品。工作树出现未批准的 tracked 修改时停止。不要读取或输出 `wifi.toml`、真实 `.env`、密码、私钥、证书私钥、token 或真实安装身份路径。
 
-设备示例只允许受信管理地址 `192.168.1.104`。IP 只用于连接，不能代替 `siteId`、`blockId` 和 `deviceId`。
+本指南中的 `192.168.1.104` 是登记且受信的有线管理地址。IP 只用于连接，不能代替 `siteId`、`blockId` 和 `deviceId`；Wi-Fi 地址应按第 6 节的 DHCP 发现流程确认。
 
 ## 2. PC 上预览 Apple Style 手动页
 
@@ -276,6 +276,14 @@ $SshOptions = @(
 & ssh @SshOptions $Remote '/bin/true'
 if ($LASTEXITCODE -ne 0) { throw 'Strict SSH preflight failed.' }
 ```
+
+### Wi-Fi DHCP、连接发现与 SSH 失败处置（已验证）
+
+设备的 Wi-Fi 使用 DHCP，`wlan0` 的 IPv4 地址可能变化；不得硬编码或假定它永远是 `192.168.0.104`。需要通过 Wi-Fi 连接前，先从已获授权的路由器 DHCP 租约或维护页确认当前 `wlan0` 地址；也可将网线接到登记管理地址 `192.168.1.104`，按 HTTPS bootstrap 获取短期 SSH，再在设备上查询当前 `wlan0` 地址。不要把登记的有线管理地址当作 Wi-Fi 地址，或反过来替代它。
+
+已验证 Wi-Fi 可以正常关联 `SFLK`，且默认路由和网关通信正常。此前仅用 Wi-Fi 时 HTTPS SSH 申请失败，不表示 Wi-Fi 断连：bootstrap 的 `connection.json` 与 host-key 扫描固定返回受信的有线管理地址 `192.168.1.104`；拔掉网线后，客户端无法扫描该地址，因此 bootstrap 失败。
+
+网络、HTTPS bootstrap 或严格 SSH 任一步失败时立即停止。不得禁用校验、接受未知 host key，或使用代理/绕路连接。需要恢复维护访问时，只可先接网线到登记管理地址，再按 HTTPS 获取短期 SSH 并继续使用已固定的 host key 校验。
 
 `-F NUL` 防止用户 SSH 配置重写目标。host key、身份或权限不匹配时停止，不能接受新 key、关闭校验、修私钥 ACL 或换用未知身份。
 

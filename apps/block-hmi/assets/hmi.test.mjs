@@ -195,6 +195,77 @@ const demoShell = readFileSync(new URL("../demo-shell.html", import.meta.url), "
 const keyboardSource = readFileSync(new URL("./soft-keyboard.js", import.meta.url), "utf8");
 const keyboardCSS = readFileSync(new URL("./soft-keyboard.css", import.meta.url), "utf8");
 
+const bridgeModule = await import(`data:text/javascript;base64,${Buffer.from(`${compiledSource}\nexport { AppleBridge };`).toString("base64")}`);
+const originalWindow = globalThis.window;
+const originalDocument = globalThis.document;
+const originalEvent = globalThis.Event;
+const originalCustomEvent = globalThis.CustomEvent;
+class HMIStateEvent {
+  constructor(type) {
+    this.type = type;
+  }
+}
+class HMIStateCustomEvent extends HMIStateEvent {
+  constructor(type, options = {}) {
+    super(type);
+    this.detail = options.detail;
+  }
+}
+const hmiStateEvents = [];
+const hmiAuthPanel = { hidden: true, contains: () => false };
+const hmiStatus = { textContent: "" };
+globalThis.Event = HMIStateEvent;
+globalThis.CustomEvent = HMIStateCustomEvent;
+globalThis.window = {
+  HMISoftKeyboard: undefined,
+  dispatchEvent: (event) => {
+    hmiStateEvents.push(event);
+    return true;
+  },
+  setTimeout,
+  clearTimeout
+};
+globalThis.document = {
+  activeElement: null,
+  querySelector: (selector) => {
+    if (selector === "#auth-panel") return hmiAuthPanel;
+    if (selector === "#plc-status") return hmiStatus;
+    return null;
+  }
+};
+try {
+  const d500Points = Array.from({ length: 11 }, (_, bit) => ({
+    pointId: `alarm.d500.${bit}`,
+    address: `D500.${bit}`,
+    readPoint: `alarm.d500.${bit}`,
+    alarm: { normalValue: false, alarmValue: true, message: `D500.${bit}`, level: "danger" }
+  }));
+  const bridge = new bridgeModule.AppleBridge({ points: d500Points, bindings: [] }, false, null, "GUEST");
+  const pointValue = { value: true, quality: "good", updatedAt: timestamp };
+  bridge.handleSocketMessage(JSON.stringify({
+    type: "points.snapshot",
+    values: Object.fromEntries([2, 9, 10].map((bit) => [`alarm.d500.${bit}`, pointValue]))
+  }));
+  bridge.handleSocketMessage(JSON.stringify({
+    type: "points.changed",
+    values: Object.fromEntries([0, 1, 3, 4, 5, 6, 7, 8].map((bit) => [`alarm.d500.${bit}`, pointValue]))
+  }));
+  const latestStateEvent = hmiStateEvents.at(-1);
+  assert.equal(latestStateEvent.type, "block-hmi-state");
+  assert.equal(latestStateEvent.detail.forceRender, false);
+  assert.equal(latestStateEvent.detail.state.revision, 2);
+  assert.deepEqual(latestStateEvent.detail.state.alarms.map((alarm) => alarm.id), d500Points.map((point) => point.address));
+} finally {
+  if (originalWindow === undefined) delete globalThis.window;
+  else globalThis.window = originalWindow;
+  if (originalDocument === undefined) delete globalThis.document;
+  else globalThis.document = originalDocument;
+  if (originalEvent === undefined) delete globalThis.Event;
+  else globalThis.Event = originalEvent;
+  if (originalCustomEvent === undefined) delete globalThis.CustomEvent;
+  else globalThis.CustomEvent = originalCustomEvent;
+}
+
 function cssRule(selector) {
   const start = keyboardCSS.indexOf(`${selector} {`);
   assert.notEqual(start, -1, `missing CSS rule: ${selector}`);
@@ -912,8 +983,8 @@ assert.match(keyboardCSS, /\.soft-keyboard-dock \{[\s\S]*?box-shadow: none;[\s\S
 assert.match(keyboardCSS, /\.hmi-simple-keyboard\.hg-theme-default \.hg-button \{[\s\S]*?box-shadow: none;[\s\S]*?transition: none;/);
 assert.match(source, /private publishLiveState\(force = false\): void \{[\s\S]*?this\.isUserInputActive\(\) && !force[\s\S]*?this\.emitState\(force\);/);
 assert.match(source, /message\.type === "points\.changed"[\s\S]*?this\.publishLiveState\(\);/);
-assert.match(source, /private emitState\(force = false\): void \{[\s\S]*?if \(force\) \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: true/);
-assert.match(compiledSource, /emitState\(force = false\) \{[\s\S]*?if \(force\) \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: true/);
+assert.match(source, /private emitState\(force = false\): void \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: force/);
+assert.match(compiledSource, /emitState\(force = false\) \{[\s\S]*?new CustomEvent\("block-hmi-state", \{[\s\S]*?state: cloneState\(this\.currentState\(\)\), forceRender: force/);
 assert.match(source, /private getState\(\): Promise<\{ state: LegacyState \}> \{[\s\S]*?if \(!this\.demo && !this\.canSendRuntime\(\)\) \{[\s\S]*?runtime_unavailable/);
 assert.match(index, /function applyServerState\(nextState, options = \{\}\) \{[\s\S]*?incomingRevision < state\.revision && !options\.forceRender[\s\S]*?if \(inputInteractionActive\(\) && !options\.forceRender\) \{[\s\S]*?deferredServerRender = true;[\s\S]*?return true;[\s\S]*?renderAll\(\);/);
 assert.match(index, /window\.addEventListener\("block-hmi-state", event => \{[\s\S]*?const liveState = event\.detail && event\.detail\.state;[\s\S]*?applyServerState\(liveState, \{ forceRender: event\.detail\.forceRender === true \}\);[\s\S]*?void refreshBackendState\(\);/);

@@ -21,6 +21,7 @@ import (
 const (
 	CommandQueueCapacity = 64
 	PollInterval         = time.Duration(runtimeconfig.RequiredScanIntervalMs) * time.Millisecond
+	ReconnectInterval    = 10 * time.Second
 )
 
 const (
@@ -87,6 +88,7 @@ type Worker struct {
 	stateMu      sync.Mutex
 	disconnected bool
 	onDisconnect func()
+	onReconnect  func()
 }
 
 type pointPlan struct {
@@ -176,10 +178,18 @@ func (w *Worker) Ready() <-chan error {
 }
 
 // SetDisconnectHandler receives only confirmed transport or explicit
-// disconnect transitions. It does not implement reconnection or retries.
+// disconnect transitions.
 func (w *Worker) SetDisconnectHandler(handler func()) {
 	w.stateMu.Lock()
 	w.onDisconnect = handler
+	w.stateMu.Unlock()
+}
+
+// SetReconnectHandler receives a successful full scan after a confirmed
+// transport disconnect.
+func (w *Worker) SetReconnectHandler(handler func()) {
+	w.stateMu.Lock()
+	w.onReconnect = handler
 	w.stateMu.Unlock()
 }
 
@@ -229,7 +239,7 @@ func (w *Worker) Run(ctx context.Context) {
 		close(w.ready)
 	})
 
-	pollTimer := time.NewTimer(PollInterval)
+	pollTimer := time.NewTimer(w.pollInterval())
 	defer pollTimer.Stop()
 
 	for {
@@ -258,7 +268,7 @@ func (w *Worker) Run(ctx context.Context) {
 				w.handleCommand(request, pollTimer)
 			default:
 				_, _ = w.readAll()
-				pollTimer.Reset(PollInterval)
+				pollTimer.Reset(w.pollInterval())
 			}
 		}
 	}
@@ -275,18 +285,25 @@ func (w *Worker) handleCommand(request commandRequest, pollTimer *time.Timer) {
 	// Resetting here also discards an elapsed ordinary-poll tick, so that a
 	// confirmation or failed-write read never causes a duplicate read after
 	// the reply.
-	resetPollTimer(pollTimer)
+	resetPollTimer(pollTimer, w.pollInterval())
 	w.reply(request, result)
 }
 
-func resetPollTimer(timer *time.Timer) {
+func resetPollTimer(timer *time.Timer, interval time.Duration) {
 	if !timer.Stop() {
 		select {
 		case <-timer.C:
 		default:
 		}
 	}
-	timer.Reset(PollInterval)
+	timer.Reset(interval)
+}
+
+func (w *Worker) pollInterval() time.Duration {
+	if w.Disconnected() {
+		return ReconnectInterval
+	}
+	return PollInterval
 }
 
 func (w *Worker) execute(command Command) Result {
@@ -553,6 +570,7 @@ func (w *Worker) readAll() (map[string]pointstore.PointValue, error) {
 	values := make(map[string]pointstore.PointValue, len(w.readable))
 	var readErr error
 	confirmedDisconnect := false
+	recovered := false
 	for _, batch := range w.batches {
 		ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
 		registers, err := w.adapter.ReadHoldingRegisters(ctx, batch.start, uint16(len(batch.words)))
@@ -564,8 +582,14 @@ func (w *Worker) readAll() (map[string]pointstore.PointValue, error) {
 			if readErr == nil {
 				readErr = err
 			}
-			if errors.Is(err, easy521.ErrTransportDisconnected) && w.markDisconnected() {
-				confirmedDisconnect = true
+			if errors.Is(err, easy521.ErrTransportDisconnected) {
+				if w.markDisconnected() {
+					confirmedDisconnect = true
+				}
+				w.failureValues(values, batch)
+				// Do not redial once per remaining batch. The next scan uses the
+				// reconnect interval after this full stale snapshot is published.
+				break
 			}
 			w.failureValues(values, batch)
 			continue
@@ -573,7 +597,7 @@ func (w *Worker) readAll() (map[string]pointstore.PointValue, error) {
 		w.goodValues(values, batch, registers)
 	}
 	if readErr == nil {
-		w.markConnected()
+		recovered = w.markConnected()
 	} else if w.Disconnected() {
 		values = w.staleValues()
 	}
@@ -582,6 +606,9 @@ func (w *Worker) readAll() (map[string]pointstore.PointValue, error) {
 	}
 	if confirmedDisconnect {
 		w.notifyDisconnected()
+	}
+	if recovered {
+		w.notifyReconnected()
 	}
 	return values, readErr
 }
@@ -620,10 +647,14 @@ func (w *Worker) markDisconnected() bool {
 	return true
 }
 
-func (w *Worker) markConnected() {
+func (w *Worker) markConnected() bool {
 	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if !w.disconnected {
+		return false
+	}
 	w.disconnected = false
-	w.stateMu.Unlock()
+	return true
 }
 
 func (w *Worker) confirmDisconnected() (map[string]pointstore.PointValue, bool) {
@@ -661,6 +692,15 @@ func (w *Worker) staleValuesLocked() map[string]pointstore.PointValue {
 func (w *Worker) notifyDisconnected() {
 	w.stateMu.Lock()
 	handler := w.onDisconnect
+	w.stateMu.Unlock()
+	if handler != nil {
+		handler()
+	}
+}
+
+func (w *Worker) notifyReconnected() {
+	w.stateMu.Lock()
+	handler := w.onReconnect
 	w.stateMu.Unlock()
 	if handler != nil {
 		handler()

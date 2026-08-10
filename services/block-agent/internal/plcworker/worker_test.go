@@ -672,6 +672,31 @@ func TestConfirmedTransportDisconnectPublishesStaleAndNotifies(t *testing.T) {
 	}
 }
 
+func TestTransportDisconnectStopsRemainingBatchesUntilReconnectInterval(t *testing.T) {
+	adapter := newFakeAdapter(0)
+	adapter.readErr = easy521.ErrTransportDisconnected
+	worker := newWorker(t, twoBatchReadConfig(), adapter, func(map[string]pointstore.PointValue) error { return nil })
+	if len(worker.batches) != 2 {
+		t.Fatalf("read batches = %#v, want two distinct batches", worker.batches)
+	}
+
+	values, err := worker.readAll()
+	if !errors.Is(err, easy521.ErrTransportDisconnected) {
+		t.Fatalf("readAll error = %v, want transport disconnect", err)
+	}
+	if reads := adapter.readCalls(); len(reads) != 1 || reads[0].address != 500 {
+		t.Fatalf("transport-disconnected scan made reads %#v, want only D500", reads)
+	}
+	if got := worker.pollInterval(); got != 10*time.Second {
+		t.Fatalf("next poll interval = %s, want 10s", got)
+	}
+	for pointID, value := range values {
+		if value.Quality != "stale" {
+			t.Fatalf("%s after transport disconnect = %#v, want stale", pointID, value)
+		}
+	}
+}
+
 func newWorker(t *testing.T, config runtimeconfig.Config, adapter *fakeAdapter, publish func(map[string]pointstore.PointValue) error) *Worker {
 	t.Helper()
 	worker, err := New(config, adapter, publish, time.Now)
@@ -689,6 +714,13 @@ func testConfig(mode string, pulseMs int) runtimeconfig.Config {
 			Write: &runtimeconfig.WriteDefinition{Mode: mode, ActiveValue: true, DefaultValue: false, PulseMs: pulseMs},
 		},
 		{PointID: "feedback", Address: "D504.1", Type: "bool", Access: "read", ReadPoint: "feedback"},
+	}}
+}
+
+func twoBatchReadConfig() runtimeconfig.Config {
+	return runtimeconfig.Config{ScanIntervalMs: runtimeconfig.RequiredScanIntervalMs, Points: []runtimeconfig.PointDefinition{
+		{PointID: "first", Address: "D500.0", Type: "bool", Access: "read", ReadPoint: "first"},
+		{PointID: "second", Address: "D700.0", Type: "bool", Access: "read", ReadPoint: "second"},
 	}}
 }
 

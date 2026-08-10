@@ -1837,13 +1837,11 @@ class AppleBridge {
       this.deferredLiveState = true;
       return;
     }
-    if (force) {
-      window.dispatchEvent(new CustomEvent("block-hmi-state", {
-        detail: { state: cloneState(this.currentState()), forceRender: true }
-      }));
-      return;
-    }
-    window.dispatchEvent(new Event("block-hmi-state"));
+    // Send the current snapshot with every live change so an in-flight page
+    // refresh cannot make the incremental update disappear.
+    window.dispatchEvent(new CustomEvent("block-hmi-state", {
+      detail: { state: cloneState(this.currentState()), forceRender: force }
+    }));
   }
 
   private deferProductionPolicy(): void {

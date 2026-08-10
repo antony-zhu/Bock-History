@@ -117,6 +117,7 @@ func (r *Runtime) connectPLC(client *wsClient, requestID string, endpoint plcEnd
 		return
 	}
 	worker.SetDisconnectHandler(func() { r.notifyPLCDisconnected(session, worker) })
+	worker.SetReconnectHandler(func() { r.notifyPLCReconnected(session, worker) })
 	workerContext, workerCancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	if r.owner != client || r.session != session {
@@ -226,6 +227,20 @@ func (r *Runtime) notifyPLCDisconnected(session *runtimeSession, worker *plcwork
 	r.mu.Unlock()
 	if deviceID != "" {
 		client.enqueue(plcConnectionEnvelope(r.now, deviceID, "disconnected"), false)
+	}
+}
+
+func (r *Runtime) notifyPLCReconnected(session *runtimeSession, worker *plcworker.Worker) {
+	r.mu.Lock()
+	if r.session != session || session.worker != worker || r.owner == nil || session.disconnecting {
+		r.mu.Unlock()
+		return
+	}
+	session.plcState = "connected"
+	client, deviceID := r.owner, session.deviceID
+	r.mu.Unlock()
+	if deviceID != "" {
+		client.enqueue(plcConnectionEnvelope(r.now, deviceID, "connected"), false)
 	}
 }
 

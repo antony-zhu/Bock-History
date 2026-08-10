@@ -340,7 +340,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)message\.type === "points\.changed".*?this\.publishLiveState\(\);`).MatchString(source) {
 		t.Fatal("PLC updates still render through the full input path instead of coalescing while an input is active")
 	}
-	if !regexp.MustCompile(`(?s)private emitState\(force = false\): void \{.*?if \(force\) \{.*?new CustomEvent\("block-hmi-state", \{.*?state: cloneState\(this\.currentState\(\)\), forceRender: true`).MatchString(source) ||
+	if !regexp.MustCompile(`(?s)private emitState\(force = false\): void \{.*?new CustomEvent\("block-hmi-state", \{.*?state: cloneState\(this\.currentState\(\)\), forceRender: force`).MatchString(source) ||
 		!regexp.MustCompile(`(?s)private getState\(\): Promise<\{ state: LegacyState \}> \{.*?if \(!this\.demo && !this\.canSendRuntime\(\)\) \{.*?runtime_unavailable`).MatchString(source) {
 		t.Fatal("disconnect state event does not carry an unknown snapshot while preserving the normal read gate")
 	}
