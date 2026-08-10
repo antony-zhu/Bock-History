@@ -31,4 +31,12 @@ func TestProductionStorePersistsValidatedPatch(t *testing.T) {
 	if _, err := store.Patch(ProductionPatch{PiecesPerBox: &invalid}); err == nil {
 		t.Fatal("invalid piecesPerBox was accepted")
 	}
+	maximum := 60000
+	if _, err := store.Patch(ProductionPatch{TargetProduction: &maximum}); err != nil {
+		t.Fatalf("maximum targetProduction was rejected: %v", err)
+	}
+	overMaximum := 60001
+	if _, err := store.Patch(ProductionPatch{TargetProduction: &overMaximum}); err == nil {
+		t.Fatal("targetProduction over 60000 was accepted")
+	}
 }

@@ -1507,6 +1507,8 @@
     .event-box {
       margin: 0;
       padding: 20px 22px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
       border: 1px solid rgba(255, 255, 255, 0.78);
       border-radius: 25px;
       background: rgba(255, 255, 255, 0.58);
@@ -4158,6 +4160,7 @@
 
     #hmi-footer .mode {
       border: 1px solid transparent;
+      cursor: default;
       box-shadow:
         0 6px 16px rgba(48, 62, 79, 0.08),
         inset 0 1px 0 rgba(255, 255, 255, 0.76);
@@ -4184,6 +4187,11 @@
       color: #176b38;
       border-color: #c6ebd2;
       background: #e8f7ec;
+    }
+
+    #hmi-footer .mode:disabled {
+      cursor: default;
+      opacity: 1;
     }
 
     #hmi-footer .mode.is-auto:hover {
@@ -4812,7 +4820,7 @@
                 </div>
               </div>
 
-              <div class="event-box" aria-label="当前消息">
+              <div class="event-box" aria-label="当前报警">
                 <ol class="event-list" id="homeEvents"></ol>
               </div>
             </div>
@@ -4949,7 +4957,7 @@
                 <form class="settings-form production-settings-form" id="settingsForm">
                   <div class="settings-row">
                     <label for="targetInput">产能设定：</label>
-                    <input id="targetInput" name="target" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="" placeholder="—" required data-soft-keyboard="numeric" data-soft-label="产能设定" data-soft-submit="true" data-production-setting aria-describedby="settingsValidation">
+                    <input id="targetInput" name="target" type="number" min="1" max="60000" step="1" inputmode="numeric" autocomplete="off" value="" placeholder="—" required data-soft-keyboard="numeric" data-soft-label="产能设定" data-soft-submit="true" data-production-setting aria-describedby="settingsValidation">
                     <span>件</span>
                   </div>
                   <div class="settings-row">
@@ -5097,8 +5105,10 @@
         class="mode is-auto"
         id="modeToggle"
         type="button"
-        aria-label="当前为自动模式，点击切换为手动模式"
+        aria-label="当前为自动模式"
         aria-pressed="false"
+        aria-disabled="true"
+        disabled
       >
         <div class="meta-cn" id="modeCn">自动</div>
       </button>
@@ -5123,7 +5133,6 @@
     const hmiBackendProxy = {
       getState: function () { return window.BlockHMIReady.then(function (backend) { return backend.getState(); }); },
       sendCommand: function (command, payload, context) { return window.BlockHMIReady.then(function (backend) { return backend.sendCommand(command, payload, context); }); },
-      acknowledgeAlarm: function (alarmId, context) { return window.BlockHMIReady.then(function (backend) { return backend.acknowledgeAlarm(alarmId, context); }); },
       getAudit: function (options) { return window.BlockHMIReady.then(function (backend) { return backend.getAudit(options); }); },
       manual: {
         binding: function (displayPath) { return window.HMIBackend && window.HMIBackend !== hmiBackendProxy ? window.HMIBackend.manual.binding(displayPath) : null; },
@@ -5184,7 +5193,7 @@
       const state = {
         revision: 0,
         running: null,
-        mode: null,
+        mode: "auto",
         singlePaused: null,
         framePaused: null,
         theme: "light",
@@ -5205,16 +5214,8 @@
           { type: "warning", label: "需换料" },
           { type: "fault", label: "异常" }
         ],
-        alarms: [
-          { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "09:42:18", acknowledged: false },
-          { id: 2, level: "warning", code: "0002", text: "库位2余量不足", time: "09:40:06", acknowledged: false },
-          { id: 1, level: "info", code: "0001", text: "系统自检完成", time: "09:35:12", acknowledged: false }
-        ],
-        history: [
-          { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "2026-07-19 18:42:18" },
-          { id: 2, level: "warning", code: "0002", text: "X按钮急停解除", time: "2026-07-19 17:26:08" },
-          { id: 1, level: "info", code: "0001", text: "完成抽检", time: "2026-07-19 16:55:31" }
-        ]
+        alarms: [],
+        history: []
       };
 
       const $ = (selector, root = document) => root.querySelector(selector);
@@ -5404,15 +5405,6 @@
         const unavailable = !backendConnected || backendWriteInFlight;
         $$(".control-button").forEach(button => {
           const blocked = unavailable || button.dataset.backendUnavailable === "true";
-          button.disabled = frontendPermissions.operate && blocked;
-          button.setAttribute("aria-disabled", String(!frontendPermissions.operate || blocked));
-        });
-        const mode = $("#modeToggle");
-        const modeBlocked = unavailable || mode.dataset.backendUnavailable === "true";
-        mode.disabled = frontendPermissions.operate && modeBlocked;
-        mode.setAttribute("aria-disabled", String(!frontendPermissions.operate || modeBlocked));
-        $$(".ack-button").forEach(button => {
-          const blocked = unavailable || button.dataset.backendUnavailable === "true" || button.dataset.acknowledged === "true";
           button.disabled = frontendPermissions.operate && blocked;
           button.setAttribute("aria-disabled", String(!frontendPermissions.operate || blocked));
         });
@@ -5661,7 +5653,7 @@
       }
 
       function isValidProductionTarget(value) {
-        return Number.isInteger(value) && value >= 1 && value <= 9999;
+        return Number.isInteger(value) && value >= 1 && value <= 60000;
       }
 
       async function loadProductionSettings() {
@@ -5679,10 +5671,14 @@
         const target = Number($("#targetInput").value);
         const tool = Number($("#toolInput").value);
         const inspect = Number($("#inspectInput").value);
-        const validTarget = Number.isInteger(target) && target >= 1 && target <= 9999;
+        const validTarget = Number.isInteger(target) && target >= 1 && target <= 60000;
         const validTool = Number.isInteger(tool) && tool >= 1 && tool <= 99999;
         const validInspect = Number.isInteger(inspect) && inspect >= 1 && inspect <= 9999;
-        if (!validTarget || !validTool || !validInspect) {
+        if (!validTarget) {
+          $("#settingsValidation").textContent = "产能设定必须为 1 到 60000 的整数";
+          return null;
+        }
+        if (!validTool || !validInspect) {
           $("#settingsValidation").textContent = "参数必须为允许范围内的整数";
           return null;
         }
@@ -5919,18 +5915,18 @@
         lamp.className = `lamp ${running === true ? "running" : running === false ? "paused" : "unknown"}`;
         $("#systemStatus").textContent = running === true ? "运行中" : running === false ? "运行停止" : "—";
 
-        const mode = state.mode === "auto" || state.mode === "manual" ? state.mode : null;
-        $("#modeCn").textContent = mode === "auto" ? "自动" : mode === "manual" ? "手动" : "—";
+        const mode = state.mode === "manual" ? "manual" : "auto";
+        $("#modeCn").textContent = mode === "manual" ? "手动" : "自动";
         modeToggle.classList.toggle("is-auto", mode === "auto");
         modeToggle.classList.toggle("is-manual", mode === "manual");
-        modeToggle.setAttribute("aria-pressed", mode === null ? "mixed" : String(mode === "manual"));
+        modeToggle.disabled = true;
+        modeToggle.setAttribute("aria-disabled", "true");
+        modeToggle.setAttribute("aria-pressed", String(mode === "manual"));
         modeToggle.setAttribute(
           "aria-label",
           mode === "auto"
-            ? "当前为自动模式，点击切换为手动模式"
-            : mode === "manual"
-              ? "当前为手动模式，点击切换为自动模式"
-              : "当前模式未确认"
+            ? "当前为自动模式"
+            : "当前为手动模式"
         );
         [
           { action: "single", label: "单件循环", paused: state.singlePaused },
@@ -5992,24 +5988,17 @@
 
       function renderEvents() {
         const homeList = $("#homeEvents");
-        const homeItems = state.alarms.filter(item => !item.acknowledged).slice(0, 3);
-        homeList.innerHTML = homeItems.map(item => `
+        homeList.innerHTML = state.alarms.map(item => `
           <li class="event-line ${safeEventLevel(item.level)}">
             <span class="dot" aria-hidden="true"></span>
-            <span>${escapeHTML(item.code)}-${item.level === "danger" ? "报警" : item.level === "warning" ? "警示" : "提示"}—${escapeHTML(item.text)}</span>
+            <span>${escapeHTML(item.text)}</span>
           </li>
         `).join("");
 
         $("#alarmEvents").innerHTML = state.alarms.map(item => `
-          <li class="log-line ${safeEventLevel(item.level)}${item.acknowledged ? " acknowledged" : ""}" data-alarm-id="${Number(item.id)}">
+          <li class="log-line ${safeEventLevel(item.level)}">
             <span class="dot" aria-hidden="true"></span>
-            <span class="log-copy">${escapeHTML(item.code)}-${item.level === "danger" ? "报警" : item.level === "warning" ? "警示" : "提示"}—${escapeHTML(item.text)}</span>
-            <span>
-              <time class="log-time">${escapeHTML(item.time || displayAPITime(item.occurredAt, false))}</time>
-              <button class="ack-button" type="button" data-acknowledged="${String(Boolean(item.acknowledged))}" ${item.acknowledged || (frontendPermissions.operate && (!backendConnected || backendWriteInFlight)) ? "disabled" : ""}>
-                ${item.acknowledged ? "已确认" : "确认"}
-              </button>
-            </span>
+            <span class="log-copy">${escapeHTML(item.text)}</span>
           </li>
         `).join("");
       }
@@ -6438,18 +6427,6 @@
         clearButton.textContent = "清空料仓";
       }
 
-      async function requestModeChange() {
-        if (!requireFrontendPermission("operate")) return false;
-        const nextMode = state.mode === "auto" ? "manual" : "auto";
-        return runBackendMutation(
-          () => backend.sendCommand("set_mode", {
-            mode: nextMode,
-            expectedRevision: state.revision
-          }, backendContext()),
-          { pendingMessage: `正在切换至${nextMode === "auto" ? "自动" : "手动"}模式…` }
-        );
-      }
-
       async function sendHomePointAction(displayPath) {
         const runtime = pointRuntime();
         const binding = pointBinding(displayPath);
@@ -6512,8 +6489,6 @@
       $$(".control-button").forEach(button => {
         button.addEventListener("click", () => handleAction(button));
       });
-
-      $("#modeToggle").addEventListener("click", requestModeChange);
 
       themeToggle.addEventListener("click", () => {
         const shouldOpen = themeMenu.hidden;
@@ -6598,22 +6573,6 @@
       document.addEventListener("hmi-soft-keyboard-modechange", event => {
         if (!event.detail || !event.detail.available || event.detail.initial) return;
         showToast(event.detail.mode === "soft" ? "软键盘已开启" : "已切换为系统 / 实体键盘");
-      });
-
-      $("#alarmEvents").addEventListener("click", async event => {
-        const button = closestElement(event.target, ".ack-button");
-        if (!button || button.disabled) return;
-        if (!requireFrontendPermission("operate")) return;
-        const row = closestElement(button, "[data-alarm-id]");
-        const item = state.alarms.find(alarm => alarm.id === Number(row.dataset.alarmId));
-        if (!item) return;
-        await runBackendMutation(
-          () => backend.acknowledgeAlarm(item.id, {
-            operator: $("#operatorName").textContent.trim() || "local",
-            expectedRevision: state.revision
-          }),
-          { pendingMessage: `正在确认报警 ${item.code}…` }
-        );
       });
 
       $("#portraitContinue").addEventListener("click", () => {

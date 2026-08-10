@@ -259,15 +259,17 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`private sendCommand[\s\S]*?requirePermission\("operate"\)`).MatchString(source) {
 		t.Fatal("HMI point commands are not protected by the frontend permission gate")
 	}
-	modeCommand := regexp.MustCompile(`(?s)private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{.*?\n  \}\n\n  private acknowledgeAlarm`).FindString(source)
+	modeCommand := regexp.MustCompile(`(?s)private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{.*?\n  \}\n\n  private applyDemoCommand`).FindString(source)
 	if modeCommand == "" ||
-		!strings.Contains(modeCommand, `command === "set_mode"`) ||
-		!strings.Contains(modeCommand, `displayPath: "home.machine.enabled", action: "toggle"`) ||
+		strings.Contains(source, `command === "set_mode"`) ||
+		strings.Contains(source, `home.machine.enabled`) ||
+		strings.Contains(source, `acknowledgeAlarm`) ||
+		!strings.Contains(modeCommand, `displayPath: "home.machine.start", action: "pulse"`) ||
 		!strings.Contains(modeCommand, `buildPointCommand(pointID, operation.action, requestId)`) {
-		t.Fatal("mode switching does not use the configured PLC toggle point")
+		t.Fatal("mode state still has a PLC write path")
 	}
-	if !regexp.MustCompile(`(?s)const manual = this\.valueFor\("footer\.mode\.manual"\);.*?state\.running = null;.*?state\.mode = manual === true \? "manual" : manual === false \? "auto" : null;`).MatchString(source) {
-		t.Fatal("mode display must preserve an unknown PLC feedback state")
+	if !regexp.MustCompile(`(?s)const manual = this\.valueFor\("footer\.mode\.manual"\);.*?state\.running = null;.*?state\.mode = manual === true \? "manual" : "auto";`).MatchString(source) {
+		t.Fatal("mode display must default to auto when PLC feedback is unknown")
 	}
 	if !regexp.MustCompile(`(?s)const singlePaused = this\.valueFor\("home\.cycle\.single"\);.*?state\.singlePaused = typeof singlePaused === "boolean" \? singlePaused : null;`).MatchString(source) ||
 		!regexp.MustCompile(`(?s)const framePaused = this\.valueFor\("home\.cycle\.frame"\);.*?state\.framePaused = typeof framePaused === "boolean" \? framePaused : null;`).MatchString(source) {
@@ -284,17 +286,12 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!strings.Contains(source, `const displayPath = button.dataset.pointAction;`) ||
 		!strings.Contains(source, `const configured = displayPath !== undefined && this.config.bindings.some`) ||
 		!strings.Contains(source, `const available = runtimeEnabled && configured;`) ||
-		!strings.Contains(source, `mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";`) ||
-		strings.Contains(source, `mode.dataset.backendUnavailable = "true";`) {
+		strings.Contains(source, `mode.dataset.backendUnavailable`) {
 		t.Fatal("home controls are not enabled only while their configured runtime point is writable")
 	}
-	modeChange := regexp.MustCompile(`(?s)async function requestModeChange\(\) \{.*?\n      \}\n\n      async function handleAction`).FindString(page)
-	if modeChange == "" ||
-		!strings.Contains(modeChange, `if (!requireFrontendPermission("operate")) return false;`) ||
-		!strings.Contains(modeChange, `state.mode === "auto" ? "manual" : "auto"`) ||
-		!strings.Contains(modeChange, `backend.sendCommand("set_mode"`) ||
-		!strings.Contains(modeChange, `runBackendMutation(`) {
-		t.Fatal("mode toggle does not preserve the guest gate and both manual/auto directions")
+	if !regexp.MustCompile(`(?s)id="modeToggle".*?aria-disabled="true".*?disabled`).MatchString(page) ||
+		strings.Contains(page, `requestModeChange`) || strings.Contains(page, `sendCommand("set_mode"`) || strings.Contains(page, `acknowledgeAlarm`) {
+		t.Fatal("mode display or active-alarm view retains an interaction path")
 	}
 	if !regexp.MustCompile(`(?s)async function runBackendMutation\(factory, options = \{\}\) \{.*?showToast\(\s*backendErrorMessage\(mutationError\)`).MatchString(page) {
 		t.Fatal("mode command failures are not surfaced through the HMI toast")
@@ -307,8 +304,8 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if maintenanceProductionSave == "" || !strings.Contains(maintenanceProductionSave, `requireFrontendPermission("maintenance")`) || !strings.Contains(maintenanceProductionSave, `runtime.command("maintenance.production.target", patch.targetProduction)`) {
 		t.Fatal("D1000 maintenance write is incomplete")
 	}
-	if !regexp.MustCompile(`(?s)const state = \{.*?running: null,.*?mode: null,.*?target: null,.*?output: null,.*?cycle: null,`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)function renderStatus\(\) \{.*?running === true \? "运行中" : running === false \? "运行停止" : "—".*?mode === null \? "mixed".*?known \? item\.paused \? "恢复" : "暂停" : "—"`).MatchString(page) {
+	if !regexp.MustCompile(`(?s)const state = \{.*?running: null,.*?mode: "auto",.*?target: null,.*?output: null,.*?cycle: null,`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)function renderStatus\(\) \{.*?running === true \? "运行中" : running === false \? "运行停止" : "—".*?const mode = state\.mode === "manual" \? "manual" : "auto";.*?modeToggle\.disabled = true;.*?known \? item\.paused \? "恢复" : "暂停" : "—"`).MatchString(page) {
 		t.Fatal("missing PLC values still fall back to an operating status")
 	}
 	if !regexp.MustCompile(`(?s)function renderNumericReadout\(selector, value\) \{.*?output\.textContent = known \? String\(value\) : "—";`).MatchString(page) ||
@@ -347,11 +344,19 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!regexp.MustCompile(`(?s)window\.addEventListener\("block-hmi-state", event => \{.*?const liveState = event\.detail && event\.detail\.state;.*?applyServerState\(liveState, \{ forceRender: event\.detail\.forceRender === true \}\);.*?void refreshBackendState\(\);`).MatchString(page) {
 		t.Fatal("disconnect event does not immediately apply the cleared PLC state while normal input renders stay deferred")
 	}
-	if !regexp.MustCompile(`id="targetInput" name="target" type="number"[^>]*value=""[^>]*placeholder="—"[^>]*required`).MatchString(page) ||
+	if !regexp.MustCompile(`id="targetInput" name="target" type="number"[^>]*max="60000"[^>]*value=""[^>]*placeholder="—"[^>]*required`).MatchString(page) ||
 		regexp.MustCompile(`id="targetInput"[^>]*value="30"`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)function syncPLCTargetInput\(\) \{.*?\$\("#targetInput"\)\.value = isValidProductionTarget\(state\.target\) \? String\(state\.target\) : "";`).MatchString(page) ||
-		!strings.Contains(page, `if (demoMode) assign("#targetInput", Number(production.targetProduction)`) {
+		!strings.Contains(page, `if (demoMode) assign("#targetInput", Number(production.targetProduction)`) ||
+		!regexp.MustCompile(`(?s)function isValidProductionTarget\(value\) \{.*?value <= 60000`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)function productionPatch\(\) \{.*?target <= 60000.*?产能设定必须为 1 到 60000 的整数`).MatchString(page) {
 		t.Fatal("maintenance D1000 input does not stay blank until a valid PLC point arrives")
+	}
+	eventRenderer := regexp.MustCompile(`(?s)function renderEvents\(\) \{.*?\n      \}\n\n      function renderHistory`).FindString(page)
+	if eventRenderer == "" || !strings.Contains(eventRenderer, `homeList.innerHTML = state.alarms.map`) ||
+		strings.Contains(eventRenderer, `slice(`) || strings.Contains(eventRenderer, `item.code`) || strings.Contains(eventRenderer, `ack-button`) ||
+		!strings.Contains(page, `overflow-y: auto;`) || !strings.Contains(page, `overscroll-behavior: contain;`) {
+		t.Fatal("active alarms are truncated, coded, acknowledged, or not scrollable")
 	}
 	for _, forbidden := range []string{`requestFullscreen`, `exitFullscreen`, `alert(`, `confirm(`, `prompt(`} {
 		if strings.Contains(page, forbidden) {
@@ -715,7 +720,7 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 	}
 
 	defaultConfig := readConfig("assets/points.json")
-	if defaultConfig.ScanIntervalMs != 500 || len(defaultConfig.Points) != 27 || len(defaultConfig.Bindings) == 0 {
+	if defaultConfig.ScanIntervalMs != 500 || len(defaultConfig.Points) != 42 || len(defaultConfig.Bindings) == 0 {
 		t.Fatalf("incomplete default points.json: %+v", defaultConfig)
 	}
 	findDefaultPoint := func(pointID string) map[string]any {
@@ -727,6 +732,42 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 		}
 		t.Fatalf("default profile omits point %q", pointID)
 		return nil
+	}
+	for _, expected := range []struct {
+		pointID string
+		address string
+		level   string
+		message string
+	}{
+		{pointID: "alarm.emergency.stop.pressed", address: "D500.0", level: "danger", message: "急停按下"},
+		{pointID: "alarm.axis.fault", address: "D500.1", level: "danger", message: "轴故障"},
+		{pointID: "alarm.light.curtain.triggered", address: "D500.2", level: "danger", message: "光幕触发"},
+		{pointID: "alarm.restart.inhibited", address: "D500.3", level: "danger", message: "不可再次启动"},
+		{pointID: "alarm.axis.z.upper.limit", address: "D500.4", level: "danger", message: "Z轴上限位"},
+		{pointID: "alarm.axis.z.lower.limit", address: "D500.5", level: "danger", message: "Z轴下限位"},
+		{pointID: "alarm.axis.z.left.limit", address: "D500.6", level: "danger", message: "Z轴左限位"},
+		{pointID: "alarm.axis.z.right.limit", address: "D500.7", level: "danger", message: "Z轴右限位"},
+		{pointID: "alarm.material.clear.fault", address: "D500.8", level: "danger", message: "清料故障"},
+		{pointID: "alarm.material.conflict", address: "D500.9", level: "danger", message: "有料冲突"},
+		{pointID: "alarm.self.check.failed", address: "D500.10", level: "danger", message: "自检未通过"},
+		{pointID: "alarm.bin.a.empty", address: "D502.0", level: "warning", message: "A仓位无车"},
+		{pointID: "alarm.bin.b.empty", address: "D502.1", level: "warning", message: "B仓位无车"},
+		{pointID: "alarm.cylinder.1.timeout", address: "D502.11", level: "warning", message: "气缸1超时"},
+		{pointID: "alarm.cylinder.2.timeout", address: "D502.12", level: "warning", message: "气缸2超时"},
+	} {
+		point := findDefaultPoint(expected.pointID)
+		alarm, ok := point["alarm"].(map[string]any)
+		if !ok || point["address"] != expected.address || point["type"] != "bool" || point["access"] != "read" || point["readPoint"] != expected.pointID || point["writePoint"] != nil || point["writeMethod"] != nil ||
+			alarm["normalValue"] != false || alarm["alarmValue"] != true || alarm["level"] != expected.level || alarm["message"] != expected.message {
+			t.Fatalf("default profile alarm point %q is incomplete: %+v", expected.pointID, point)
+		}
+	}
+	for _, obsoleteAddress := range []string{"D502.2", "D502.3", "D502.4", "D502.5"} {
+		for _, point := range defaultConfig.Points {
+			if point["address"] == obsoleteAddress {
+				t.Fatalf("default profile retains obsolete alarm address %q", obsoleteAddress)
+			}
+		}
 	}
 	for _, pointID := range []string{
 		"home.homing", "home.action.reset", "home.action.restart", "home.action.pause", "home.action.clear", "home.cycle.single", "home.cycle.frame",

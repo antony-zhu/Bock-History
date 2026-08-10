@@ -90,6 +90,14 @@ assert.equal(configured.type, "runtime.configure");
 assert.equal(configured.scanIntervalMs, 500);
 assert.equal(JSON.stringify(configured).includes("displayPath"), false);
 assert.equal(JSON.stringify(configured).includes("description"), false);
+const alarmConfigured = buildRuntimeConfigure([{
+  pointId: "alarm.emergency.stop.pressed", address: "D500.0", type: "bool", access: "read",
+  readPoint: "alarm.emergency.stop.pressed", writePoint: null, writeMethod: null,
+  alarm: { normalValue: false, alarmValue: true, message: "急停按下", level: "danger" }
+}], "alarm-configure", timestamp);
+assert.deepEqual(alarmConfigured.points[0].alarm, {
+  normalValue: false, alarmValue: true, message: "急停按下", level: "danger"
+});
 const simulatorConfigured = buildRuntimeConfigure([{
   pointId: "manual.motion.x.jog.speed.parameter", address: "D800", type: "float32", access: "read_write",
   readPoint: "manual.motion.x.jog.speed.parameter", writePoint: "manual.motion.x.jog.speed.parameter", writeMethod: "fc10",
@@ -236,11 +244,38 @@ assert.equal(defaultPointsConfiguration.scanIntervalMs, 500);
 assert.equal(simulatorPointsConfiguration.scanIntervalMs, 500);
 assert.deepEqual(defaultPointsConfiguration.points.map((point) => point.address), [
   "D504.0", "D504.1", "D504.7", "D504.8", "D504.9", "D504.10", "D550.3", "D550.4",
-  "D522", "D504.6", "D506.0", "D504.12", "D506.5", "D504.11", "D506.7", "D506.9", "D506.10", "D506.11", "D506.12",
+  "D522", "D504.6", "D506.0",
+  "D500.0", "D500.1", "D500.2", "D500.3", "D500.4", "D500.5", "D500.6", "D500.7", "D500.8", "D500.9", "D500.10",
+  "D502.0", "D502.1", "D502.11", "D502.12",
+  "D504.12", "D506.5", "D504.11", "D506.7", "D506.9", "D506.10", "D506.11", "D506.12",
   "D1000", "D900", "D902", "D904", "D906", "D908", "D910", "D912"
 ]);
 assert.ok(defaultPointsConfiguration.points.slice(0, 8).every((point) => point.type === "bool" && point.writeMethod === "maskWrite"));
 assert.doesNotMatch(JSON.stringify(defaultPointsConfiguration), /D800|D812/);
+const configuredAlarms = defaultPointsConfiguration.points.filter((point) => point.alarm);
+assert.equal(configuredAlarms.length, 15);
+assert.deepEqual(configuredAlarms.map((point) => ({
+  address: point.address, type: point.type, access: point.access, readPoint: point.readPoint,
+  writePoint: point.writePoint, writeMethod: point.writeMethod, normalValue: point.alarm.normalValue,
+  alarmValue: point.alarm.alarmValue, level: point.alarm.level, message: point.alarm.message
+})), [
+  { address: "D500.0", type: "bool", access: "read", readPoint: "alarm.emergency.stop.pressed", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "急停按下" },
+  { address: "D500.1", type: "bool", access: "read", readPoint: "alarm.axis.fault", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "轴故障" },
+  { address: "D500.2", type: "bool", access: "read", readPoint: "alarm.light.curtain.triggered", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "光幕触发" },
+  { address: "D500.3", type: "bool", access: "read", readPoint: "alarm.restart.inhibited", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "不可再次启动" },
+  { address: "D500.4", type: "bool", access: "read", readPoint: "alarm.axis.z.upper.limit", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "Z轴上限位" },
+  { address: "D500.5", type: "bool", access: "read", readPoint: "alarm.axis.z.lower.limit", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "Z轴下限位" },
+  { address: "D500.6", type: "bool", access: "read", readPoint: "alarm.axis.z.left.limit", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "Z轴左限位" },
+  { address: "D500.7", type: "bool", access: "read", readPoint: "alarm.axis.z.right.limit", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "Z轴右限位" },
+  { address: "D500.8", type: "bool", access: "read", readPoint: "alarm.material.clear.fault", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "清料故障" },
+  { address: "D500.9", type: "bool", access: "read", readPoint: "alarm.material.conflict", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "有料冲突" },
+  { address: "D500.10", type: "bool", access: "read", readPoint: "alarm.self.check.failed", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "danger", message: "自检未通过" },
+  { address: "D502.0", type: "bool", access: "read", readPoint: "alarm.bin.a.empty", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "warning", message: "A仓位无车" },
+  { address: "D502.1", type: "bool", access: "read", readPoint: "alarm.bin.b.empty", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "warning", message: "B仓位无车" },
+  { address: "D502.11", type: "bool", access: "read", readPoint: "alarm.cylinder.1.timeout", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "warning", message: "气缸1超时" },
+  { address: "D502.12", type: "bool", access: "read", readPoint: "alarm.cylinder.2.timeout", writePoint: null, writeMethod: null, normalValue: false, alarmValue: true, level: "warning", message: "气缸2超时" }
+]);
+assert.doesNotMatch(JSON.stringify(configuredAlarms), /D502\.(?:2|3|4|5)"/);
 assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "home.speed.automatic"), {
   pointId: "home.speed.automatic", address: "D522", type: "float32", access: "read",
   readPoint: "home.speed.automatic", writePoint: null, writeMethod: null,
@@ -401,11 +436,13 @@ assert.match(publicNavigationCancellation[0], /if \(!this\.authPanel\(\)\.hidden
 assert.doesNotMatch(publicNavigationCancellation[0], /else/);
 assert.match(source, /private sendPLCScan\(\): void \{[\s\S]*?requirePermission\("maintenance"\)/);
 assert.match(source, /private sendCommand\([\s\S]*?requirePermission\("operate"\)/);
-const legacyPointCommand = source.match(/private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{[\s\S]*?\n  \}\n\n  private acknowledgeAlarm/);
+const legacyPointCommand = source.match(/private sendCommand\(command: string, payload: Record<string, unknown> = \{\}\): Promise<\{ state: LegacyState \}> \{[\s\S]*?\n  \}\n\n  private applyDemoCommand/);
 assert.notEqual(legacyPointCommand, null);
-assert.match(legacyPointCommand[0], /command === "set_mode"[\s\S]*?displayPath: "home\.machine\.enabled", action: "toggle"[\s\S]*?buildPointCommand\(pointID, operation\.action, requestId\)/);
+assert.doesNotMatch(source, /command === "set_mode"|home\.machine\.enabled|acknowledgeAlarm/);
+assert.match(legacyPointCommand[0], /command === "start"[\s\S]*?displayPath: "home\.machine\.start", action: "pulse"[\s\S]*?buildPointCommand\(pointID, operation\.action, requestId\)/);
 assert.match(legacyPointCommand[0], /pendingPointCommand\.dispatch\(requestId, \(\) => \{[\s\S]*?this\.socket!\.send/);
-assert.match(source, /const manual = this\.valueFor\("footer\.mode\.manual"\);[\s\S]*?state\.running = null;[\s\S]*?state\.mode = manual === true \? "manual" : manual === false \? "auto" : null;/);
+assert.match(source, /const manual = this\.valueFor\("footer\.mode\.manual"\);[\s\S]*?state\.running = null;[\s\S]*?state\.mode = manual === true \? "manual" : "auto";/);
+assert.match(source, /private activeAlarms\(\): LegacyAlarm\[\] \{[\s\S]*?this\.config\.points\.flatMap[\s\S]*?value\?\.quality !== "good"[\s\S]*?value\.value !== alarm\.alarmValue[\s\S]*?id: point\.address, level: alarm\.level, text: alarm\.message/);
 assert.match(source, /const singlePaused = this\.valueFor\("home\.cycle\.single"\);[\s\S]*?state\.singlePaused = typeof singlePaused === "boolean" \? singlePaused : null;/);
 assert.match(source, /const framePaused = this\.valueFor\("home\.cycle\.frame"\);[\s\S]*?state\.framePaused = typeof framePaused === "boolean" \? framePaused : null;/);
 assert.match(source, /private numberFor\(displayPath: string\): number \| null \{[\s\S]*?return typeof value === "number" && Number\.isFinite\(value\) \? value : null;/);
@@ -418,8 +455,7 @@ assert.match(productionPolicy[0], /document\.querySelectorAll<HTMLButtonElement>
 assert.match(productionPolicy[0], /const displayPath = button\.dataset\.pointAction;/);
 assert.match(productionPolicy[0], /const configured = displayPath !== undefined && this\.config\.bindings\.some/);
 assert.match(productionPolicy[0], /const available = runtimeEnabled && configured;/);
-assert.match(productionPolicy[0], /mode\.dataset\.backendUnavailable = runtimeEnabled \? "false" : "true";/);
-assert.doesNotMatch(productionPolicy[0], /mode\.dataset\.backendUnavailable = "true"/);
+assert.doesNotMatch(productionPolicy[0], /mode\.dataset\.backendUnavailable|ack-button/);
 assert.doesNotMatch(source, /\/api\/auth\/status/);
 assert.doesNotMatch(source, /\/api\/auth\/(activity|logout)/);
 assert.match(source, /private refreshFrontendSession\(\): boolean \{[\s\S]*?renewFrontendSession\(this\.session, this\.idleTimeoutSeconds\)[\s\S]*?this\.becomeGuest\(\)/);
@@ -441,11 +477,12 @@ assert.match(maintenanceProductionSave[0], /requireFrontendPermission\("maintena
 assert.match(maintenanceProductionSave[0], /runtime\.command\("maintenance\.production\.target", patch\.targetProduction\)/);
 const initialPageState = index.match(/const state = \{[\s\S]*?\n      \};/);
 assert.notEqual(initialPageState, null);
-assert.match(initialPageState[0], /running: null,[\s\S]*?mode: null,[\s\S]*?target: null,[\s\S]*?output: null,[\s\S]*?cycle: null/);
+assert.match(initialPageState[0], /running: null,[\s\S]*?mode: "auto",[\s\S]*?target: null,[\s\S]*?output: null,[\s\S]*?cycle: null/);
 const statusRenderer = index.match(/function renderStatus\(\) \{[\s\S]*?\n      \}\n\n      function renderBins/);
 assert.notEqual(statusRenderer, null);
 assert.match(statusRenderer[0], /running === true \? "运行中" : running === false \? "运行停止" : "—"/);
-assert.match(statusRenderer[0], /mode === null \? "mixed"/);
+assert.match(statusRenderer[0], /const mode = state\.mode === "manual" \? "manual" : "auto";/);
+assert.match(statusRenderer[0], /modeToggle\.disabled = true;[\s\S]*?modeToggle\.setAttribute\("aria-disabled", "true"\)/);
 assert.match(statusRenderer[0], /known \? item\.paused \? "恢复" : "暂停" : "—"/);
 const metricsRenderer = index.match(/function renderMetrics\(\) \{[\s\S]*?\n      \}\n\n      function renderEvents/);
 assert.notEqual(metricsRenderer, null);
@@ -494,7 +531,7 @@ assert.match(index, /#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\
 assert.match(index, /#hmi-footer #operatorName::before \{[\s\S]*?data:image\/svg\+xml/);
 assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]*?background: #e8f7ec;/);
 assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
-assert.match(index, /const mode = state\.mode === "auto" \|\| state\.mode === "manual" \? state\.mode : null;[\s\S]*?modeToggle\.classList\.toggle\("is-auto", mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", mode === "manual"\);/);
+assert.match(index, /const mode = state\.mode === "manual" \? "manual" : "auto";[\s\S]*?modeToggle\.classList\.toggle\("is-auto", mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", mode === "manual"\);/);
 for (const asset of [
   'assets/soft-keyboard.css?v=20260809.1',
   'assets/soft-keyboard.js?v=20260810.1',
@@ -508,12 +545,8 @@ assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S
 assert.match(index, /\.maintenance-panel \{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
 assert.match(index, /window\.addEventListener\("block-hmi-guest", \(\) => \{[\s\S]*?switchPage\("home"\)/);
 assert.match(index, /if \(!requireFrontendPermission\("operate"\)\) return false;/);
-const modeChange = index.match(/async function requestModeChange\(\) \{[\s\S]*?\n      \}\n\n      async function handleAction/);
-assert.notEqual(modeChange, null);
-assert.match(modeChange[0], /if \(!requireFrontendPermission\("operate"\)\) return false;/);
-assert.match(modeChange[0], /state\.mode === "auto" \? "manual" : "auto"/);
-assert.match(modeChange[0], /backend\.sendCommand\("set_mode"/);
-assert.match(modeChange[0], /runBackendMutation\(/);
+assert.match(index, /id="modeToggle"[\s\S]*?aria-disabled="true"[\s\S]*?disabled/);
+assert.doesNotMatch(index, /requestModeChange|sendCommand\("set_mode"|acknowledgeAlarm/);
 assert.match(index, /data-page="manual"[\s\S]*?id="manualPageTitle"/);
 assert.match(index, /id="manualPageEntry" type="button" data-point-action="home\.homing">回原<\/button>/);
 assert.doesNotMatch(index, /\$\("#manualPageEntry"\)\.addEventListener\("click", \(\) => switchPage\("manual"\)\);/);
@@ -872,10 +905,20 @@ assert.match(compiledSource, /emitState\(force = false\) \{[\s\S]*?if \(force\) 
 assert.match(source, /private getState\(\): Promise<\{ state: LegacyState \}> \{[\s\S]*?if \(!this\.demo && !this\.canSendRuntime\(\)\) \{[\s\S]*?runtime_unavailable/);
 assert.match(index, /function applyServerState\(nextState, options = \{\}\) \{[\s\S]*?incomingRevision < state\.revision && !options\.forceRender[\s\S]*?if \(inputInteractionActive\(\) && !options\.forceRender\) \{[\s\S]*?deferredServerRender = true;[\s\S]*?return true;[\s\S]*?renderAll\(\);/);
 assert.match(index, /window\.addEventListener\("block-hmi-state", event => \{[\s\S]*?const liveState = event\.detail && event\.detail\.state;[\s\S]*?applyServerState\(liveState, \{ forceRender: event\.detail\.forceRender === true \}\);[\s\S]*?void refreshBackendState\(\);/);
-assert.match(index, /id="targetInput" name="target" type="number"[^>]*value=""[^>]*placeholder="—"[^>]*required/);
+assert.match(index, /id="targetInput" name="target" type="number"[^>]*max="60000"[^>]*value=""[^>]*placeholder="—"[^>]*required/);
 assert.doesNotMatch(index, /id="targetInput"[^>]*value="30"/);
 assert.match(index, /function syncPLCTargetInput\(\) \{[\s\S]*?\$\("#targetInput"\)\.value = isValidProductionTarget\(state\.target\) \? String\(state\.target\) : "";/);
 assert.match(index, /if \(demoMode\) assign\("#targetInput", Number\(production\.targetProduction\)/);
+assert.match(index, /function isValidProductionTarget\(value\) \{[\s\S]*?value <= 60000/);
+assert.match(index, /function productionPatch\(\) \{[\s\S]*?target <= 60000[\s\S]*?产能设定必须为 1 到 60000 的整数/);
+const eventRenderer = index.match(/function renderEvents\(\) \{[\s\S]*?\n      \}\n\n      function renderHistory/);
+assert.notEqual(eventRenderer, null);
+assert.match(eventRenderer[0], /homeList\.innerHTML = state\.alarms\.map/);
+assert.doesNotMatch(eventRenderer[0], /slice\(|acknowledged|item\.code|ack-button/);
+assert.match(eventRenderer[0], /class="event-line \$\{safeEventLevel\(item\.level\)\}"[\s\S]*?escapeHTML\(item\.text\)/);
+assert.match(index, /\.event-box \{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
+assert.match(index, /\.event-line\.danger \.dot,[\s\S]*?background: var\(--red\);/);
+assert.match(index, /\.event-line\.warning \.dot,[\s\S]*?background: var\(--amber\);/);
 assert.match(index, /window\.addEventListener\("hmi-soft-keyboard-statechange", \(\) => \{[\s\S]*?flushDeferredServerRender/);
 assert.match(index, /document\.addEventListener\("contextmenu", event => event\.preventDefault\(\)\);/);
 assert.doesNotMatch(index, /requestFullscreen|exitFullscreen|\balert\(|\bconfirm\(|\bprompt\(/);

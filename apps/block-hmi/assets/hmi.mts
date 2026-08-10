@@ -26,12 +26,20 @@ type PointDefinition = {
   writeMethod: "maskWrite" | "fc06" | "fc10" | null;
   registerCount?: number;
   wordOrder?: "low-high" | "high-low";
+  alarm?: AlarmDefinition;
   write?: {
     mode: "set" | "pulse" | "momentary" | "toggle";
     activeValue?: boolean | number;
     defaultValue?: boolean | number;
     pulseMs?: number;
   };
+};
+
+type AlarmDefinition = {
+  normalValue: Scalar;
+  alarmValue: Scalar;
+  message: string;
+  level: "danger" | "warning";
 };
 
 type Binding = {
@@ -73,12 +81,9 @@ type LegacyBin = {
 };
 
 type LegacyAlarm = {
-  id: number;
-  level: "danger" | "warning" | "info";
-  code: string;
+  id: string;
+  level: "danger" | "warning";
   text: string;
-  time: string;
-  acknowledged: boolean;
 };
 
 type LegacyHistory = {
@@ -92,7 +97,7 @@ type LegacyHistory = {
 type LegacyState = {
   revision: number;
   running: boolean | null;
-  mode: "auto" | "manual" | null;
+  mode: "auto" | "manual";
   singlePaused: boolean | null;
   framePaused: boolean | null;
   target: number | null;
@@ -116,7 +121,6 @@ type LegacyBackend = {
   APIError: typeof HMIAPIError;
   getState(): Promise<{ state: LegacyState }>;
   sendCommand(command: string, payload?: Record<string, unknown>, context?: unknown): Promise<{ state: LegacyState }>;
-  acknowledgeAlarm(alarmID: number, context?: unknown): Promise<{ state: LegacyState }>;
   getAudit(options?: unknown): Promise<{ events: LegacyHistory[] }>;
   manual: {
     binding(displayPath: string): Binding | null;
@@ -233,6 +237,12 @@ export function buildRuntimeConfigure(
       writeMethod: point.writeMethod,
       registerCount: point.registerCount,
       wordOrder: point.wordOrder,
+      ...(point.alarm === undefined ? {} : { alarm: {
+        normalValue: point.alarm.normalValue,
+        alarmValue: point.alarm.alarmValue,
+        message: point.alarm.message,
+        level: point.alarm.level
+      } }),
       write: point.write === undefined ? undefined : {
         mode: point.write.mode,
         activeValue: point.write.activeValue,
@@ -354,16 +364,6 @@ function demoConfiguration(): PageConfiguration {
         writeMethod: "maskWrite",
         write: { mode: "momentary", activeValue: true, defaultValue: false }
       },
-      {
-        pointId: "machine.enabled",
-        address: "D504.4",
-        type: "bool",
-        access: "read_write",
-        readPoint: "machine.enabled",
-        writePoint: "machine.enabled",
-        writeMethod: "maskWrite",
-        write: { mode: "toggle", activeValue: true, defaultValue: false }
-      }
     ],
     bindings: [
       {
@@ -383,14 +383,6 @@ function demoConfiguration(): PageConfiguration {
         action: "momentary"
       },
       {
-        displayPath: "home.machine.enabled",
-        description: "设备使能",
-        component: "button",
-        readPoint: "machine.enabled",
-        writePoint: "machine.enabled",
-        action: "toggle"
-      },
-      {
         displayPath: "home.machine.start.feedback",
         description: "启动反馈",
         component: "value",
@@ -401,7 +393,7 @@ function demoConfiguration(): PageConfiguration {
       {
         displayPath: "home.machine.controls",
         description: "设备控制",
-        bindings: ["home.machine.start", "home.machine.jog.forward", "home.machine.enabled"]
+        bindings: ["home.machine.start", "home.machine.jog.forward"]
       },
       {
         displayPath: "home.machine.status",
@@ -556,16 +548,8 @@ function initialDemoState(): LegacyState {
       { type: "warning", label: "需换料" },
       { type: "fault", label: "异常" }
     ],
-    alarms: [
-      { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "09:42:18", acknowledged: false },
-      { id: 2, level: "warning", code: "0002", text: "库位2余量不足", time: "09:40:06", acknowledged: false },
-      { id: 1, level: "info", code: "0001", text: "系统自检完成", time: "09:35:12", acknowledged: false }
-    ],
-    history: [
-      { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "2026-07-19 18:42:18" },
-      { id: 2, level: "warning", code: "0002", text: "X按钮急停解除", time: "2026-07-19 17:26:08" },
-      { id: 1, level: "info", code: "0001", text: "完成抽检", time: "2026-07-19 16:55:31" }
-    ]
+    alarms: [],
+    history: []
   };
 }
 
@@ -741,7 +725,6 @@ class AppleBridge {
       APIError: HMIAPIError,
       getState: () => this.getState(),
       sendCommand: (command, payload) => this.sendCommand(command, payload),
-      acknowledgeAlarm: (alarmID) => this.acknowledgeAlarm(alarmID),
       getAudit: () => Promise.resolve({ events: cloneState(this.currentState()).history }),
       manual: {
         binding: (displayPath) => this.manualBinding(displayPath),
@@ -1459,7 +1442,7 @@ class AppleBridge {
     const framePaused = this.valueFor("home.cycle.frame");
     state.revision = this.revision;
     state.running = null;
-    state.mode = manual === true ? "manual" : manual === false ? "auto" : null;
+    state.mode = manual === true ? "manual" : "auto";
     state.singlePaused = typeof singlePaused === "boolean" ? singlePaused : null;
     state.framePaused = typeof framePaused === "boolean" ? framePaused : null;
     state.target = this.numberFor("maintenance.production.target");
@@ -1479,13 +1462,20 @@ class AppleBridge {
       { type: "empty", label: "暂无数据" },
       { type: "empty", label: "暂无数据" }
     ];
-    state.alarms = [
-      { id: 1, level: "info", code: "提示", text: "当前未提供报警历史", time: "--", acknowledged: true }
-    ];
-    state.history = [
-      { id: 1, level: "info", code: "提示", text: "当前未提供历史记录", time: "--" }
-    ];
+    state.alarms = this.activeAlarms();
+    state.history = [];
     return state;
+  }
+
+  private activeAlarms(): LegacyAlarm[] {
+    return this.config.points.flatMap((point) => {
+      const alarm = point.alarm;
+      const value = point.readPoint === null ? undefined : this.values.get(point.readPoint);
+      if (alarm === undefined || value?.quality !== "good" || value.value !== alarm.alarmValue) {
+        return [];
+      }
+      return [{ id: point.address, level: alarm.level, text: alarm.message }];
+    });
   }
 
   private numberFor(displayPath: string): number | null {
@@ -1581,9 +1571,7 @@ class AppleBridge {
     }
     const operation = command === "start"
       ? { displayPath: "home.machine.start", action: "pulse" as const, name: "启动" }
-      : command === "set_mode"
-        ? { displayPath: "home.machine.enabled", action: "toggle" as const, name: "模式切换" }
-        : null;
+      : null;
     if (operation === null) {
       return Promise.reject(new HMIAPIError("当前界面未提供此操作", 501, "not_supported"));
     }
@@ -1600,24 +1588,6 @@ class AppleBridge {
       this.socket!.send(JSON.stringify(buildPointCommand(pointID, operation.action, requestId)));
     });
     return confirmation.then(() => ({ state: cloneState(this.currentState()) }));
-  }
-
-  private acknowledgeAlarm(alarmID: number): Promise<{ state: LegacyState }> {
-    if (!this.requirePermission("operate")) {
-      return Promise.reject(new HMIAPIError("请登录管理员后确认报警", 403, "permission_denied"));
-    }
-    if (!this.demo) {
-      return Promise.reject(new HMIAPIError("当前界面不支持报警确认", 501, "not_supported"));
-    }
-    const state = cloneState(this.demoState);
-    const alarm = state.alarms.find((item) => item.id === alarmID);
-    if (alarm !== undefined) {
-      alarm.acknowledged = true;
-      state.revision += 1;
-      this.demoState = state;
-      this.emitState();
-    }
-    return Promise.resolve({ state: cloneState(state) });
   }
 
   private applyDemoCommand(command: string, payload: Record<string, unknown>): LegacyState {
@@ -1638,8 +1608,6 @@ class AppleBridge {
       state.singlePaused = Boolean(payload.paused);
     } else if (command === "set_frame_paused") {
       state.framePaused = Boolean(payload.paused);
-    } else if (command === "set_mode") {
-      state.mode = payload.mode === "manual" ? "manual" : "auto";
     }
     state.revision += 1;
     this.demoState = state;
@@ -1891,13 +1859,6 @@ class AppleBridge {
         );
         const available = runtimeEnabled && configured;
         button.dataset.backendUnavailable = available ? "false" : "true";
-      });
-      const mode = document.querySelector<HTMLButtonElement>("#modeToggle");
-      if (mode !== null) {
-        mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";
-      }
-      document.querySelectorAll<HTMLButtonElement>(".ack-button").forEach((button) => {
-        button.dataset.backendUnavailable = "true";
       });
     }, 0);
   }

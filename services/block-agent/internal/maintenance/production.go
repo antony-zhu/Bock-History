@@ -93,8 +93,8 @@ func (s *Store) Patch(patch ProductionPatch) (Production, error) {
 }
 
 func validate(data Production) error {
-	if data.TargetProduction < 1 || data.TargetProduction > 9999 {
-		return errors.New("targetProduction must be between 1 and 9999")
+	if data.TargetProduction < 1 || data.TargetProduction > 60000 {
+		return errors.New("targetProduction must be between 1 and 60000")
 	}
 	if data.ToolChangePieces < 1 || data.ToolChangePieces > 99999 {
 		return errors.New("toolChangePieces must be between 1 and 99999")

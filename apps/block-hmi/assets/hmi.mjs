@@ -60,6 +60,12 @@ export function buildRuntimeConfigure(points, id = requestID(), timestamp = new 
             writeMethod: point.writeMethod,
             registerCount: point.registerCount,
             wordOrder: point.wordOrder,
+            ...(point.alarm === undefined ? {} : { alarm: {
+                    normalValue: point.alarm.normalValue,
+                    alarmValue: point.alarm.alarmValue,
+                    message: point.alarm.message,
+                    level: point.alarm.level
+                } }),
             write: point.write === undefined ? undefined : {
                 mode: point.write.mode,
                 activeValue: point.write.activeValue,
@@ -158,16 +164,6 @@ function demoConfiguration() {
                 writeMethod: "maskWrite",
                 write: { mode: "momentary", activeValue: true, defaultValue: false }
             },
-            {
-                pointId: "machine.enabled",
-                address: "D504.4",
-                type: "bool",
-                access: "read_write",
-                readPoint: "machine.enabled",
-                writePoint: "machine.enabled",
-                writeMethod: "maskWrite",
-                write: { mode: "toggle", activeValue: true, defaultValue: false }
-            }
         ],
         bindings: [
             {
@@ -187,14 +183,6 @@ function demoConfiguration() {
                 action: "momentary"
             },
             {
-                displayPath: "home.machine.enabled",
-                description: "设备使能",
-                component: "button",
-                readPoint: "machine.enabled",
-                writePoint: "machine.enabled",
-                action: "toggle"
-            },
-            {
                 displayPath: "home.machine.start.feedback",
                 description: "启动反馈",
                 component: "value",
@@ -205,7 +193,7 @@ function demoConfiguration() {
             {
                 displayPath: "home.machine.controls",
                 description: "设备控制",
-                bindings: ["home.machine.start", "home.machine.jog.forward", "home.machine.enabled"]
+                bindings: ["home.machine.start", "home.machine.jog.forward"]
             },
             {
                 displayPath: "home.machine.status",
@@ -330,16 +318,8 @@ function initialDemoState() {
             { type: "warning", label: "需换料" },
             { type: "fault", label: "异常" }
         ],
-        alarms: [
-            { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "09:42:18", acknowledged: false },
-            { id: 2, level: "warning", code: "0002", text: "库位2余量不足", time: "09:40:06", acknowledged: false },
-            { id: 1, level: "info", code: "0001", text: "系统自检完成", time: "09:35:12", acknowledged: false }
-        ],
-        history: [
-            { id: 3, level: "danger", code: "0003", text: "库位3定位异常", time: "2026-07-19 18:42:18" },
-            { id: 2, level: "warning", code: "0002", text: "X按钮急停解除", time: "2026-07-19 17:26:08" },
-            { id: 1, level: "info", code: "0001", text: "完成抽检", time: "2026-07-19 16:55:31" }
-        ]
+        alarms: [],
+        history: []
     };
 }
 class HMIAPIError extends Error {
@@ -498,7 +478,6 @@ class AppleBridge {
             APIError: HMIAPIError,
             getState: () => this.getState(),
             sendCommand: (command, payload) => this.sendCommand(command, payload),
-            acknowledgeAlarm: (alarmID) => this.acknowledgeAlarm(alarmID),
             getAudit: () => Promise.resolve({ events: cloneState(this.currentState()).history }),
             manual: {
                 binding: (displayPath) => this.manualBinding(displayPath),
@@ -1160,7 +1139,7 @@ class AppleBridge {
         const framePaused = this.valueFor("home.cycle.frame");
         state.revision = this.revision;
         state.running = null;
-        state.mode = manual === true ? "manual" : manual === false ? "auto" : null;
+        state.mode = manual === true ? "manual" : "auto";
         state.singlePaused = typeof singlePaused === "boolean" ? singlePaused : null;
         state.framePaused = typeof framePaused === "boolean" ? framePaused : null;
         state.target = this.numberFor("maintenance.production.target");
@@ -1180,13 +1159,19 @@ class AppleBridge {
             { type: "empty", label: "暂无数据" },
             { type: "empty", label: "暂无数据" }
         ];
-        state.alarms = [
-            { id: 1, level: "info", code: "提示", text: "当前未提供报警历史", time: "--", acknowledged: true }
-        ];
-        state.history = [
-            { id: 1, level: "info", code: "提示", text: "当前未提供历史记录", time: "--" }
-        ];
+        state.alarms = this.activeAlarms();
+        state.history = [];
         return state;
+    }
+    activeAlarms() {
+        return this.config.points.flatMap((point) => {
+            const alarm = point.alarm;
+            const value = point.readPoint === null ? undefined : this.values.get(point.readPoint);
+            if (alarm === undefined || value?.quality !== "good" || value.value !== alarm.alarmValue) {
+                return [];
+            }
+            return [{ id: point.address, level: alarm.level, text: alarm.message }];
+        });
     }
     numberFor(displayPath) {
         const value = this.valueFor(displayPath);
@@ -1265,9 +1250,7 @@ class AppleBridge {
         }
         const operation = command === "start"
             ? { displayPath: "home.machine.start", action: "pulse", name: "启动" }
-            : command === "set_mode"
-                ? { displayPath: "home.machine.enabled", action: "toggle", name: "模式切换" }
-                : null;
+            : null;
         if (operation === null) {
             return Promise.reject(new HMIAPIError("当前界面未提供此操作", 501, "not_supported"));
         }
@@ -1284,23 +1267,6 @@ class AppleBridge {
             this.socket.send(JSON.stringify(buildPointCommand(pointID, operation.action, requestId)));
         });
         return confirmation.then(() => ({ state: cloneState(this.currentState()) }));
-    }
-    acknowledgeAlarm(alarmID) {
-        if (!this.requirePermission("operate")) {
-            return Promise.reject(new HMIAPIError("请登录管理员后确认报警", 403, "permission_denied"));
-        }
-        if (!this.demo) {
-            return Promise.reject(new HMIAPIError("当前界面不支持报警确认", 501, "not_supported"));
-        }
-        const state = cloneState(this.demoState);
-        const alarm = state.alarms.find((item) => item.id === alarmID);
-        if (alarm !== undefined) {
-            alarm.acknowledged = true;
-            state.revision += 1;
-            this.demoState = state;
-            this.emitState();
-        }
-        return Promise.resolve({ state: cloneState(state) });
     }
     applyDemoCommand(command, payload) {
         const state = cloneState(this.demoState);
@@ -1326,9 +1292,6 @@ class AppleBridge {
         }
         else if (command === "set_frame_paused") {
             state.framePaused = Boolean(payload.paused);
-        }
-        else if (command === "set_mode") {
-            state.mode = payload.mode === "manual" ? "manual" : "auto";
         }
         state.revision += 1;
         this.demoState = state;
@@ -1560,13 +1523,6 @@ class AppleBridge {
                 const configured = displayPath !== undefined && this.config.bindings.some((binding) => binding.displayPath === displayPath && binding.state !== "pending" && binding.writePoint !== null && binding.action === "pulse");
                 const available = runtimeEnabled && configured;
                 button.dataset.backendUnavailable = available ? "false" : "true";
-            });
-            const mode = document.querySelector("#modeToggle");
-            if (mode !== null) {
-                mode.dataset.backendUnavailable = runtimeEnabled ? "false" : "true";
-            }
-            document.querySelectorAll(".ack-button").forEach((button) => {
-                button.dataset.backendUnavailable = "true";
             });
         }, 0);
     }
