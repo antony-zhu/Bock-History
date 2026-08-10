@@ -48,7 +48,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`id="operatorName"`,
 		`assets/soft-keyboard.css?v=20260809.1`,
 		`assets/soft-keyboard.js?v=20260810.1`,
-		`import("./assets/hmi.mjs?v=20260808.4")`,
+		`import("./assets/hmi.mjs?v=20260810.10")`,
 		`function requireFrontendPermission(permission)`,
 		`window.BlockHMIReady.then(syncFrontendPermissions)`,
 		`name === "maintenance" && !requireFrontendPermission("maintenance")`,
@@ -61,6 +61,9 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if strings.Contains(page, "api-client.js") {
 		t.Fatal("old REST polling client is still loaded by the HMI page")
+	}
+	if strings.Contains(page, `import("./assets/hmi.mjs?v=20260808.4")`) {
+		t.Fatal("HMI still imports the cache key used by the stale PLC update module")
 	}
 	for _, forbidden := range []string{
 		`<span class="nav-en">`,

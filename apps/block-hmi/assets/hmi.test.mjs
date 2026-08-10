@@ -619,10 +619,11 @@ assert.doesNotMatch(index, /id="(?:modeToggle|modeCn)"|当前为(?:自动|手动
 for (const asset of [
   'assets/soft-keyboard.css?v=20260809.1',
   'assets/soft-keyboard.js?v=20260810.1',
-  './assets/hmi.mjs?v=20260808.4'
+  './assets/hmi.mjs?v=20260810.10'
 ]) {
   assert.ok(index.includes(asset), `cache version is missing from ${asset}`);
 }
+assert.doesNotMatch(index, /\.\/assets\/hmi\.mjs\?v=20260808\.4/);
 assert.match(index, /function requireFrontendPermission\(permission\)/);
 assert.match(index, /name === "maintenance" && !requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S]*?overflow: hidden;/);
