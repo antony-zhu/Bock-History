@@ -296,6 +296,14 @@ assert.deepEqual(defaultPointsConfiguration.bindings.find((binding) => binding.d
   readPoint: "maintenance.production.target", writePoint: "maintenance.production.target", action: "set",
   permission: "maintenance", state: "configured", sourceRow: 36, sourceAddress: "D1000"
 });
+assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "production.cycle.single"), {
+  pointId: "production.cycle.single", address: "D900", type: "int16", access: "read",
+  readPoint: "production.cycle.single", writePoint: null, writeMethod: null, registerCount: 1
+});
+assert.deepEqual(defaultPointsConfiguration.bindings.find((binding) => binding.displayPath === "production.cycle.single"), {
+  displayPath: "production.cycle.single", description: "单件节拍", component: "value",
+  readPoint: "production.cycle.single", state: "configured", sourceRow: 37, sourceAddress: "D900"
+});
 for (const pointId of ["home.homing", "home.action.reset", "home.action.restart", "home.action.pause", "home.action.clear", "home.cycle.single", "home.cycle.frame"]) {
   const point = defaultPointsConfiguration.points.find((item) => item.pointId === pointId);
   assert.deepEqual(point.write, { mode: "pulse", activeValue: true, defaultValue: false, pulseMs: 100 });
@@ -442,6 +450,7 @@ assert.doesNotMatch(source, /command === "set_mode"|home\.machine\.enabled|ackno
 assert.match(legacyPointCommand[0], /command === "start"[\s\S]*?displayPath: "home\.machine\.start", action: "pulse"[\s\S]*?buildPointCommand\(pointID, operation\.action, requestId\)/);
 assert.match(legacyPointCommand[0], /pendingPointCommand\.dispatch\(requestId, \(\) => \{[\s\S]*?this\.socket!\.send/);
 assert.match(source, /const manual = this\.valueFor\("footer\.mode\.manual"\);[\s\S]*?state\.running = null;[\s\S]*?state\.mode = manual === true \? "manual" : "auto";/);
+assert.match(source, /state\.cycle = this\.numberFor\("production\.cycle\.single"\);/);
 assert.match(source, /private activeAlarms\(\): LegacyAlarm\[\] \{[\s\S]*?this\.config\.points\.flatMap[\s\S]*?value\?\.quality !== "good"[\s\S]*?value\.value !== alarm\.alarmValue[\s\S]*?id: point\.address, level: alarm\.level, text: alarm\.message/);
 assert.match(source, /const singlePaused = this\.valueFor\("home\.cycle\.single"\);[\s\S]*?state\.singlePaused = typeof singlePaused === "boolean" \? singlePaused : null;/);
 assert.match(source, /const framePaused = this\.valueFor\("home\.cycle\.frame"\);[\s\S]*?state\.framePaused = typeof framePaused === "boolean" \? framePaused : null;/);
@@ -481,12 +490,16 @@ assert.match(initialPageState[0], /running: null,[\s\S]*?mode: "auto",[\s\S]*?ta
 const statusRenderer = index.match(/function renderStatus\(\) \{[\s\S]*?\n      \}\n\n      function renderBins/);
 assert.notEqual(statusRenderer, null);
 assert.match(statusRenderer[0], /running === true \? "运行中" : running === false \? "运行停止" : "—"/);
-assert.match(statusRenderer[0], /const mode = state\.mode === "manual" \? "manual" : "auto";/);
-assert.match(statusRenderer[0], /modeToggle\.disabled = true;[\s\S]*?modeToggle\.setAttribute\("aria-disabled", "true"\)/);
+assert.doesNotMatch(statusRenderer[0], /modeToggle|modeCn|const mode = state\.mode/);
 assert.match(statusRenderer[0], /known \? item\.paused \? "恢复" : "暂停" : "—"/);
 const metricsRenderer = index.match(/function renderMetrics\(\) \{[\s\S]*?\n      \}\n\n      function renderEvents/);
 assert.notEqual(metricsRenderer, null);
 assert.match(index, /function renderNumericReadout\(selector, value\) \{[\s\S]*?output\.textContent = known \? String\(value\) : "—";/);
+assert.match(index, /function renderCycleReadout\(selector, value\) \{[\s\S]*?const known = hasNumericValue\(value\);[\s\S]*?output\.textContent = known \? \(value \/ 1000\)\.toFixed\(1\) : "—";[\s\S]*?unit\.hidden = !known;/);
+assert.match(metricsRenderer[0], /renderCycleReadout\("#homeCycle", state\.cycle\);[\s\S]*?renderCycleReadout\("#dataCycle", state\.cycle\);/);
+assert.match(index, /id="homeCycle">—<\/output>\s*<span hidden>秒<\/span>/);
+assert.match(index, /id="dataCycle">—<\/output><span hidden>秒<\/span>/);
+assert.doesNotMatch(index, /秒（S）/);
 assert.match(metricsRenderer[0], /"目标完成度 —"/);
 assert.match(metricsRenderer[0], /progressFill\.hidden = true;/);
 assert.doesNotMatch(metricsRenderer[0], /: 100|Math\.max\(1, state\.target\)/);
@@ -525,13 +538,10 @@ const renderBins = index.match(/function renderBins\(\) \{[\s\S]*?\n      \}/);
 assert.notEqual(renderBins, null);
 assert.match(renderBins[0], /state\.bins\[index\]/);
 assert.match(index, /#hmi-footer \{[\s\S]*?--footer-control-height: 102px;[\s\S]*?grid-template-columns: 220px minmax\(0, 1fr\) 220px;/);
-assert.match(index, /#hmi-footer \.nav-button,[\s\S]*?#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\S]*?height: var\(--footer-control-height\);[\s\S]*?min-height: var\(--footer-control-height\);/);
 assert.match(index, /#hmi-footer \.operator \{[\s\S]*?height: var\(--footer-control-height\);/);
-assert.match(index, /#hmi-footer #operatorName,[\s\S]*?#hmi-footer \.mode \{[\s\S]*?width: 168px;[\s\S]*?border-radius: 18px;/);
+assert.match(index, /#hmi-footer #operatorName \{[\s\S]*?width: 168px;[\s\S]*?border-radius: 18px;/);
 assert.match(index, /#hmi-footer #operatorName::before \{[\s\S]*?data:image\/svg\+xml/);
-assert.match(index, /#hmi-footer \.mode\.is-auto \{[\s\S]*?color: #176b38;[\s\S]*?background: #e8f7ec;/);
-assert.match(index, /#hmi-footer \.mode\.is-manual \{[\s\S]*?color: #8a6200;[\s\S]*?background: #fff5d7;/);
-assert.match(index, /const mode = state\.mode === "manual" \? "manual" : "auto";[\s\S]*?modeToggle\.classList\.toggle\("is-auto", mode === "auto"\);[\s\S]*?modeToggle\.classList\.toggle\("is-manual", mode === "manual"\);/);
+assert.doesNotMatch(index, /id="(?:modeToggle|modeCn)"|当前为(?:自动|手动)模式/);
 for (const asset of [
   'assets/soft-keyboard.css?v=20260809.1',
   'assets/soft-keyboard.js?v=20260810.1',
@@ -545,7 +555,6 @@ assert.match(index, /\.page\[data-page="maintenance"\] \.settings-layout \{[\s\S
 assert.match(index, /\.maintenance-panel \{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;/);
 assert.match(index, /window\.addEventListener\("block-hmi-guest", \(\) => \{[\s\S]*?switchPage\("home"\)/);
 assert.match(index, /if \(!requireFrontendPermission\("operate"\)\) return false;/);
-assert.match(index, /id="modeToggle"[\s\S]*?aria-disabled="true"[\s\S]*?disabled/);
 assert.doesNotMatch(index, /requestModeChange|sendCommand\("set_mode"|acknowledgeAlarm/);
 assert.match(index, /data-page="manual"[\s\S]*?id="manualPageTitle"/);
 assert.match(index, /id="manualPageEntry" type="button" data-point-action="home\.homing">回原<\/button>/);

@@ -77,15 +77,12 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		t.Fatal("guest identity is not reduced to one Chinese login label")
 	}
 	if !regexp.MustCompile(`(?s)#hmi-footer \{.*?--footer-control-height: 102px;.*?grid-template-columns: 220px minmax\(0, 1fr\) 220px;`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)#hmi-footer \.nav-button,.*?#hmi-footer #operatorName,.*?#hmi-footer \.mode \{.*?height: var\(--footer-control-height\);.*?min-height: var\(--footer-control-height\);`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)#hmi-footer \.operator \{.*?height: var\(--footer-control-height\);`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)#hmi-footer #operatorName,.*?#hmi-footer \.mode \{.*?width: 168px;.*?border-radius: 18px;`).MatchString(page) {
-		t.Fatal("footer end controls do not share the navigation visible height")
+		!regexp.MustCompile(`(?s)#hmi-footer #operatorName \{.*?width: 168px;.*?border-radius: 18px;`).MatchString(page) {
+		t.Fatal("footer navigation and identity layout is incomplete")
 	}
-	if !regexp.MustCompile(`(?s)#hmi-footer #operatorName::before \{.*?data:image/svg\+xml`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)#hmi-footer \.mode\.is-auto \{.*?color: #176b38;.*?background: #e8f7ec;`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)#hmi-footer \.mode\.is-manual \{.*?color: #8a6200;.*?background: #fff5d7;`).MatchString(page) {
-		t.Fatal("footer identity and mode state visuals are incomplete")
+	if !regexp.MustCompile(`(?s)#hmi-footer #operatorName::before \{.*?data:image/svg\+xml`).MatchString(page) {
+		t.Fatal("footer identity visual is incomplete")
 	}
 	if !regexp.MustCompile(`(?s)\.auth-sheet \{.*?max-height: min\(800px, calc\(100vh - 48px\)\);.*?padding: 60px 32px;.*?width: min\(500px, 100%\);`).MatchString(page) {
 		t.Fatal("authentication sheet is not using the narrow, bounded layout")
@@ -289,9 +286,9 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		strings.Contains(source, `mode.dataset.backendUnavailable`) {
 		t.Fatal("home controls are not enabled only while their configured runtime point is writable")
 	}
-	if !regexp.MustCompile(`(?s)id="modeToggle".*?aria-disabled="true".*?disabled`).MatchString(page) ||
+	if strings.Contains(page, `id="modeToggle"`) || strings.Contains(page, `id="modeCn"`) || strings.Contains(page, `当前为自动模式`) || strings.Contains(page, `当前为手动模式`) ||
 		strings.Contains(page, `requestModeChange`) || strings.Contains(page, `sendCommand("set_mode"`) || strings.Contains(page, `acknowledgeAlarm`) {
-		t.Fatal("mode display or active-alarm view retains an interaction path")
+		t.Fatal("hidden mode area retains a visible or interactive path")
 	}
 	if !regexp.MustCompile(`(?s)async function runBackendMutation\(factory, options = \{\}\) \{.*?showToast\(\s*backendErrorMessage\(mutationError\)`).MatchString(page) {
 		t.Fatal("mode command failures are not surfaced through the HMI toast")
@@ -305,13 +302,20 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		t.Fatal("D1000 maintenance write is incomplete")
 	}
 	if !regexp.MustCompile(`(?s)const state = \{.*?running: null,.*?mode: "auto",.*?target: null,.*?output: null,.*?cycle: null,`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)function renderStatus\(\) \{.*?running === true \? "运行中" : running === false \? "运行停止" : "—".*?const mode = state\.mode === "manual" \? "manual" : "auto";.*?modeToggle\.disabled = true;.*?known \? item\.paused \? "恢复" : "暂停" : "—"`).MatchString(page) {
+		!regexp.MustCompile(`(?s)function renderStatus\(\) \{.*?running === true \? "运行中" : running === false \? "运行停止" : "—".*?known \? item\.paused \? "恢复" : "暂停" : "—"`).MatchString(page) ||
+		regexp.MustCompile(`modeToggle|modeCn|const mode = state\.mode`).MatchString(page) {
 		t.Fatal("missing PLC values still fall back to an operating status")
 	}
 	if !regexp.MustCompile(`(?s)function renderNumericReadout\(selector, value\) \{.*?output\.textContent = known \? String\(value\) : "—";`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)function renderCycleReadout\(selector, value\) \{.*?const known = hasNumericValue\(value\);.*?output\.textContent = known \? \(value / 1000\)\.toFixed\(1\) : "—";.*?unit\.hidden = !known;`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)renderCycleReadout\("#homeCycle", state\.cycle\);.*?renderCycleReadout\("#dataCycle", state\.cycle\);`).MatchString(page) ||
+		!regexp.MustCompile(`(?s)id="homeCycle">—</output>\s*<span hidden>秒</span>.*?id="dataCycle">—</output><span hidden>秒</span>`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)function renderMetrics\(\) \{.*?"目标完成度 —".*?progressFill\.hidden = true;`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)function renderAutomaticSpeed\(\) \{.*?const known = hasNumericValue\(incoming\);.*?slider\.hidden = false;.*?slider\.disabled = true;.*?slider\.setAttribute\("aria-disabled", "true"\);`).MatchString(page) {
 		t.Fatal("missing PLC numeric values are not rendered as unknown")
+	}
+	if !strings.Contains(source, `state.cycle = this.numberFor("production.cycle.single");`) {
+		t.Fatal("single-piece cycle must retain the raw PLC value before presentation formatting")
 	}
 	if strings.Contains(page, `runtime.command("home.speed.automatic"`) || strings.Contains(page, `commitAutomaticSpeed`) || strings.Contains(page, `updateAutomaticSpeedDraft`) {
 		t.Fatal("automatic-speed slider unexpectedly retains a write path")

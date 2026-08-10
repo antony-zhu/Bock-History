@@ -4102,16 +4102,14 @@
       border: 0;
     }
 
-    #hmi-footer .nav-button,
-    #hmi-footer #operatorName,
-    #hmi-footer .mode {
-      height: var(--footer-control-height);
-      min-height: var(--footer-control-height);
-    }
+      #hmi-footer .nav-button,
+      #hmi-footer #operatorName {
+        height: var(--footer-control-height);
+        min-height: var(--footer-control-height);
+      }
 
-    #hmi-footer #operatorName,
-    #hmi-footer .mode {
-      align-items: center;
+      #hmi-footer #operatorName {
+        align-items: center;
       align-self: center;
       box-sizing: border-box;
       display: inline-flex;
@@ -4801,7 +4799,7 @@
                   <div class="metric-label">单件节拍</div>
                   <div class="metric-value">
                     <output class="value-box" id="homeCycle">—</output>
-                    <span hidden>秒（S）</span>
+                    <span hidden>秒</span>
                   </div>
                 </div>
                 <div class="metric">
@@ -4892,7 +4890,7 @@
               </div>
               <div class="data-point">
                 <div class="data-label">单件节拍</div>
-                <div class="data-readout"><output id="dataCycle">—</output><span hidden>秒（S）</span></div>
+                <div class="data-readout"><output id="dataCycle">—</output><span hidden>秒</span></div>
               </div>
               <div class="data-point">
                 <div class="data-label">当日产能</div>
@@ -5101,17 +5099,6 @@
         </button>
       </nav>
 
-      <button
-        class="mode is-auto"
-        id="modeToggle"
-        type="button"
-        aria-label="当前为自动模式"
-        aria-pressed="false"
-        aria-disabled="true"
-        disabled
-      >
-        <div class="meta-cn" id="modeCn">自动</div>
-      </button>
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -5908,26 +5895,20 @@
         if (unit instanceof HTMLElement) unit.hidden = !known;
       }
 
+      function renderCycleReadout(selector, value) {
+        const output = $(selector);
+        const known = hasNumericValue(value);
+        output.textContent = known ? (value / 1000).toFixed(1) : "—";
+        const unit = output.nextElementSibling;
+        if (unit instanceof HTMLElement) unit.hidden = !known;
+      }
+
       function renderStatus() {
         const lamp = $("#systemLamp");
-        const modeToggle = $("#modeToggle");
         const running = state.running === true ? true : state.running === false ? false : null;
         lamp.className = `lamp ${running === true ? "running" : running === false ? "paused" : "unknown"}`;
         $("#systemStatus").textContent = running === true ? "运行中" : running === false ? "运行停止" : "—";
 
-        const mode = state.mode === "manual" ? "manual" : "auto";
-        $("#modeCn").textContent = mode === "manual" ? "手动" : "自动";
-        modeToggle.classList.toggle("is-auto", mode === "auto");
-        modeToggle.classList.toggle("is-manual", mode === "manual");
-        modeToggle.disabled = true;
-        modeToggle.setAttribute("aria-disabled", "true");
-        modeToggle.setAttribute("aria-pressed", String(mode === "manual"));
-        modeToggle.setAttribute(
-          "aria-label",
-          mode === "auto"
-            ? "当前为自动模式"
-            : "当前为手动模式"
-        );
         [
           { action: "single", label: "单件循环", paused: state.singlePaused },
           { action: "frame", label: "单框循环", paused: state.framePaused }
@@ -5958,12 +5939,12 @@
           ? Math.min(100, Math.round((state.output / state.target) * 100))
           : null;
 
-        renderNumericReadout("#homeCycle", state.cycle);
+        renderCycleReadout("#homeCycle", state.cycle);
         renderNumericReadout("#homeOutput", state.output);
         renderNumericReadout("#homePassRate", passRate);
 
         renderNumericReadout("#dataTarget", state.target);
-        renderNumericReadout("#dataCycle", state.cycle);
+        renderCycleReadout("#dataCycle", state.cycle);
         renderNumericReadout("#dataOutput", state.output);
         renderNumericReadout("#dataOee", state.oee);
         renderNumericReadout("#dataInspected", state.inspected);
