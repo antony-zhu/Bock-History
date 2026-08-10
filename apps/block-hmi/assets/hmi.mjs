@@ -1167,7 +1167,7 @@ class AppleBridge {
         return this.config.points.flatMap((point) => {
             const alarm = point.alarm;
             const value = point.readPoint === null ? undefined : this.values.get(point.readPoint);
-            if (alarm === undefined || value?.quality !== "good" || value.value !== alarm.alarmValue) {
+            if (alarm === undefined || value?.quality !== "good" || value.alarmActive !== true) {
                 return [];
             }
             return [{ id: point.address, level: alarm.level, text: alarm.message }];

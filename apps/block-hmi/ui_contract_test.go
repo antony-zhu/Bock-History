@@ -222,6 +222,7 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		`const renewed = renewFrontendSession(this.session, this.idleTimeoutSeconds);`,
 		`private setAuthSubmitBusy(form: HTMLFormElement, busy: boolean): void`,
 		`private publishLiveState(force = false): void`,
+		`value.alarmActive !== true`,
 		`window.addEventListener("hmi-soft-keyboard-statechange", () => this.flushDeferredLiveState());`,
 		`this.becomeGuest();`,
 		`new Event("block-hmi-guest")`,
