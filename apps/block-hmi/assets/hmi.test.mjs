@@ -173,10 +173,8 @@ await assert.rejects(timeoutReceipt.waitFor("mode-timeout"), { code: "timeout", 
 
 const values = new Map();
 applyAbsoluteValues(values, {
-  "machine.startFeedback": { value: true, quality: "good", updatedAt: timestamp },
-  "alarm.emergency.stop.pressed": { value: true, quality: "good", updatedAt: timestamp, alarmActive: true }
+  "machine.startFeedback": { value: true, quality: "good", updatedAt: timestamp }
 });
-assert.equal(values.get("alarm.emergency.stop.pressed").alarmActive, true);
 const devices = [{ deviceId: "device", name: "PLC", address: "127.0.0.1", state: "connected", selected: true, metadata: {} }];
 clearTransientRuntime(values, devices);
 assert.equal(values.size, 0);
@@ -453,7 +451,10 @@ assert.match(legacyPointCommand[0], /command === "start"[\s\S]*?displayPath: "ho
 assert.match(legacyPointCommand[0], /pendingPointCommand\.dispatch\(requestId, \(\) => \{[\s\S]*?this\.socket!\.send/);
 assert.match(source, /const manual = this\.valueFor\("footer\.mode\.manual"\);[\s\S]*?state\.running = null;[\s\S]*?state\.mode = manual === true \? "manual" : "auto";/);
 assert.match(source, /state\.cycle = this\.numberFor\("production\.cycle\.single"\);/);
-assert.match(source, /private activeAlarms\(\): LegacyAlarm\[\] \{[\s\S]*?this\.config\.points\.flatMap[\s\S]*?value\?\.quality !== "good"[\s\S]*?value\.alarmActive !== true[\s\S]*?id: point\.address, level: alarm\.level, text: alarm\.message/);
+const activeAlarms = source.match(/private activeAlarms\(\): LegacyAlarm\[\] \{[\s\S]*?\n  \}/);
+assert.notEqual(activeAlarms, null);
+assert.match(activeAlarms[0], /this\.config\.points\.flatMap[\s\S]*?value\?\.value !== true[\s\S]*?id: point\.address, level: alarm\.level, text: alarm\.message/);
+assert.doesNotMatch(activeAlarms[0], /quality|alarmActive/);
 assert.match(source, /const singlePaused = this\.valueFor\("home\.cycle\.single"\);[\s\S]*?state\.singlePaused = typeof singlePaused === "boolean" \? singlePaused : null;/);
 assert.match(source, /const framePaused = this\.valueFor\("home\.cycle\.frame"\);[\s\S]*?state\.framePaused = typeof framePaused === "boolean" \? framePaused : null;/);
 assert.match(source, /private numberFor\(displayPath: string\): number \| null \{[\s\S]*?return typeof value === "number" && Number\.isFinite\(value\) \? value : null;/);
