@@ -39,9 +39,8 @@ PLC 连接状态及安全校验，并对同机 HMI 返回相同的运行时数�
 维护页固定为四个本机 tab：生产参数、Wi-Fi、PLC 通信和账号管理。每个 tab
 独立滚动，所有输入都可使用软键盘。
 
-- 今日目标产能从 PLC `D1000` 读取。生产数据页的独立入口仅供 `OPERATOR` 和
-  `ADMIN` 写入 `D1000`；维护页的换刀件数和抽检间隔在编辑停止 650 ms 后通过本机
-  `PATCH /api/maintenance/production` 保存；单框工件数量单独保存。
+- 今日目标产能从 PLC `D1000` 读取。生产数据页只显示该值；仅维护 → 生产参数可写入
+  `D1000`。所有生产参数均在对应输入框的软键盘点“完成”后保存。
 - Wi-Fi 状态从本机 `GET /api/maintenance/connectivity` 读取；连接请求发送到
   `POST /api/maintenance/wifi/connect`。密码只用于当前请求，连接成功后清空，
   不会回显。
@@ -119,7 +118,7 @@ FLOAT32/REAL、5 个 INT16 和 3 个 INT32/DINT，`scanIntervalMs=500`。遗留�
 `points.json`。`runtime.configure` 只发送所选点表的运行时点位；显示路径和中文说明只在
 浏览器使用。
 
-自动运行速度 D522 当前仅供读取和显示；其滑条因 canWrite=false 保持禁用。
+自动运行速度 D522 当前仅供读取和显示；主页的 0–300 滑条始终禁用，并显示读取值的百分比。
 
 默认点表中的所有 DINT/REAL 均使用 `wordOrder: "low-high"`：低 16 位寄存器在前，高 16 位
 寄存器在后（D522、D902、D904、D1000）。运行时仍支持显式配置的 `high-low` 兼容 profile。

@@ -1225,6 +1225,26 @@
         inset 0 1px 0 rgba(255, 255, 255, 0.96);
     }
 
+    .home-speed-control {
+      position: absolute;
+      top: 20px;
+      right: 26px;
+      z-index: 2;
+      width: 258px;
+      grid-template-columns: auto minmax(88px, 1fr) auto;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid rgba(29, 29, 31, 0.08);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.66);
+      box-shadow: 0 7px 18px rgba(73, 89, 111, 0.06);
+    }
+
+    .home-speed-control input[type="range"]:disabled {
+      cursor: default;
+      opacity: 0.78;
+    }
+
     .system-row {
       gap: 10px;
       height: 48px;
@@ -2095,6 +2115,30 @@
       .home-left {
         padding: 7px 9px;
         border-radius: 16px;
+      }
+
+      .home-speed-control {
+        top: 7px;
+        right: 9px;
+        width: 204px;
+        min-height: 24px;
+        grid-template-columns: auto minmax(64px, 1fr) auto;
+        gap: 5px;
+        padding: 5px 7px;
+        border-radius: 10px;
+      }
+
+      .home-speed-copy strong {
+        font-size: 10px;
+      }
+
+      .home-speed-copy small {
+        font-size: 8px;
+      }
+
+      .home-speed-control output {
+        min-width: 34px;
+        font-size: 12px;
       }
 
       .system-row {
@@ -4699,7 +4743,7 @@
                   <strong id="automaticSpeedTitle">自动运行速度</strong>
                   <small id="automaticSpeedHint">—</small>
                 </div>
-                <input id="automaticSpeedSlider" type="range" min="0" max="300" step="1" value="0" aria-describedby="automaticSpeedHint" hidden>
+                <input id="automaticSpeedSlider" type="range" min="0" max="300" step="1" value="0" aria-describedby="automaticSpeedHint" disabled aria-disabled="true">
                 <output id="automaticSpeedPercent">—</output>
               </section>
               <div class="system-row">
@@ -4837,11 +4881,6 @@
               <div class="data-point data-target-point">
                 <div class="data-label">当日目标产能</div>
                 <div class="data-readout"><output id="dataTarget">—</output><span hidden>件</span></div>
-                <form class="data-target-form" id="dataTargetForm">
-                  <label class="sr-only" for="dataTargetInput">今日目标产能</label>
-                  <input id="dataTargetInput" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" placeholder="—" data-soft-keyboard="numeric" data-soft-label="今日目标产能">
-                  <button id="dataTargetSave" type="submit">保存</button>
-                </form>
               </div>
               <div class="data-point">
                 <div class="data-label">单件节拍</div>
@@ -4905,45 +4944,34 @@
               <section class="maintenance-panel" id="productionSettingsPanel" role="tabpanel" tabindex="0" aria-labelledby="maintenanceProductionTab" data-maintenance-panel="production">
                 <header class="maintenance-panel-head">
                   <span>01</span>
-                  <div><h2>生产参数</h2><p>修改后 650 ms 自动保存到本机 Agent。</p></div>
+                  <div><h2>生产参数</h2><p>在对应输入框的软键盘中点“完成”后自动保存。</p></div>
                 </header>
                 <form class="settings-form production-settings-form" id="settingsForm">
                   <div class="settings-row">
                     <label for="targetInput">产能设定：</label>
-                    <input id="targetInput" name="target" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="" placeholder="—" required data-soft-keyboard="numeric" data-soft-label="产能设定" data-production-setting aria-describedby="settingsValidation productionSaveState">
+                    <input id="targetInput" name="target" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="" placeholder="—" required data-soft-keyboard="numeric" data-soft-label="产能设定" data-soft-submit="true" data-production-setting aria-describedby="settingsValidation">
                     <span>件</span>
                   </div>
                   <div class="settings-row">
                     <label for="toolInput">换刀件数设定：</label>
-                    <input id="toolInput" name="tool" type="number" min="1" max="99999" step="1" inputmode="numeric" autocomplete="off" value="100" required data-soft-keyboard="numeric" data-soft-label="换刀件数设定" data-production-setting aria-describedby="settingsValidation productionSaveState">
+                    <input id="toolInput" name="tool" type="number" min="1" max="99999" step="1" inputmode="numeric" autocomplete="off" value="100" required data-soft-keyboard="numeric" data-soft-label="换刀件数设定" data-soft-submit="true" data-production-setting aria-describedby="settingsValidation">
                     <span>件</span>
                   </div>
                   <div class="settings-row">
                     <label for="inspectInput">抽检间隔设定：</label>
-                    <input id="inspectInput" name="inspect" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="30" required data-soft-keyboard="numeric" data-soft-label="抽检间隔设定" data-production-setting aria-describedby="settingsValidation productionSaveState">
+                    <input id="inspectInput" name="inspect" type="number" min="1" max="9999" step="1" inputmode="numeric" autocomplete="off" value="30" required data-soft-keyboard="numeric" data-soft-label="抽检间隔设定" data-soft-submit="true" data-production-setting aria-describedby="settingsValidation">
                     <span>件</span>
                   </div>
                   <p class="settings-validation" id="settingsValidation" role="status" aria-live="polite"></p>
-                  <p class="maintenance-save-state" id="productionSaveState" role="status" aria-live="polite" data-state="idle">正在读取本机生产参数</p>
-                  <div class="settings-actions">
-                    <button class="soft-keyboard-toggle" id="softKeyboardToggle" type="button" aria-pressed="false" aria-label="软键盘正在初始化" disabled>
-                      <span class="soft-keyboard-toggle-icon" aria-hidden="true"></span>
-                      <span class="soft-keyboard-toggle-copy"><strong>软键盘</strong><small id="softKeyboardToggleState">系统 / 实体键盘</small></span>
-                      <span class="soft-keyboard-switch" aria-hidden="true"></span>
-                    </button>
-                    <button class="save-button" type="submit">立即保存</button>
-                  </div>
                 </form>
                 <form class="settings-form pieces-per-box-form" id="piecesPerBoxForm">
-                  <div class="maintenance-section-head"><strong>单框工件数量</strong><small>换型时单独保存，不影响前三项自动保存。</small></div>
+                  <div class="maintenance-section-head"><strong>单框工件数量</strong></div>
                   <div class="settings-row">
                     <label for="piecesPerBoxInput">每框数量：</label>
-                    <input id="piecesPerBoxInput" name="piecesPerBox" type="number" min="1" max="99999" step="1" inputmode="numeric" autocomplete="off" value="1" required data-soft-keyboard="numeric" data-soft-label="每框数量" aria-describedby="piecesPerBoxValidation piecesPerBoxSaveState">
+                    <input id="piecesPerBoxInput" name="piecesPerBox" type="number" min="1" max="99999" step="1" inputmode="numeric" autocomplete="off" value="1" required data-soft-keyboard="numeric" data-soft-label="每框数量" data-soft-submit="true" aria-describedby="piecesPerBoxValidation">
                     <span>件/框</span>
                   </div>
                   <p class="settings-validation" id="piecesPerBoxValidation" role="status" aria-live="polite"></p>
-                  <div class="settings-actions"><button id="savePiecesPerBoxButton" type="submit">保存单框数量</button></div>
-                  <p class="maintenance-save-state" id="piecesPerBoxSaveState" role="status" aria-live="polite" data-state="idle">等待读取当前设置</p>
                 </form>
               </section>
 
@@ -5229,9 +5257,6 @@
       let backendPollTimer = 0;
       let deferredServerRender = false;
       let settingsDirty = false;
-      let automaticSpeedDraft = null;
-      let automaticSpeedWriteInFlight = false;
-      let productionTargetWriteInFlight = false;
       const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
       const demoManualStart = demoMode && new URLSearchParams(window.location.search).get("manual") === "1";
       const manualState = {
@@ -5251,7 +5276,6 @@
           bdm: { state: "not_configured", lastSuccessAt: null, lastError: null }
         }
       };
-      let productionSaveTimer = 0;
       let productionSaveInFlight = false;
       let wifiRequestInFlight = false;
 
@@ -5387,16 +5411,11 @@
         const modeBlocked = unavailable || mode.dataset.backendUnavailable === "true";
         mode.disabled = frontendPermissions.operate && modeBlocked;
         mode.setAttribute("aria-disabled", String(!frontendPermissions.operate || modeBlocked));
-        const save = $(".save-button", $("#settingsForm"));
-        const saveBlocked = productionSaveInFlight;
-        save.disabled = !frontendPermissions.maintenance || saveBlocked;
-        save.setAttribute("aria-disabled", String(!frontendPermissions.maintenance || saveBlocked));
         $$(".ack-button").forEach(button => {
           const blocked = unavailable || button.dataset.backendUnavailable === "true" || button.dataset.acknowledged === "true";
           button.disabled = frontendPermissions.operate && blocked;
           button.setAttribute("aria-disabled", String(!frontendPermissions.operate || blocked));
         });
-        renderDataTargetControl();
         root.dataset.backendBusy = backendWriteInFlight ? "true" : "false";
       }
 
@@ -5645,71 +5664,13 @@
         return Number.isInteger(value) && value >= 1 && value <= 9999;
       }
 
-      function renderDataTargetControl() {
-        const input = $("#dataTargetInput");
-        const save = $("#dataTargetSave");
-        const binding = pointBinding("maintenance.production.target");
-        const configured = Boolean(
-          binding &&
-          binding.state === "configured" &&
-          binding.writePoint &&
-          binding.action === "set"
-        );
-        const unavailable = !backendConnected || backendWriteInFlight || productionTargetWriteInFlight || !configured;
-        const disabled = frontendPermissions.operate && unavailable;
-        input.disabled = disabled;
-        save.disabled = disabled;
-        input.setAttribute("aria-disabled", String(!frontendPermissions.operate || unavailable));
-        save.setAttribute("aria-disabled", String(!frontendPermissions.operate || unavailable));
-
-        if (document.activeElement === input || productionTargetWriteInFlight) return;
-        input.value = isValidProductionTarget(state.target) ? String(state.target) : "";
-      }
-
-      async function saveDataTarget() {
-        if (productionTargetWriteInFlight || !requireFrontendPermission("operate")) return false;
-
-        const input = $("#dataTargetInput");
-        const value = Number(input.value);
-        if (!isValidProductionTarget(value)) {
-          showToast("今日目标产能必须为 1 到 9999 的整数", "warning");
-          return false;
-        }
-
-        const runtime = pointRuntime();
-        const binding = pointBinding("maintenance.production.target");
-        if (!runtime || !binding || binding.state !== "configured" || !binding.writePoint || binding.action !== "set" || !backendConnected) {
-          showToast("今日目标产能点位当前不可写", "danger");
-          return false;
-        }
-
-        productionTargetWriteInFlight = true;
-        updateControlAvailability();
-        try {
-          await runtime.command("maintenance.production.target", value);
-          state.target = value;
-          renderMetrics();
-          showToast("今日目标产能已写入 PLC", "success");
-          return true;
-        } catch (error) {
-          showToast(backendErrorMessage(error), "danger");
-          return false;
-        } finally {
-          productionTargetWriteInFlight = false;
-          updateControlAvailability();
-        }
-      }
-
       async function loadProductionSettings() {
         try {
           const production = await maintenanceRequest("/api/maintenance/production");
           updateProductionInputs(production);
-          setMaintenanceSaveState("#productionSaveState", "已读取本机生产参数", "saved");
-          setMaintenanceSaveState("#piecesPerBoxSaveState", "已读取当前单框数量", "saved");
           return true;
         } catch (error) {
-          setMaintenanceSaveState("#productionSaveState", maintenanceErrorMessage(error), "error");
-          setMaintenanceSaveState("#piecesPerBoxSaveState", "未读取单框数量", "error");
+          showToast(maintenanceErrorMessage(error), "danger");
           return false;
         }
       }
@@ -5733,12 +5694,10 @@
         if (!requireFrontendPermission("maintenance") || productionSaveInFlight) return false;
         const patch = productionPatch();
         if (patch === null) {
-          setMaintenanceSaveState("#productionSaveState", "参数未保存", "error");
           return false;
         }
         productionSaveInFlight = true;
         updateControlAvailability();
-        setMaintenanceSaveState("#productionSaveState", "正在保存生产参数…", "saving");
         try {
           let production;
           if (demoMode) {
@@ -5758,14 +5717,11 @@
           }
           updateProductionInputs(production, true);
           settingsDirty = false;
-          setMaintenanceSaveState("#productionSaveState", "生产参数已保存", "saved");
           if (manual) {
             showToast("生产参数已保存");
-            if (window.HMISoftKeyboard) window.HMISoftKeyboard.close("commit");
           }
           return true;
         } catch (error) {
-          setMaintenanceSaveState("#productionSaveState", maintenanceErrorMessage(error), "error");
           if (manual) showToast(maintenanceErrorMessage(error), "danger");
           return false;
         } finally {
@@ -5779,20 +5735,15 @@
         const piecesPerBox = Number($("#piecesPerBoxInput").value);
         if (!Number.isInteger(piecesPerBox) || piecesPerBox < 1 || piecesPerBox > 99999) {
           $("#piecesPerBoxValidation").textContent = "每框数量必须为允许范围内的整数";
-          setMaintenanceSaveState("#piecesPerBoxSaveState", "单框数量未保存", "error");
           return false;
         }
         $("#piecesPerBoxValidation").textContent = "";
-        setMaintenanceSaveState("#piecesPerBoxSaveState", "正在保存单框数量…", "saving");
         try {
           const production = await maintenanceRequest("/api/maintenance/production", "PATCH", { piecesPerBox });
           updateProductionInputs(production, true);
-          setMaintenanceSaveState("#piecesPerBoxSaveState", "单框数量已保存", "saved");
-          if (window.HMISoftKeyboard) window.HMISoftKeyboard.close("commit");
           showToast("单框数量已保存");
           return true;
         } catch (error) {
-          setMaintenanceSaveState("#piecesPerBoxSaveState", maintenanceErrorMessage(error), "error");
           showToast(maintenanceErrorMessage(error), "danger");
           return false;
         }
@@ -6112,60 +6063,21 @@
 
       function renderAutomaticSpeed() {
         const slider = $("#automaticSpeedSlider");
-        const runtime = pointRuntime();
-        const binding = runtime ? runtime.binding("home.speed.automatic") : null;
-        const pending = !binding || binding.state === "pending" || !binding.writePoint || !runtime.canWrite("home.speed.automatic");
         const incoming = pointValue("home.speed.automatic");
         const known = hasNumericValue(incoming);
-        slider.hidden = !known;
-        slider.disabled = pending || !backendConnected || !known;
-        slider.setAttribute("aria-disabled", String(slider.disabled));
+        slider.hidden = false;
+        slider.disabled = true;
+        slider.setAttribute("aria-disabled", "true");
         if (!known) {
-          automaticSpeedDraft = null;
+          slider.value = "0";
           $("#automaticSpeedHint").textContent = "—";
           $("#automaticSpeedPercent").textContent = "—";
           return;
         }
-        if (automaticSpeedDraft !== null) return;
         const value = Math.max(0, Math.min(300, Math.round(incoming)));
         slider.value = String(value);
         $("#automaticSpeedHint").textContent = `原始值 ${value} / 300`;
         $("#automaticSpeedPercent").textContent = `${Math.round(value / 3)}%`;
-      }
-
-      function updateAutomaticSpeedDraft(raw) {
-        const value = Math.max(0, Math.min(300, Math.round(Number(raw) || 0)));
-        automaticSpeedDraft = value;
-        $("#automaticSpeedSlider").value = String(value);
-        $("#automaticSpeedHint").textContent = `原始值 ${value} / 300`;
-        $("#automaticSpeedPercent").textContent = `${Math.round(value / 3)}%`;
-      }
-
-      function commitAutomaticSpeed() {
-        if (automaticSpeedDraft === null || automaticSpeedWriteInFlight) return;
-        const runtime = pointRuntime();
-        const binding = pointBinding("home.speed.automatic");
-        if (!runtime || !binding || binding.state === "pending" || !binding.writePoint || !runtime.canWrite("home.speed.automatic")) {
-          automaticSpeedDraft = null;
-          renderAutomaticSpeed();
-          return;
-        }
-        if (!requireFrontendPermission("operate")) {
-          automaticSpeedDraft = null;
-          renderAutomaticSpeed();
-          return;
-        }
-        const value = automaticSpeedDraft;
-        automaticSpeedWriteInFlight = true;
-        runtime.command("home.speed.automatic", value).then(() => {
-          showToast("自动运行速度已写入");
-        }).catch(error => {
-          showToast(backendErrorMessage(error), "danger");
-        }).finally(() => {
-          automaticSpeedWriteInFlight = false;
-          automaticSpeedDraft = null;
-          renderAutomaticSpeed();
-        });
       }
 
       function manualBinding(displayPath) {
@@ -6476,7 +6388,6 @@
         renderStatus();
         renderBins();
         renderMetrics();
-        renderDataTargetControl();
         renderAutomaticSpeed();
         renderEvents();
         renderHistory();
@@ -6598,20 +6509,6 @@
       $("#manualReturnHome").addEventListener("click", () => switchPage("home"));
       bindManualPage();
 
-      $("#dataTargetForm").addEventListener("submit", event => {
-        event.preventDefault();
-        void saveDataTarget();
-      });
-
-      const automaticSpeedSlider = $("#automaticSpeedSlider");
-      automaticSpeedSlider.addEventListener("pointerdown", () => updateAutomaticSpeedDraft(automaticSpeedSlider.value));
-      automaticSpeedSlider.addEventListener("input", () => updateAutomaticSpeedDraft(automaticSpeedSlider.value));
-      automaticSpeedSlider.addEventListener("change", () => commitAutomaticSpeed());
-      automaticSpeedSlider.addEventListener("pointercancel", () => {
-        automaticSpeedDraft = null;
-        renderAutomaticSpeed();
-      });
-
       $$(".control-button").forEach(button => {
         button.addEventListener("click", () => handleAction(button));
       });
@@ -6675,16 +6572,10 @@
       $("#settingsForm").addEventListener("input", event => {
         if (!event.target.matches("[data-production-setting]")) return;
         settingsDirty = true;
-        window.clearTimeout(productionSaveTimer);
-        setMaintenanceSaveState("#productionSaveState", "将在 650 ms 后自动保存", "saving");
-        productionSaveTimer = window.setTimeout(() => {
-          void saveProductionSettings();
-        }, 650);
       });
 
       $("#settingsForm").addEventListener("submit", event => {
         event.preventDefault();
-        window.clearTimeout(productionSaveTimer);
         void saveProductionSettings(true);
       });
 

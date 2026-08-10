@@ -161,8 +161,10 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 			t.Fatalf("username input does not enforce the v2 128-character maximum: %q", usernameInput)
 		}
 	}
-	if !strings.Contains(page, `}, 650);`) || strings.Contains(page, `backend.updateSettings`) {
-		t.Fatal("production settings do not use the dedicated 650 ms local Agent save path")
+	if strings.Contains(page, `}, 650);`) || strings.Contains(page, `backend.updateSettings`) ||
+		!strings.Contains(page, `id="targetInput"`) || !strings.Contains(page, `id="piecesPerBoxInput"`) ||
+		strings.Count(page, `data-soft-submit="true"`) < 4 {
+		t.Fatal("production settings do not save from each input's soft-keyboard completion")
 	}
 	keyboardCSS, err := os.ReadFile("assets/soft-keyboard.css")
 	if err != nil {
@@ -297,22 +299,13 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	if !regexp.MustCompile(`(?s)async function runBackendMutation\(factory, options = \{\}\) \{.*?showToast\(\s*backendErrorMessage\(mutationError\)`).MatchString(page) {
 		t.Fatal("mode command failures are not surfaced through the HMI toast")
 	}
-	if !regexp.MustCompile(`(?s)id="dataTargetForm".*?id="dataTargetInput" type="number" min="1" max="9999" step="1".*?id="dataTargetSave" type="submit"`).MatchString(page) {
-		t.Fatal("production data page does not expose the bounded D1000 target control")
-	}
-	dataTargetSave := regexp.MustCompile(`(?s)async function saveDataTarget\(\) \{.*?\n      \}\n\n      async function loadProductionSettings`).FindString(page)
-	if dataTargetSave == "" ||
-		!strings.Contains(dataTargetSave, `requireFrontendPermission("operate")`) ||
-		!strings.Contains(dataTargetSave, `runtime.command("maintenance.production.target", value)`) ||
-		strings.Contains(dataTargetSave, `/api/maintenance/production`) {
-		t.Fatal("D1000 operator write does not use the configured PLC point directly")
-	}
-	if !regexp.MustCompile(`(?s)\$\("#dataTargetForm"\)\.addEventListener\("submit", event => \{.*?event\.preventDefault\(\);.*?void saveDataTarget\(\);`).MatchString(page) {
-		t.Fatal("D1000 target form is not bound to its save handler")
+	if !regexp.MustCompile(`(?s)class="data-point data-target-point".*?<output id="dataTarget">`).MatchString(page) ||
+		regexp.MustCompile(`dataTarget(?:Form|Input|Save)|saveDataTarget|renderDataTargetControl`).MatchString(page) {
+		t.Fatal("production data page must only display the D1000 target")
 	}
 	maintenanceProductionSave := regexp.MustCompile(`(?s)async function saveProductionSettings\(manual = false\) \{.*?\n      \}\n\n      async function savePiecesPerBox`).FindString(page)
-	if maintenanceProductionSave == "" || !strings.Contains(maintenanceProductionSave, `requireFrontendPermission("maintenance")`) {
-		t.Fatal("D1000 operator write unexpectedly relaxes maintenance page access")
+	if maintenanceProductionSave == "" || !strings.Contains(maintenanceProductionSave, `requireFrontendPermission("maintenance")`) || !strings.Contains(maintenanceProductionSave, `runtime.command("maintenance.production.target", patch.targetProduction)`) {
+		t.Fatal("D1000 maintenance write is incomplete")
 	}
 	if !regexp.MustCompile(`(?s)const state = \{.*?running: null,.*?mode: null,.*?target: null,.*?output: null,.*?cycle: null,`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)function renderStatus\(\) \{.*?running === true \? "运行中" : running === false \? "运行停止" : "—".*?mode === null \? "mixed".*?known \? item\.paused \? "恢复" : "暂停" : "—"`).MatchString(page) {
@@ -320,11 +313,11 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?s)function renderNumericReadout\(selector, value\) \{.*?output\.textContent = known \? String\(value\) : "—";`).MatchString(page) ||
 		!regexp.MustCompile(`(?s)function renderMetrics\(\) \{.*?"目标完成度 —".*?progressFill\.hidden = true;`).MatchString(page) ||
-		!regexp.MustCompile(`(?s)function renderAutomaticSpeed\(\) \{.*?const known = hasNumericValue\(incoming\);.*?slider\.hidden = !known;.*?slider\.disabled = pending \|\| !backendConnected \|\| !known;`).MatchString(page) {
+		!regexp.MustCompile(`(?s)function renderAutomaticSpeed\(\) \{.*?const known = hasNumericValue\(incoming\);.*?slider\.hidden = false;.*?slider\.disabled = true;.*?slider\.setAttribute\("aria-disabled", "true"\);`).MatchString(page) {
 		t.Fatal("missing PLC numeric values are not rendered as unknown")
 	}
-	if !strings.Contains(page, `runtime.canWrite("home.speed.automatic")`) {
-		t.Fatal("automatic-speed slider does not honor the configured read-only canWrite gate")
+	if strings.Contains(page, `runtime.command("home.speed.automatic"`) || strings.Contains(page, `commitAutomaticSpeed`) || strings.Contains(page, `updateAutomaticSpeedDraft`) {
+		t.Fatal("automatic-speed slider unexpectedly retains a write path")
 	}
 	visibleCopy := regexp.MustCompile(`/api(?:/[a-z-]+)+`).ReplaceAllString(page+source, "")
 	if regexp.MustCompile(`(?i)\bv2\b`).MatchString(visibleCopy) {
@@ -802,7 +795,7 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 	productionTargetBinding := findDefaultBinding("maintenance.production.target")
 	if productionTargetBinding.ReadPoint == nil || *productionTargetBinding.ReadPoint != "maintenance.production.target" ||
 		productionTargetBinding.WritePoint == nil || *productionTargetBinding.WritePoint != "maintenance.production.target" ||
-		productionTargetBinding.Action != "set" || productionTargetBinding.Permission != "operate" || productionTargetBinding.State != "configured" {
+		productionTargetBinding.Action != "set" || productionTargetBinding.Permission != "maintenance" || productionTargetBinding.State != "configured" {
 		t.Fatalf("default profile production target binding is incomplete: %+v", productionTargetBinding)
 	}
 	for _, displayPath := range []string{

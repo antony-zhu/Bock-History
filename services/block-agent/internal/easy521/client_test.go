@@ -160,7 +160,192 @@ func TestWriteMultipleRegistersUsesFC10(t *testing.T) {
 	}
 }
 
-func TestMaskWriteBitDoesNotRetryAfterException(t *testing.T) {
+func TestMaskWriteBitFallsBackFromFC22IllegalFunctionAndCachesCapability(t *testing.T) {
+	unsupportedClientConnection, unsupportedServerConnection := net.Pipe()
+	fallbackClientConnection, fallbackServerConnection := net.Pipe()
+	defer unsupportedServerConnection.Close()
+	defer fallbackServerConnection.Close()
+	dials := 0
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) {
+		switch dials {
+		case 0:
+			dials++
+			return unsupportedClientConnection, nil
+		case 1:
+			dials++
+			return fallbackClientConnection, nil
+		default:
+			return nil, errors.New("unexpected PLC dial")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	unsupportedDone := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(unsupportedServerConnection)
+		if err != nil {
+			unsupportedDone <- err
+			return
+		}
+		if frame[7] != functionMaskWriteRegister || binary.BigEndian.Uint16(frame[8:10]) != 504 ||
+			binary.BigEndian.Uint16(frame[10:12]) != 0xEFFF || binary.BigEndian.Uint16(frame[12:14]) != 0x1000 {
+			unsupportedDone <- io.ErrUnexpectedEOF
+			return
+		}
+		unsupportedDone <- writeResponse(unsupportedServerConnection, frame, []byte{functionMaskWriteRegister | 0x80, exceptionIllegalFunction})
+	}()
+
+	fallbackDone := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(fallbackServerConnection)
+		if err != nil {
+			fallbackDone <- err
+			return
+		}
+		if frame[7] != functionReadHoldingRegisters || binary.BigEndian.Uint16(frame[8:10]) != 504 || binary.BigEndian.Uint16(frame[10:12]) != 1 {
+			fallbackDone <- io.ErrUnexpectedEOF
+			return
+		}
+		if err := writeResponse(fallbackServerConnection, frame, []byte{functionReadHoldingRegisters, 2, 0x00, 0x03}); err != nil {
+			fallbackDone <- err
+			return
+		}
+
+		frame, err = readFrame(fallbackServerConnection)
+		if err != nil {
+			fallbackDone <- err
+			return
+		}
+		if frame[7] != functionWriteSingleRegister || binary.BigEndian.Uint16(frame[8:10]) != 504 || binary.BigEndian.Uint16(frame[10:12]) != 0x1003 {
+			fallbackDone <- io.ErrUnexpectedEOF
+			return
+		}
+		if err := writeResponse(fallbackServerConnection, frame, frame[7:]); err != nil {
+			fallbackDone <- err
+			return
+		}
+
+		frame, err = readFrame(fallbackServerConnection)
+		if err != nil {
+			fallbackDone <- err
+			return
+		}
+		if frame[7] != functionReadHoldingRegisters || binary.BigEndian.Uint16(frame[8:10]) != 504 || binary.BigEndian.Uint16(frame[10:12]) != 1 {
+			fallbackDone <- io.ErrUnexpectedEOF
+			return
+		}
+		if err := writeResponse(fallbackServerConnection, frame, []byte{functionReadHoldingRegisters, 2, 0x10, 0x23}); err != nil {
+			fallbackDone <- err
+			return
+		}
+
+		frame, err = readFrame(fallbackServerConnection)
+		if err != nil {
+			fallbackDone <- err
+			return
+		}
+		if frame[7] != functionWriteSingleRegister || binary.BigEndian.Uint16(frame[8:10]) != 504 || binary.BigEndian.Uint16(frame[10:12]) != 0x0023 {
+			fallbackDone <- io.ErrUnexpectedEOF
+			return
+		}
+		fallbackDone <- writeResponse(fallbackServerConnection, frame, frame[7:])
+	}()
+	if err := client.MaskWriteBit(context.Background(), 504, 12, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.MaskWriteBit(context.Background(), 504, 12, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-unsupportedDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-fallbackDone; err != nil {
+		t.Fatal(err)
+	}
+	if dials != 2 {
+		t.Fatalf("dials = %d, want 2", dials)
+	}
+}
+
+func TestWriteMultipleRegistersFallsBackFromFC10IllegalFunctionAndCachesCapability(t *testing.T) {
+	unsupportedClientConnection, unsupportedServerConnection := net.Pipe()
+	fallbackClientConnection, fallbackServerConnection := net.Pipe()
+	defer unsupportedServerConnection.Close()
+	defer fallbackServerConnection.Close()
+	dials := 0
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) {
+		switch dials {
+		case 0:
+			dials++
+			return unsupportedClientConnection, nil
+		case 1:
+			dials++
+			return fallbackClientConnection, nil
+		default:
+			return nil, errors.New("unexpected PLC dial")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	unsupportedDone := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(unsupportedServerConnection)
+		if err != nil {
+			unsupportedDone <- err
+			return
+		}
+		if frame[7] != functionWriteMultipleRegs || binary.BigEndian.Uint16(frame[8:10]) != 1000 ||
+			binary.BigEndian.Uint16(frame[10:12]) != 2 || frame[12] != 4 ||
+			binary.BigEndian.Uint16(frame[13:15]) != 0x0000 || binary.BigEndian.Uint16(frame[15:17]) != 0x4104 {
+			unsupportedDone <- io.ErrUnexpectedEOF
+			return
+		}
+		unsupportedDone <- writeResponse(unsupportedServerConnection, frame, []byte{functionWriteMultipleRegs | 0x80, exceptionIllegalFunction})
+	}()
+
+	fallbackDone := make(chan error, 1)
+	go func() {
+		for index, expected := range []uint16{0x0000, 0x4104, 0x0012, 0x3456} {
+			frame, err := readFrame(fallbackServerConnection)
+			if err != nil {
+				fallbackDone <- err
+				return
+			}
+			if frame[7] != functionWriteSingleRegister || binary.BigEndian.Uint16(frame[8:10]) != uint16(1000+index%2) || binary.BigEndian.Uint16(frame[10:12]) != expected {
+				fallbackDone <- io.ErrUnexpectedEOF
+				return
+			}
+			if err := writeResponse(fallbackServerConnection, frame, frame[7:]); err != nil {
+				fallbackDone <- err
+				return
+			}
+		}
+		fallbackDone <- nil
+	}()
+	if err := client.WriteMultipleRegisters(context.Background(), 1000, []uint16{0x0000, 0x4104}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.WriteMultipleRegisters(context.Background(), 1000, []uint16{0x0012, 0x3456}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-unsupportedDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-fallbackDone; err != nil {
+		t.Fatal(err)
+	}
+	if dials != 2 {
+		t.Fatalf("dials = %d, want 2", dials)
+	}
+}
+
+func TestMaskWriteBitDoesNotFallbackAfterOtherException(t *testing.T) {
 	clientConnection, serverConnection := net.Pipe()
 	defer serverConnection.Close()
 	dials := 0
@@ -180,6 +365,10 @@ func TestMaskWriteBitDoesNotRetryAfterException(t *testing.T) {
 			done <- err
 			return
 		}
+		if frame[7] != functionMaskWriteRegister {
+			done <- io.ErrUnexpectedEOF
+			return
+		}
 		done <- writeResponse(serverConnection, frame, []byte{functionMaskWriteRegister | 0x80, 2})
 	}()
 	if err := client.MaskWriteBit(context.Background(), 504, 1, true); err == nil {
@@ -191,7 +380,112 @@ func TestMaskWriteBitDoesNotRetryAfterException(t *testing.T) {
 		t.Fatal(err)
 	}
 	if dials != 1 {
-		t.Fatalf("writes were retried: dials=%d", dials)
+		t.Fatalf("write fallback dialed again: dials=%d", dials)
+	}
+}
+
+func TestWriteMultipleRegistersDoesNotFallbackAfterOtherException(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	defer serverConnection.Close()
+	dials := 0
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) {
+		dials++
+		return clientConnection, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(serverConnection)
+		if err != nil {
+			done <- err
+			return
+		}
+		if frame[7] != functionWriteMultipleRegs {
+			done <- io.ErrUnexpectedEOF
+			return
+		}
+		done <- writeResponse(serverConnection, frame, []byte{functionWriteMultipleRegs | 0x80, 2})
+	}()
+	if err := client.WriteMultipleRegisters(context.Background(), 1000, []uint16{1, 2}); err == nil {
+		t.Fatal("FC10 exception unexpectedly succeeded")
+	} else if errors.Is(err, ErrTransportDisconnected) {
+		t.Fatalf("Modbus exception was classified as a transport disconnect: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if dials != 1 {
+		t.Fatalf("write fallback dialed again: dials=%d", dials)
+	}
+}
+
+func TestMaskWriteBitDoesNotFallbackAfterTransportFailure(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	defer serverConnection.Close()
+	dials := 0
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) {
+		dials++
+		return clientConnection, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(serverConnection)
+		if err == nil && frame[7] != functionMaskWriteRegister {
+			err = io.ErrUnexpectedEOF
+		}
+		_ = serverConnection.Close()
+		done <- err
+	}()
+	if err := client.MaskWriteBit(context.Background(), 504, 1, true); !errors.Is(err, ErrTransportDisconnected) {
+		t.Fatalf("write error = %v, want transport disconnect", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if dials != 1 {
+		t.Fatalf("write fallback dialed again: dials=%d", dials)
+	}
+}
+
+func TestWriteMultipleRegistersDoesNotFallbackAfterTransportFailure(t *testing.T) {
+	clientConnection, serverConnection := net.Pipe()
+	defer serverConnection.Close()
+	dials := 0
+	client, err := NewWithDial(testConfig(), func(context.Context, string, string) (net.Conn, error) {
+		dials++
+		return clientConnection, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		frame, err := readFrame(serverConnection)
+		if err == nil && frame[7] != functionWriteMultipleRegs {
+			err = io.ErrUnexpectedEOF
+		}
+		_ = serverConnection.Close()
+		done <- err
+	}()
+	if err := client.WriteMultipleRegisters(context.Background(), 1000, []uint16{1, 2}); !errors.Is(err, ErrTransportDisconnected) {
+		t.Fatalf("write error = %v, want transport disconnect", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if dials != 1 {
+		t.Fatalf("write fallback dialed again: dials=%d", dials)
 	}
 }
 

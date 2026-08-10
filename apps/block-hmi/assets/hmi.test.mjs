@@ -259,7 +259,7 @@ assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId
 assert.deepEqual(defaultPointsConfiguration.bindings.find((binding) => binding.displayPath === "maintenance.production.target"), {
   displayPath: "maintenance.production.target", description: "今日目标产能", component: "number",
   readPoint: "maintenance.production.target", writePoint: "maintenance.production.target", action: "set",
-  permission: "operate", state: "configured", sourceRow: 36, sourceAddress: "D1000"
+  permission: "maintenance", state: "configured", sourceRow: 36, sourceAddress: "D1000"
 });
 for (const pointId of ["home.homing", "home.action.reset", "home.action.restart", "home.action.pause", "home.action.clear", "home.cycle.single", "home.cycle.frame"]) {
   const point = defaultPointsConfiguration.points.find((item) => item.pointId === pointId);
@@ -433,16 +433,12 @@ assert.match(source, /function websocketURL\(\): string \{[\s\S]*?window\.locati
 assert.doesNotMatch(source, /"ws:"/);
 assert.match(source, /buildRuntimeConfigure\(this\.config\.points\)/);
 assert.match(index, /window\.BlockHMIReady\.then\(syncFrontendPermissions\)/);
-assert.match(index, /id="dataTargetForm"[\s\S]*?id="dataTargetInput" type="number" min="1" max="9999" step="1"[\s\S]*?id="dataTargetSave" type="submit"/);
-const dataTargetSave = index.match(/async function saveDataTarget\(\) \{[\s\S]*?\n      \}\n\n      async function loadProductionSettings/);
-assert.notEqual(dataTargetSave, null);
-assert.match(dataTargetSave[0], /requireFrontendPermission\("operate"\)/);
-assert.match(dataTargetSave[0], /runtime\.command\("maintenance\.production\.target", value\)/);
-assert.doesNotMatch(dataTargetSave[0], /\/api\/maintenance\/production/);
-assert.match(index, /\$\("#dataTargetForm"\)\.addEventListener\("submit", event => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?void saveDataTarget\(\);/);
+assert.match(index, /class="data-point data-target-point"[\s\S]*?<output id="dataTarget">—<\/output>/);
+assert.doesNotMatch(index, /id="dataTarget(?:Form|Input|Save)"|function saveDataTarget|renderDataTargetControl/);
 const maintenanceProductionSave = index.match(/async function saveProductionSettings\(manual = false\) \{[\s\S]*?\n      \}\n\n      async function savePiecesPerBox/);
 assert.notEqual(maintenanceProductionSave, null);
 assert.match(maintenanceProductionSave[0], /requireFrontendPermission\("maintenance"\)/);
+assert.match(maintenanceProductionSave[0], /runtime\.command\("maintenance\.production\.target", patch\.targetProduction\)/);
 const initialPageState = index.match(/const state = \{[\s\S]*?\n      \};/);
 assert.notEqual(initialPageState, null);
 assert.match(initialPageState[0], /running: null,[\s\S]*?mode: null,[\s\S]*?target: null,[\s\S]*?output: null,[\s\S]*?cycle: null/);
@@ -457,15 +453,12 @@ assert.match(index, /function renderNumericReadout\(selector, value\) \{[\s\S]*?
 assert.match(metricsRenderer[0], /"目标完成度 —"/);
 assert.match(metricsRenderer[0], /progressFill\.hidden = true;/);
 assert.doesNotMatch(metricsRenderer[0], /: 100|Math\.max\(1, state\.target\)/);
-const automaticSpeedRenderer = index.match(/function renderAutomaticSpeed\(\) \{[\s\S]*?\n      \}\n\n      function updateAutomaticSpeedDraft/);
+const automaticSpeedRenderer = index.match(/function renderAutomaticSpeed\(\) \{[\s\S]*?\n      \}\n\n      function manualBinding/);
 assert.notEqual(automaticSpeedRenderer, null);
-assert.match(automaticSpeedRenderer[0], /const known = hasNumericValue\(incoming\);[\s\S]*?slider\.hidden = !known;[\s\S]*?slider\.disabled = pending \|\| !backendConnected \|\| !known;/);
-assert.match(automaticSpeedRenderer[0], /runtime\.canWrite\("home\.speed\.automatic"\)/);
-assert.match(automaticSpeedRenderer[0], /automaticSpeedDraft = null;[\s\S]*?\$\("#automaticSpeedHint"\)\.textContent = "—";/);
+assert.match(automaticSpeedRenderer[0], /const known = hasNumericValue\(incoming\);[\s\S]*?slider\.hidden = false;[\s\S]*?slider\.disabled = true;[\s\S]*?slider\.setAttribute\("aria-disabled", "true"\);/);
+assert.match(automaticSpeedRenderer[0], /slider\.value = "0";[\s\S]*?\$\("#automaticSpeedHint"\)\.textContent = "—";/);
 assert.doesNotMatch(automaticSpeedRenderer[0], /: 100/);
-const automaticSpeedCommit = index.match(/function commitAutomaticSpeed\(\) \{[\s\S]*?\n      \}\n\n      function manualBinding/);
-assert.notEqual(automaticSpeedCommit, null);
-assert.match(automaticSpeedCommit[0], /!runtime\.canWrite\("home\.speed\.automatic"\)[\s\S]*?automaticSpeedDraft = null;[\s\S]*?renderAutomaticSpeed\(\);[\s\S]*?return;[\s\S]*?runtime\.command\("home\.speed\.automatic", value\)/);
+assert.doesNotMatch(index, /runtime\.command\("home\.speed\.automatic"|updateAutomaticSpeedDraft|commitAutomaticSpeed/);
 assert.match(index, /query\.get\("demo"\) !== "1" \|\| query\.get\("__demoFrame"\) === "1"/);
 assert.match(index, /new URL\("demo-shell\.html", window\.location\.href\)/);
 assert.match(demoShell, /<iframe[\s\S]*?id="demoFrame"[\s\S]*?width="1920"[\s\S]*?height="1080"/);
@@ -606,7 +599,10 @@ assert.match(index, /async function runBackendMutation\(factory, options = \{\}\
 assert.match(index, /async function saveProductionSettings\(manual = false\) \{[\s\S]*?requireFrontendPermission\("maintenance"\)/);
 assert.match(index, /data-maintenance-tab="production"[\s\S]*?data-maintenance-tab="wifi"[\s\S]*?data-maintenance-tab="plc"[\s\S]*?data-maintenance-tab="accounts"/);
 assert.match(index, /data-maintenance-panel="production"[\s\S]*?data-maintenance-panel="wifi"[\s\S]*?data-maintenance-panel="plc"[\s\S]*?data-maintenance-panel="accounts"/);
-assert.match(index, /setTimeout\(\(\) => \{[\s\S]*?saveProductionSettings\(\);[\s\S]*?\}, 650\)/);
+for (const id of ["targetInput", "toolInput", "inspectInput", "piecesPerBoxInput"]) {
+  assert.match(index, new RegExp(`id="${id}"[^>]*data-soft-submit="true"`));
+}
+assert.doesNotMatch(index, /650 ms|softKeyboardToggle|softKeyboardToggleState|productionSaveState|piecesPerBoxSaveState|savePiecesPerBoxButton|立即保存|换型时单独保存/);
 assert.match(index, /"\/api\/maintenance\/production"/);
 assert.match(index, /"\/api\/maintenance\/connectivity"/);
 assert.match(index, /"\/api\/maintenance\/wifi\/connect"/);

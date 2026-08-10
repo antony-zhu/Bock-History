@@ -1,6 +1,6 @@
 // Package easy521 contains the narrow Modbus TCP operations approved for the
-// current Easy521 path: FC03 reads, FC22 bit writes, and explicit FC06/FC10
-// register writes used by the simulator-only numeric profile.
+// current Easy521 path: FC03 reads, FC22 bit writes, and FC06/FC10 register
+// writes. Unsupported FC22 and FC10 requests use FC03/FC06 and FC06 fallbacks.
 package easy521
 
 import (
@@ -19,11 +19,20 @@ const (
 	functionWriteSingleRegister  byte = 0x06
 	functionWriteMultipleRegs    byte = 0x10
 	functionMaskWriteRegister    byte = 0x16
+	exceptionIllegalFunction     byte = 0x01
 	maxReadRegisters                  = 125
 	maxWriteRegisters                 = 123
 )
 
 var ErrTransportDisconnected = errors.New("PLC transport disconnected")
+
+type modbusExceptionError struct {
+	code byte
+}
+
+func (e *modbusExceptionError) Error() string {
+	return fmt.Sprintf("Modbus exception 0x%02x", e.code)
+}
 
 type Config struct {
 	Endpoint       string
@@ -35,13 +44,15 @@ type Config struct {
 type DialFunc func(context.Context, string, string) (net.Conn, error)
 
 // Client is deliberately used by exactly one PLCWorker goroutine. It keeps
-// one active Modbus TCP connection and never retries a write after a failed
-// exchange.
+// one active Modbus TCP connection and never retries a write after a transport
+// failure.
 type Client struct {
-	cfg    Config
-	dial   DialFunc
-	conn   net.Conn
-	nextID uint16
+	cfg                      Config
+	dial                     DialFunc
+	conn                     net.Conn
+	nextID                   uint16
+	maskWriteUnsupported     bool
+	writeMultipleUnsupported bool
 }
 
 func New(config Config) (*Client, error) {
@@ -112,13 +123,26 @@ func (c *Client) WriteSingleRegister(ctx context.Context, address, value uint16)
 	return nil
 }
 
-// WriteMultipleRegisters performs one FC10 (Modbus function 0x10) write. The
-// PLC response contains only the address and quantity, so the full request is
-// not echoed.
+// WriteMultipleRegisters performs one FC10 (Modbus function 0x10) write. If
+// the PLC reports FC10 as unsupported, later writes use individual FC06 writes.
 func (c *Client) WriteMultipleRegisters(ctx context.Context, address uint16, values []uint16) error {
 	if len(values) == 0 || len(values) > maxWriteRegisters || uint32(address)+uint32(len(values)) > 1<<16 {
 		return fmt.Errorf("invalid FC10 register range address=%d quantity=%d", address, len(values))
 	}
+	if c.writeMultipleUnsupported {
+		return c.writeMultipleWithSingleRegisters(ctx, address, values)
+	}
+	if err := c.writeMultipleRegistersFC10(ctx, address, values); err != nil {
+		if !isIllegalFunction(err) {
+			return err
+		}
+		c.writeMultipleUnsupported = true
+		return c.writeMultipleWithSingleRegisters(ctx, address, values)
+	}
+	return nil
+}
+
+func (c *Client) writeMultipleRegistersFC10(ctx context.Context, address uint16, values []uint16) error {
 	request := make([]byte, 6+len(values)*2)
 	request[0] = functionWriteMultipleRegs
 	binary.BigEndian.PutUint16(request[1:3], address)
@@ -139,12 +163,35 @@ func (c *Client) WriteMultipleRegisters(ctx context.Context, address uint16, val
 	return nil
 }
 
-// MaskWriteBit updates exactly one bit with FC22. It does not read or write a
-// full register and it never retries a write after a failed exchange.
+func (c *Client) writeMultipleWithSingleRegisters(ctx context.Context, address uint16, values []uint16) error {
+	for index, value := range values {
+		if err := c.WriteSingleRegister(ctx, address+uint16(index), value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MaskWriteBit updates exactly one bit with FC22. If the PLC reports FC22 as
+// unsupported, it uses a fresh FC03 read followed by an FC06 write.
 func (c *Client) MaskWriteBit(ctx context.Context, address uint16, bit uint8, target bool) error {
 	if bit > 15 {
 		return fmt.Errorf("PLC bit %d is outside 0..15", bit)
 	}
+	if c.maskWriteUnsupported {
+		return c.maskWriteBitWithReadModifyWrite(ctx, address, bit, target)
+	}
+	if err := c.maskWriteBitFC22(ctx, address, bit, target); err != nil {
+		if !isIllegalFunction(err) {
+			return err
+		}
+		c.maskWriteUnsupported = true
+		return c.maskWriteBitWithReadModifyWrite(ctx, address, bit, target)
+	}
+	return nil
+}
+
+func (c *Client) maskWriteBitFC22(ctx context.Context, address uint16, bit uint8, target bool) error {
 	mask := uint16(1) << bit
 	andMask := ^mask
 	orMask := uint16(0)
@@ -165,6 +212,21 @@ func (c *Client) MaskWriteBit(ctx context.Context, address uint16, bit uint8, ta
 		return errors.New("Modbus FC22 response does not echo request")
 	}
 	return nil
+}
+
+func (c *Client) maskWriteBitWithReadModifyWrite(ctx context.Context, address uint16, bit uint8, target bool) error {
+	values, err := c.ReadHoldingRegisters(ctx, address, 1)
+	if err != nil {
+		return err
+	}
+	value := values[0]
+	mask := uint16(1) << bit
+	if target {
+		value |= mask
+	} else {
+		value &^= mask
+	}
+	return c.WriteSingleRegister(ctx, address, value)
 }
 
 func (c *Client) exchange(ctx context.Context, pdu []byte) ([]byte, error) {
@@ -213,13 +275,18 @@ func (c *Client) exchange(ctx context.Context, pdu []byte) ([]byte, error) {
 		if len(response) != 2 {
 			return nil, errors.New("invalid Modbus exception response")
 		}
-		return nil, fmt.Errorf("Modbus exception 0x%02x", response[1])
+		return nil, &modbusExceptionError{code: response[1]}
 	}
 	if response[0] != pdu[0] {
 		c.Close()
 		return nil, errors.New("Modbus function code mismatch")
 	}
 	return response, nil
+}
+
+func isIllegalFunction(err error) bool {
+	var exception *modbusExceptionError
+	return errors.As(err, &exception) && exception.code == exceptionIllegalFunction
 }
 
 func (c *Client) ensureConnection(ctx context.Context) error {
