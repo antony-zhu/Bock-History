@@ -89,7 +89,7 @@ func TestNormalizeAcceptsExplicitSimulatorFloat32Profile(t *testing.T) {
 	}
 }
 
-func TestNormalizeRequiresHighLowInt32FC10Profile(t *testing.T) {
+func TestNormalizeAllowsInt32FC10WordOrders(t *testing.T) {
 	valid := Config{ScanIntervalMs: RequiredScanIntervalMs, Points: []PointDefinition{{
 		PointID: "maintenance.production.target", Address: "D1000", Type: "int32", Access: "read_write",
 		ReadPoint: "maintenance.production.target", WritePoint: "maintenance.production.target", WriteMethod: "fc10",
@@ -98,10 +98,16 @@ func TestNormalizeRequiresHighLowInt32FC10Profile(t *testing.T) {
 	if _, err := Normalize(valid); err != nil {
 		t.Fatalf("Normalize high-low int32: %v", err)
 	}
+	lowHigh := valid
+	lowHigh.Points = append([]PointDefinition(nil), valid.Points...)
+	lowHigh.Points[0].WordOrder = "low-high"
+	if _, err := Normalize(lowHigh); err != nil {
+		t.Fatalf("Normalize low-high int32: %v", err)
+	}
 
 	for _, change := range []func(*PointDefinition){
 		func(point *PointDefinition) { point.RegisterCount = 1 },
-		func(point *PointDefinition) { point.WordOrder = "low-high" },
+		func(point *PointDefinition) { point.WordOrder = "byte-swap" },
 		func(point *PointDefinition) { point.WriteMethod = "fc06" },
 	} {
 		invalid := valid

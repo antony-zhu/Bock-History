@@ -323,6 +323,9 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 		!regexp.MustCompile(`(?s)function renderAutomaticSpeed\(\) \{.*?const known = hasNumericValue\(incoming\);.*?slider\.hidden = !known;.*?slider\.disabled = pending \|\| !backendConnected \|\| !known;`).MatchString(page) {
 		t.Fatal("missing PLC numeric values are not rendered as unknown")
 	}
+	if !strings.Contains(page, `runtime.canWrite("home.speed.automatic")`) {
+		t.Fatal("automatic-speed slider does not honor the configured read-only canWrite gate")
+	}
 	visibleCopy := regexp.MustCompile(`/api(?:/[a-z-]+)+`).ReplaceAllString(page+source, "")
 	if regexp.MustCompile(`(?i)\bv2\b`).MatchString(visibleCopy) {
 		t.Fatal("user-visible HMI copy still exposes a v2 label")
@@ -753,16 +756,19 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 		}
 	}
 	automaticSpeed := findDefaultPoint("home.speed.automatic")
-	if automaticSpeed["address"] != "D522" || automaticSpeed["type"] != "float32" || automaticSpeed["access"] != "read_write" || automaticSpeed["writeMethod"] != "fc10" || automaticSpeed["registerCount"] != float64(2) || automaticSpeed["wordOrder"] != "high-low" {
+	if automaticSpeed["address"] != "D522" || automaticSpeed["type"] != "float32" || automaticSpeed["access"] != "read" || automaticSpeed["readPoint"] != "home.speed.automatic" || automaticSpeed["writePoint"] != nil || automaticSpeed["writeMethod"] != nil || automaticSpeed["registerCount"] != float64(2) || automaticSpeed["wordOrder"] != "low-high" {
 		t.Fatalf("default profile automatic-speed point is incomplete: %+v", automaticSpeed)
 	}
+	if _, exists := automaticSpeed["write"]; exists {
+		t.Fatalf("default profile automatic-speed point unexpectedly remains writable: %+v", automaticSpeed)
+	}
 	productionTarget := findDefaultPoint("maintenance.production.target")
-	if productionTarget["address"] != "D1000" || productionTarget["type"] != "int32" || productionTarget["access"] != "read_write" || productionTarget["writeMethod"] != "fc10" || productionTarget["registerCount"] != float64(2) || productionTarget["wordOrder"] != "high-low" {
+	if productionTarget["address"] != "D1000" || productionTarget["type"] != "int32" || productionTarget["access"] != "read_write" || productionTarget["writeMethod"] != "fc10" || productionTarget["registerCount"] != float64(2) || productionTarget["wordOrder"] != "low-high" {
 		t.Fatalf("default profile production target point is incomplete: %+v", productionTarget)
 	}
 	for _, pointID := range []string{"production.output.today", "production.quality.passed"} {
 		point := findDefaultPoint(pointID)
-		if point["type"] != "int32" || point["access"] != "read" || point["registerCount"] != float64(2) || point["wordOrder"] != "high-low" {
+		if point["type"] != "int32" || point["access"] != "read" || point["registerCount"] != float64(2) || point["wordOrder"] != "low-high" {
 			t.Fatalf("default profile production read point %q is incomplete: %+v", pointID, point)
 		}
 	}
@@ -775,6 +781,10 @@ func TestPLCProfilePointTablesKeepSimulatorFloatWritesOutOfDefault(t *testing.T)
 		}
 		t.Fatalf("default profile omits binding %q", displayPath)
 		return nil
+	}
+	automaticSpeedBinding := findDefaultBinding("home.speed.automatic")
+	if automaticSpeedBinding.ReadPoint == nil || *automaticSpeedBinding.ReadPoint != "home.speed.automatic" || automaticSpeedBinding.WritePoint != nil || automaticSpeedBinding.State != "configured" {
+		t.Fatalf("default profile automatic-speed binding is not read-only: %+v", automaticSpeedBinding)
 	}
 	for _, expected := range []struct {
 		displayPath string

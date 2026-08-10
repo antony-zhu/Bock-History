@@ -6112,8 +6112,9 @@
 
       function renderAutomaticSpeed() {
         const slider = $("#automaticSpeedSlider");
-        const binding = pointBinding("home.speed.automatic");
-        const pending = !binding || binding.state === "pending" || !binding.writePoint;
+        const runtime = pointRuntime();
+        const binding = runtime ? runtime.binding("home.speed.automatic") : null;
+        const pending = !binding || binding.state === "pending" || !binding.writePoint || !runtime.canWrite("home.speed.automatic");
         const incoming = pointValue("home.speed.automatic");
         const known = hasNumericValue(incoming);
         slider.hidden = !known;
@@ -6144,7 +6145,7 @@
         if (automaticSpeedDraft === null || automaticSpeedWriteInFlight) return;
         const runtime = pointRuntime();
         const binding = pointBinding("home.speed.automatic");
-        if (!runtime || !binding || binding.state === "pending" || !binding.writePoint) {
+        if (!runtime || !binding || binding.state === "pending" || !binding.writePoint || !runtime.canWrite("home.speed.automatic")) {
           automaticSpeedDraft = null;
           renderAutomaticSpeed();
           return;

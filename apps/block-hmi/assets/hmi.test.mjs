@@ -172,6 +172,14 @@ clearTransientRuntime(values, devices);
 assert.equal(values.size, 0);
 assert.equal(devices.length, 0);
 
+const productionValues = new Map();
+applyAbsoluteValues(productionValues, {
+  "maintenance.production.target": { value: 145, quality: "good", updatedAt: timestamp },
+  "production.output.today": { value: 12345678, quality: "good", updatedAt: timestamp }
+});
+assert.equal(productionValues.get("maintenance.production.target").value, 145);
+assert.equal(productionValues.get("production.output.today").value, 12345678);
+
 const source = readFileSync(new URL("./hmi.mts", import.meta.url), "utf8");
 const compiledSource = readFileSync(new URL("./hmi.mjs", import.meta.url), "utf8");
 const index = readFileSync(new URL("../index.html", import.meta.url), "utf8");
@@ -234,14 +242,19 @@ assert.deepEqual(defaultPointsConfiguration.points.map((point) => point.address)
 assert.ok(defaultPointsConfiguration.points.slice(0, 8).every((point) => point.type === "bool" && point.writeMethod === "maskWrite"));
 assert.doesNotMatch(JSON.stringify(defaultPointsConfiguration), /D800|D812/);
 assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "home.speed.automatic"), {
-  pointId: "home.speed.automatic", address: "D522", type: "float32", access: "read_write",
-  readPoint: "home.speed.automatic", writePoint: "home.speed.automatic", writeMethod: "fc10",
-  registerCount: 2, wordOrder: "high-low", write: { mode: "set" }
+  pointId: "home.speed.automatic", address: "D522", type: "float32", access: "read",
+  readPoint: "home.speed.automatic", writePoint: null, writeMethod: null,
+  registerCount: 2, wordOrder: "low-high"
+});
+assert.deepEqual(defaultPointsConfiguration.bindings.find((binding) => binding.displayPath === "home.speed.automatic"), {
+  displayPath: "home.speed.automatic", description: "自动运行速度", component: "number",
+  readPoint: "home.speed.automatic", writePoint: null, action: "set",
+  permission: "operate", state: "configured", sourceRow: 3, sourceAddress: "D522"
 });
 assert.deepEqual(defaultPointsConfiguration.points.find((point) => point.pointId === "maintenance.production.target"), {
   pointId: "maintenance.production.target", address: "D1000", type: "int32", access: "read_write",
   readPoint: "maintenance.production.target", writePoint: "maintenance.production.target", writeMethod: "fc10",
-  registerCount: 2, wordOrder: "high-low", write: { mode: "set" }
+  registerCount: 2, wordOrder: "low-high", write: { mode: "set" }
 });
 assert.deepEqual(defaultPointsConfiguration.bindings.find((binding) => binding.displayPath === "maintenance.production.target"), {
   displayPath: "maintenance.production.target", description: "今日目标产能", component: "number",
@@ -273,7 +286,7 @@ for (const [displayPath, readPoint, writePoint] of [
 for (const pointId of ["production.output.today", "production.quality.passed"]) {
   const point = defaultPointsConfiguration.points.find((item) => item.pointId === pointId);
   assert.deepEqual({ type: point.type, registerCount: point.registerCount, wordOrder: point.wordOrder }, {
-    type: "int32", registerCount: 2, wordOrder: "high-low"
+    type: "int32", registerCount: 2, wordOrder: "low-high"
   });
 }
 for (const displayPath of [
@@ -447,8 +460,12 @@ assert.doesNotMatch(metricsRenderer[0], /: 100|Math\.max\(1, state\.target\)/);
 const automaticSpeedRenderer = index.match(/function renderAutomaticSpeed\(\) \{[\s\S]*?\n      \}\n\n      function updateAutomaticSpeedDraft/);
 assert.notEqual(automaticSpeedRenderer, null);
 assert.match(automaticSpeedRenderer[0], /const known = hasNumericValue\(incoming\);[\s\S]*?slider\.hidden = !known;[\s\S]*?slider\.disabled = pending \|\| !backendConnected \|\| !known;/);
+assert.match(automaticSpeedRenderer[0], /runtime\.canWrite\("home\.speed\.automatic"\)/);
 assert.match(automaticSpeedRenderer[0], /automaticSpeedDraft = null;[\s\S]*?\$\("#automaticSpeedHint"\)\.textContent = "—";/);
 assert.doesNotMatch(automaticSpeedRenderer[0], /: 100/);
+const automaticSpeedCommit = index.match(/function commitAutomaticSpeed\(\) \{[\s\S]*?\n      \}\n\n      function manualBinding/);
+assert.notEqual(automaticSpeedCommit, null);
+assert.match(automaticSpeedCommit[0], /!runtime\.canWrite\("home\.speed\.automatic"\)[\s\S]*?automaticSpeedDraft = null;[\s\S]*?renderAutomaticSpeed\(\);[\s\S]*?return;[\s\S]*?runtime\.command\("home\.speed\.automatic", value\)/);
 assert.match(index, /query\.get\("demo"\) !== "1" \|\| query\.get\("__demoFrame"\) === "1"/);
 assert.match(index, /new URL\("demo-shell\.html", window\.location\.href\)/);
 assert.match(demoShell, /<iframe[\s\S]*?id="demoFrame"[\s\S]*?width="1920"[\s\S]*?height="1080"/);

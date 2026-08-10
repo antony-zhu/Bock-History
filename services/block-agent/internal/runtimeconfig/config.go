@@ -228,8 +228,8 @@ func validateRegisterLayout(prefix string, point PointDefinition) error {
 		if point.RegisterCount != 2 {
 			return fmt.Errorf("%s.registerCount must be 2 for int32", prefix)
 		}
-		if point.WordOrder != "high-low" {
-			return fmt.Errorf("%s.wordOrder must be high-low for int32", prefix)
+		if point.WordOrder != "low-high" && point.WordOrder != "high-low" {
+			return fmt.Errorf("%s.wordOrder must be low-high or high-low for int32", prefix)
 		}
 	case "int16", "uint16":
 		if point.RegisterCount != 1 {

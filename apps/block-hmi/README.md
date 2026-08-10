@@ -119,6 +119,11 @@ FLOAT32/REAL、5 个 INT16 和 3 个 INT32/DINT，`scanIntervalMs=500`。遗留�
 `points.json`。`runtime.configure` 只发送所选点表的运行时点位；显示路径和中文说明只在
 浏览器使用。
 
+自动运行速度 D522 当前仅供读取和显示；其滑条因 canWrite=false 保持禁用。
+
+默认点表中的所有 DINT/REAL 均使用 `wordOrder: "low-high"`：低 16 位寄存器在前，高 16 位
+寄存器在后（D522、D902、D904、D1000）。运行时仍支持显式配置的 `high-low` 兼容 profile。
+
 ## 2026-08-08 模式切换与显示文案
 
 - 主页库位状态区只渲染库位1和库位2；它们等宽同排显示，后端保留的其余库位状态不删除也不在主页显示。
