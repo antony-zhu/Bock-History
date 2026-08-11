@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -21,9 +22,16 @@ func TestSimulatorAdapterFaultsAndAppliedTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	useShortWindowsUnixSocketPaths(t, directory)
+	ioSocket := filepath.Join(directory, "io.sock")
+	controlSocket := filepath.Join(directory, "control.sock")
+	if runtime.GOOS == "windows" {
+		ioSocket = "io.sock"
+		controlSocket = "control.sock"
+	}
 	cfg := config.Simulator{
-		IOSocket: filepath.Join(directory, "io.sock"), IOSocketGroup: "test-io",
-		ControlSocket: filepath.Join(directory, "control.sock"), ControlSocketGroup: "test-control",
+		IOSocket: ioSocket, IOSocketGroup: "test-io",
+		ControlSocket: controlSocket, ControlSocketGroup: "test-control",
 		StateFile: filepath.Join(directory, "state.json"), SamplePeriod: "1s", Seed: 1, PassRate: 1,
 		FaultInjectionEnabled: true, BinCapacities: []int{20, 20, 10}, InitialTarget: 10,
 		InitialCycleSeconds: 1, InitialToolLimit: 10, InitialInspectInterval: 2,
@@ -148,7 +156,11 @@ func startSnapshotPayloadServer(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	useShortWindowsUnixSocketPaths(t, directory)
 	socket := filepath.Join(directory, "payload.sock")
+	if runtime.GOOS == "windows" {
+		socket = "payload.sock"
+	}
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +180,29 @@ func startSnapshotPayloadServer(t *testing.T, body string) string {
 		}
 	})
 	return socket
+}
+
+// Windows AF_UNIX limits the socket address itself to 108 bytes. Formal builds
+// deliberately place TMP under the repository-local cache, which can exceed
+// that limit. Keep the fixture directory in TMP, but bind through a short
+// relative socket name while that directory is the test process working dir.
+func useShortWindowsUnixSocketPaths(t *testing.T, directory string) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return
+	}
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(directory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDirectory); err != nil {
+			t.Errorf("restore test working directory: %v", err)
+		}
+	})
 }
 
 func waitSocket(t *testing.T, path string) {

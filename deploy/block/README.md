@@ -46,36 +46,51 @@
 
 ## 2. 本地构建、测试和制品哈希
 
-在任何本地构建或测试前，把所有临时目录放在工作区 `.cache`。以下变量须在
-同一个 shell 中设置；`WORKSPACE` 和 `BLOCK_REPO` 必须是绝对路径。
+Windows x64 的唯一正式构建入口是仓库根目录的 `tools/build-release.ps1`。它需要
+PowerShell、Git 命令行和 Git for Windows（`bash`、`cygpath`、`file`、`grep`），但会自行
+下载并校验 Go、Node 和 TypeScript，不依赖系统 PATH 中的这三个工具。未传 `-StateRoot` 时，
+它按已校验版本使用 `.cache/block-release-<version>`；不同版本不共享 state root。正式构建必须从干净的
+tracked/untracked Git 工作树开始；`-AllowDirty` 仅供开发诊断，不能用于归档或发布 hash。
+Git for Windows 不要求位于固定安装目录：脚本会从 PATH 的 `git.exe` 推导其根目录；无法发现时可传
+`-GitBash` 或设置 `BLOCK_GIT_BASH`，两者都必须指向同一 Git for Windows 安装中的 `bash.exe`。
 
-```bash
-WORKSPACE=/absolute/path/to/Block-DMP
-BLOCK_REPO="$WORKSPACE/worktrees/Block/<release-worktree>"
-VERSION=<approved-version>
-CACHE_ROOT="$WORKSPACE/.cache/block-release-$VERSION"
-ARTIFACT_DIR="$CACHE_ROOT/artifact"
-
-mkdir -p "$CACHE_ROOT/tmp" "$CACHE_ROOT/go-tmp"
-export TEMP="$CACHE_ROOT/tmp"
-export TMP="$CACHE_ROOT/tmp"
-export TMPDIR="$CACHE_ROOT/tmp"
-export GOTMPDIR="$CACHE_ROOT/go-tmp"
+```powershell
+Set-Location <Block-repository-root>
+$Version = '<approved-version>'
+git status --porcelain=v1 --untracked-files=all
+.\tools\build-release.ps1 -Version $Version `
+  -StateRoot '.cache\block-release-clean'
 ```
 
-生成不可变制品。开发阶段可运行仓库已有的发布回归检查，但 rollback/transaction
-相关测试不是发布前置门禁。`build.sh` 要求制品目录尚不存在。下列命令使用安全默认
-点表；只有电脑模拟 PLC 联调才在同一命令前显式加
+该入口把 commit、Git tree、工作树 clean 状态和受控环境策略写入
+`artifact/build-metadata.json`；它使用 `GOENV=off`、`GOWORK=off`、`GO111MODULE=on`、清空的
+`GOROOT`、`GOARM64=v8.0` 与
+`-buildvcs=false`，因此真正的归档 hash 必须等提交后由干净树重跑。开发阶段可运行仓库已有
+的发布回归检查，但 rollback/transaction 相关测试不是发布前置门禁。
+bootstrap 同时清除 Node TLS 覆盖、继承的 `NPM_CONFIG_*` 与全部 `GIT_CONFIG_*` 注入；
+`HTTP(S)_PROXY` 和正常 Git 代理配置可保留为传输路径，但其值不记录，且不会替代工具
+SHA-256、`package-lock`、`go.mod`/`go.sum` 和 `sum.golang.org` 校验。
+
+`deploy/block/build.sh` 是上述入口的低层 Bash 子步骤，不是正式入口。直接调用时调用者必须
+自行提供：已验证 Go `1.26.5` 的 `BLOCK_GO_BIN`；空且新建的绝对输出目录；
+`GOENV=off`、`GOWORK=off`、`GO111MODULE=on`、空 `GOROOT`、`GOTOOLCHAIN=local`、`CGO_ENABLED=0`、`GOOS=linux`、
+`GOARCH=arm64`、`GOARM64=v8.0`、`GOFLAGS=-mod=readonly`、`GOPROXY=off`、`GOSUMDB=off`、
+`GOVCS=public:git|hg,private:off`；清空的 `GOPRIVATE`、`GONOPROXY`、`GONOSUMDB`、
+`GOINSECURE`；以及同一受管 state root 下的 `GOPATH`、`GOCACHE`、`GOMODCACHE`、
+`GOTMPDIR`、`TEMP`、`TMP`、`TMPDIR`。它不负责下载模块，也不会从 PATH 猜测正式 Go。
+默认点表是安全 profile；只有电脑模拟 PLC 联调才显式设置
 `BLOCK_PLC_PROFILE=simulatorFloat32`，该 FLOAT32 制品不得用于真实 Easy521 发布。
 
+在 WSL/Linux shell 为已经由正式入口生成的制品写 manifest：
+
 ```bash
-cd "$BLOCK_REPO"
-deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
+STATE_ROOT="$PWD/.cache/block-release-clean"
+ARTIFACT_DIR="$STATE_ROOT/artifact"
 
 (
   cd "$ARTIFACT_DIR"
   find . -type f -print0 | sort -z | xargs -0 sha256sum
-) > "$CACHE_ROOT/artifact.sha256"
+) > "$STATE_ROOT/artifact.sha256"
 ```
 
 制品必须包含下列文件，且 `VERSION` 与发布单相同：
@@ -91,7 +106,7 @@ VERSION
 `artifact.sha256` 是传输前后的比对依据。它只覆盖发布制品；不要对私钥、密码、
 真实配置或 Wi-Fi 文件计算、记录或上传哈希。
 
-### Windows 工作区的推荐打包方式
+### Windows 仓库 clone 的推荐打包方式
 
 Windows 的部分 `tar` 路径会丢失 `deploy/tests/*.sh` 的执行位。必须在 WSL/Linux
 shell 中打包，而不是用资源管理器或 Windows `tar.exe` 重新封装；上传同一个压缩包和
@@ -100,7 +115,7 @@ manifest，设备解包后先检查模式。执行位不符时立即 STOP 并从
 
 ```bash
 # 在 WSL/Linux shell，且在生成 artifact.sha256 后执行。
-cd "$CACHE_ROOT"
+cd "$STATE_ROOT"
 tar --format=posix -czf artifact.tar.gz artifact artifact.sha256
 tar -tzf artifact.tar.gz >/dev/null
 ```

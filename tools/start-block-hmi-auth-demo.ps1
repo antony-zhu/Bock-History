@@ -7,21 +7,35 @@ param(
     [string]$DataDirectory = "",
     [string]$TLSCertificatePath = "",
     [string]$TLSPrivateKeyPath = "",
-    [string]$TLSCAPath = ""
+    [string]$TLSCAPath = "",
+    [string]$StateRoot = "",
+    [string]$GoProxy = "https://goproxy.cn|https://proxy.golang.org|direct"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "build-state.ps1")
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot "..\..\.."))
-$repoCacheRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot ".cache"))
+if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+    $StateRoot = Join-Path $repoRoot ".cache\block-hmi-auth-demo"
+}
+$repoCacheRoot = Resolve-BlockBuildStateRoot -RepoRoot $repoRoot `
+    -StateRoot $StateRoot -Owner "block-build-tools"
 
 function Get-NormalizedPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
         return [System.IO.Path]::GetFullPath($Path)
     }
     return [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Path))
+}
+
+function Get-StatePath([string]$Path) {
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $repoCacheRoot $Path))
 }
 
 function Assert-ChildPath([string]$Path, [string]$Parent, [string]$Description) {
@@ -35,6 +49,52 @@ function Assert-ChildPath([string]$Path, [string]$Parent, [string]$Description) 
     return $fullPath
 }
 
+function Initialize-DemoStateDirectory([string]$Path, [switch]$Fresh) {
+    $markerPath = Join-Path $Path ".block-hmi-auth-demo-state.json"
+    $canonicalRepoRoot = ConvertTo-BlockBuildCanonicalPath $repoRoot
+    $entries = @()
+    if (Test-Path -LiteralPath $Path) {
+        $item = Get-Item -LiteralPath $Path -Force
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "DataDirectory must be a non-reparse directory: $Path"
+        }
+        $entries = @(Get-ChildItem -LiteralPath $Path -Force)
+        if ($entries.Count -gt 0) {
+            if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+                throw "DataDirectory is non-empty and is not owned by this HMI demo: $Path"
+            }
+            try {
+                $marker = Get-Content -LiteralPath $markerPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+                throw "DataDirectory owner marker is invalid: $markerPath"
+            }
+            if ($marker.format -ne "block-hmi-auth-demo-state-v1" -or
+                -not ([string]$marker.repoRoot).Equals($canonicalRepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "DataDirectory owner marker does not belong to this HMI demo worktree: $markerPath"
+            }
+        }
+    } else {
+        New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    }
+
+    # A first run has no data directory to delete. An existing non-empty
+    # directory, however, is deleted only after the owner-marker validation
+    # above; an unowned directory always fails before reaching this point.
+    if ($Fresh -and $entries.Count -gt 0) {
+        Assert-BlockBuildNoReparseDescendants -Path $Path -Description "HMI demo DataDirectory"
+        Remove-Item -LiteralPath $Path -Recurse -Force
+        New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    }
+
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        $marker = [ordered]@{
+            format = "block-hmi-auth-demo-state-v1"
+            repoRoot = $canonicalRepoRoot
+        }
+        [System.IO.File]::WriteAllText($markerPath, ($marker | ConvertTo-Json -Compress) + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
+    }
+}
+
 function Invoke-QuietNativeCommand([string]$Executable, [string[]]$Arguments) {
     $previousPreference = $ErrorActionPreference
     try {
@@ -43,6 +103,31 @@ function Invoke-QuietNativeCommand([string]$Executable, [string[]]$Arguments) {
         return $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
+    }
+}
+
+function Set-EnvironmentValues([System.Collections.IDictionary]$Values) {
+    foreach ($name in $Values.Keys) {
+        $value = $Values[$name]
+        if ($null -eq $value) {
+            Remove-Item -LiteralPath ("Env:{0}" -f $name) -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($name, [string]$value, "Process")
+        }
+    }
+}
+
+function Get-EnvironmentSnapshot([string[]]$Names) {
+    $snapshot = @{}
+    foreach ($name in ($Names | Select-Object -Unique)) {
+        $snapshot[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+    }
+    return $snapshot
+}
+
+function Restore-Environment([hashtable]$Snapshot) {
+    foreach ($name in $Snapshot.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $Snapshot[$name], "Process")
     }
 }
 
@@ -196,10 +281,18 @@ function Wait-ForPortToClose([int]$ListeningPort) {
 }
 
 if ([string]::IsNullOrWhiteSpace($DataDirectory)) {
-    $DataDirectory = Join-Path $repoCacheRoot "block-hmi-auth-demo\state"
+    $DataDirectory = Join-Path $repoCacheRoot "state"
 }
-$stateDirectory = Assert-ChildPath (Get-NormalizedPath $DataDirectory) $repoCacheRoot "DataDirectory"
-$demoRoot = Assert-ChildPath (Split-Path $stateDirectory -Parent) $repoCacheRoot "Demo root"
+$stateDirectory = Assert-ChildPath (Get-StatePath $DataDirectory) $repoCacheRoot "DataDirectory"
+$demoRoot = [System.IO.Path]::GetFullPath((Split-Path $stateDirectory -Parent)).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+if (-not $demoRoot.Equals($repoCacheRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+    -not (Test-BlockBuildChildPath $demoRoot $repoCacheRoot)) {
+    throw "Demo root must remain inside the validated StateRoot: $repoCacheRoot"
+}
+if (-not (ConvertTo-BlockBuildCanonicalPath (Split-Path -Parent $stateDirectory)).Equals((ConvertTo-BlockBuildCanonicalPath $repoCacheRoot), [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "DataDirectory must be a direct child of the validated StateRoot: $repoCacheRoot"
+}
+Assert-BlockBuildNoReparseComponents -Path $stateDirectory -StartPath $repoCacheRoot -Description "DataDirectory"
 $databasePath = Join-Path $stateDirectory "block-hmi-auth-demo.db"
 $pidPath = Assert-ChildPath (Join-Path $demoRoot ("block-agent-{0}.pid.json" -f $Port)) $repoCacheRoot "PID record"
 $binaryPath = Assert-ChildPath (Join-Path $demoRoot "bin\block-agent.exe") $repoCacheRoot "Demo binary"
@@ -211,26 +304,11 @@ $goTempDirectory = Assert-ChildPath (Join-Path $demoRoot "gotmp") $repoCacheRoot
 $hmiStaticDirectory = (Resolve-Path (Join-Path $repoRoot "apps\block-hmi")).Path
 $agentDirectory = (Resolve-Path (Join-Path $repoRoot "services\block-agent")).Path
 $strictHTTPSClientSource = (Resolve-Path (Join-Path $PSScriptRoot "strict-local-https-client.go")).Path
-$goExecutable = Join-Path $workspaceRoot ".tools\go1.26.5\go\bin\go.exe"
-$verifiedRuntimeCache = Join-Path $workspaceRoot ".cache\block-v2-runtime-001"
-$verifiedModuleCache = Join-Path $verifiedRuntimeCache "gomodcache"
+$bootstrapScript = Join-Path $PSScriptRoot "bootstrap-build-tools.ps1"
 
-if (-not (Test-Path -LiteralPath $goExecutable -PathType Leaf)) {
-    throw "The workspace Go toolchain is missing: $goExecutable"
-}
-if (-not (Test-Path -LiteralPath $verifiedModuleCache -PathType Container)) {
-    throw "The verified offline Go module cache is missing: $verifiedModuleCache"
-}
-
-$environmentNames = @("TEMP", "TMP", "TMPDIR", "GOTMPDIR", "GOCACHE", "GOMODCACHE", "GOPROXY")
-$originalEnvironment = @{}
-foreach ($name in $environmentNames) {
-    $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
-}
+$environmentSnapshot = $null
 
 try {
-    New-Item -ItemType Directory -Force -Path $stateDirectory, (Split-Path $binaryPath -Parent), $logDirectory, $tempDirectory, $goCacheDirectory, $goTempDirectory | Out-Null
-
     if ($Stop) {
         if (Stop-RecordedAgent $pidPath $binaryPath $databasePath) {
             Write-Host "Stopped Block HMI auth demo on port $Port."
@@ -258,29 +336,50 @@ try {
         throw "Port $Port is occupied by an unrecognised process. It was not stopped. $($owners -join '; ')"
     }
 
-    if ($FreshAuth -and (Test-Path -LiteralPath $stateDirectory -PathType Container)) {
-        Remove-Item -LiteralPath $stateDirectory -Recurse -Force
-        New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
-        Write-Host "Removed only the requested demo auth database directory: $stateDirectory"
+    Initialize-DemoStateDirectory -Path $stateDirectory -Fresh:$FreshAuth
+    New-Item -ItemType Directory -Force -Path (Split-Path $binaryPath -Parent), $logDirectory, $tempDirectory, $goCacheDirectory, $goTempDirectory | Out-Null
+    if ($FreshAuth) {
+        Write-Host "Removed only the requested, demo-owned auth database directory: $stateDirectory"
     }
 
     $tls = Resolve-DemoTLS $demoRoot $TLSCertificatePath $TLSPrivateKeyPath $TLSCAPath
 
-    $env:TEMP = $tempDirectory
-    $env:TMP = $tempDirectory
-    $env:TMPDIR = $tempDirectory
-    $env:GOTMPDIR = $goTempDirectory
-    $env:GOCACHE = $goCacheDirectory
-    $env:GOMODCACHE = $verifiedModuleCache
-    $env:GOPROXY = "off"
+    $tools = & $bootstrapScript -StateRoot $repoCacheRoot -PrepareGoModules -GoProxy $GoProxy
+    if ($null -eq $tools) {
+        throw "Build tool bootstrap did not return a toolchain."
+    }
+
+    # Bootstrap restores its own process environment before returning. Snapshot exactly
+    # what it is about to override here, including dynamically named GIT_CONFIG_* and
+    # inherited NPM_CONFIG_* variables. This keeps the demo build isolated without
+    # leaking its private cache/tool settings to the invoking PowerShell session.
+    $clearEnvironmentNames = @(
+        $tools.ClearEnvironmentNames +
+        (Get-BlockBuildEnvironmentNamesMatching -Pattern '^GIT_CONFIG_') |
+            Select-Object -Unique
+    )
+    $environmentSnapshot = Get-EnvironmentSnapshot @($tools.Environment.Keys + $clearEnvironmentNames)
+    $clearInheritedEnvironment = [ordered]@{}
+    foreach ($name in $clearEnvironmentNames) {
+        $clearInheritedEnvironment[$name] = $null
+    }
+    Set-EnvironmentValues $clearInheritedEnvironment
+    Set-EnvironmentValues $tools.Environment
+    Assert-BlockBuildEnvironmentPatternUnset -Pattern '^GIT_CONFIG_' -Description "Block HMI auth demo build"
+    Set-EnvironmentValues ([ordered]@{
+        CGO_ENABLED = "0"
+        GOOS        = $null
+        GOARCH      = $null
+    })
+    $goExecutable = $tools.GoBinary
 
     Push-Location $agentDirectory
     try {
-        & $goExecutable build -o $binaryPath .\cmd\block-agent
+        & $goExecutable build -buildvcs=false -mod=readonly -trimpath -o $binaryPath .\cmd\block-agent
         if ($LASTEXITCODE -ne 0) {
             throw "block-agent build failed with exit code $LASTEXITCODE."
         }
-        & $goExecutable build -o $strictHTTPSClientPath $strictHTTPSClientSource
+        & $goExecutable build -buildvcs=false -mod=readonly -trimpath -o $strictHTTPSClientPath $strictHTTPSClientSource
         if ($LASTEXITCODE -ne 0) {
             throw "strict local HTTPS client build failed with exit code $LASTEXITCODE."
         }
@@ -325,7 +424,7 @@ try {
     Write-Host "PID: $($process.Id)"
     Write-Host "Database: $databasePath"
 } finally {
-    foreach ($name in $environmentNames) {
-        [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], "Process")
+    if ($null -ne $environmentSnapshot) {
+        Restore-Environment $environmentSnapshot
     }
 }

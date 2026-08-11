@@ -4,6 +4,8 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "build-state.ps1")
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $repoCacheRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot ".cache"))
 $testRoot = [System.IO.Path]::GetFullPath((Join-Path $repoCacheRoot "block-hmi-auth-persistence-test"))
@@ -184,14 +186,15 @@ $baseUrl = "https://127.0.0.1:$port"
 $username = "integration-admin"
 $password = "integration-auth-password"
 $stopped = $false
+$testRootInitialized = $false
 
 try {
-    if (Test-Path -LiteralPath $testRoot) {
-        Remove-Item -LiteralPath $testRoot -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+    $testRoot = Resolve-BlockBuildStateRoot -RepoRoot $repoRoot -StateRoot $testRoot `
+        -Owner "block-build-tools" -FreshState
+    $stateDirectory = Join-Path $testRoot "state"
+    $testRootInitialized = $true
 
-    & $startScript -FreshAuth -Port $port -DataDirectory $stateDirectory
+    & $startScript -FreshAuth -StateRoot $testRoot -Port $port -DataDirectory $stateDirectory
     $caPath = Join-Path $testRoot "tls\local-hmi-ca.crt"
     if (-not (Test-Path -LiteralPath $caPath -PathType Leaf)) {
         throw "Demo launcher did not create the expected runtime-only public CA: $caPath"
@@ -242,9 +245,9 @@ try {
         Assert-Status $response 404 "Retired endpoint $retiredPath"
     }
 
-    & $startScript -Stop -Port $port -DataDirectory $stateDirectory
+    & $startScript -Stop -StateRoot $testRoot -Port $port -DataDirectory $stateDirectory
 
-    & $startScript -Port $port -DataDirectory $stateDirectory
+    & $startScript -StateRoot $testRoot -Port $port -DataDirectory $stateDirectory
 
     $response = Invoke-AgentJSON $baseUrl $caPath "GET" "/api/auth/initial-admin" $null
     Assert-Status $response 200 "Restart bootstrap status"
@@ -264,19 +267,20 @@ try {
         throw "Restarted database did not preserve the 180-second idle timeout."
     }
 
-    & $startScript -Stop -Port $port -DataDirectory $stateDirectory
+    & $startScript -Stop -StateRoot $testRoot -Port $port -DataDirectory $stateDirectory
     $stopped = $true
     Write-Host "Block HMI auth persistence integration test passed."
 } finally {
     if (-not $stopped) {
         try {
-            & $startScript -Stop -Port $port -DataDirectory $stateDirectory
+            & $startScript -Stop -StateRoot $testRoot -Port $port -DataDirectory $stateDirectory
             $stopped = $true
         } catch {
             Write-Warning "Could not stop the test Block Agent: $($_.Exception.Message)"
         }
     }
-    if ($stopped -and (Test-Path -LiteralPath $testRoot -PathType Container)) {
-        Remove-Item -LiteralPath $testRoot -Recurse -Force
+    if ($stopped -and $testRootInitialized) {
+        Resolve-BlockBuildStateRoot -RepoRoot $repoRoot -StateRoot $testRoot `
+            -Owner "block-build-tools" -FreshState | Out-Null
     }
 }

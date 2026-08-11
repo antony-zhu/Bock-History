@@ -6,6 +6,7 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd -P)
 OUTPUT_DIR=
 VERSION=
 PLC_PROFILE=${BLOCK_PLC_PROFILE:-default}
+GO_BIN=${BLOCK_GO_BIN:-go}
 
 usage() {
   cat <<'EOF'
@@ -94,10 +95,50 @@ case "$PLC_PROFILE" in
     ;;
 esac
 [ -f "$POINTS_SOURCE" ] || fail "missing PLC profile point table: $POINTS_SOURCE"
-command -v go >/dev/null 2>&1 || fail "go is required"
+[ -n "${GOTOOLCHAIN:-}" ] || fail "GOTOOLCHAIN=local is required"
+[ "$GOTOOLCHAIN" = "local" ] || fail "GOTOOLCHAIN must be local"
+[ "${GOENV:-}" = "off" ] || fail "GOENV=off is required"
+[ "${GOWORK:-}" = "off" ] || fail "GOWORK=off is required"
+[ "${GO111MODULE:-}" = "on" ] || fail "GO111MODULE=on is required"
+[ -z "${GOROOT:-}" ] || fail "GOROOT must be empty so the verified Go toolchain resolves itself"
+[ "${CGO_ENABLED:-}" = "0" ] || fail "CGO_ENABLED=0 is required"
+[ "${GOOS:-}" = "linux" ] || fail "GOOS=linux is required"
+[ "${GOARCH:-}" = "arm64" ] || fail "GOARCH=arm64 is required"
+[ "${GOARM64:-}" = "v8.0" ] || fail "GOARM64=v8.0 is required"
+[ "${GOFLAGS:-}" = "-mod=readonly" ] || fail "GOFLAGS=-mod=readonly is required"
+[ "${GOPROXY:-}" = "off" ] || fail "GOPROXY=off is required after dependency verification"
+[ "${GOSUMDB:-}" = "off" ] || fail "GOSUMDB=off is required after dependency verification"
+[ -z "${GOPRIVATE:-}" ] || fail "GOPRIVATE must be empty"
+[ -z "${GONOPROXY:-}" ] || fail "GONOPROXY must be empty"
+[ -z "${GONOSUMDB:-}" ] || fail "GONOSUMDB must be empty"
+[ -z "${GOINSECURE:-}" ] || fail "GOINSECURE must be empty"
+[ "${GOVCS:-}" = "public:git|hg,private:off" ] || fail "GOVCS must be public:git|hg,private:off"
+[ -n "${GOPATH:-}" ] || fail "GOPATH is required"
+[ -n "${GOMODCACHE:-}" ] || fail "GOMODCACHE is required"
+[ -n "${GOCACHE:-}" ] || fail "GOCACHE is required"
+[ -n "${GOTMPDIR:-}" ] || fail "GOTMPDIR is required"
+[ -n "${TEMP:-}" ] || fail "TEMP is required"
+[ -n "${TMP:-}" ] || fail "TMP is required"
+[ -n "${TMPDIR:-}" ] || fail "TMPDIR is required"
+if [ "$GO_BIN" = go ]; then
+  command -v go >/dev/null 2>&1 || fail "go is required"
+else
+  [ -x "$GO_BIN" ] || fail "BLOCK_GO_BIN is not executable: $GO_BIN"
+fi
+case "$($GO_BIN version)" in
+  "go version go1.26.5 "*) ;;
+  *) fail "Go 1.26.5 is required" ;;
+esac
+[ "$($GO_BIN env GOTOOLCHAIN)" = "local" ] || fail "Go must run with GOTOOLCHAIN=local"
+[ "$($GO_BIN env GOWORK)" = "off" ] || fail "Go must run with GOWORK=off"
+[ "$($GO_BIN env GO111MODULE)" = "on" ] || fail "Go must run with GO111MODULE=on"
+[ "$($GO_BIN env CGO_ENABLED)" = "0" ] || fail "Go must run with CGO_ENABLED=0"
+[ "$($GO_BIN env GOOS)" = "linux" ] || fail "Go must run with GOOS=linux"
+[ "$($GO_BIN env GOARCH)" = "arm64" ] || fail "Go must run with GOARCH=arm64"
+[ "$($GO_BIN env GOARM64)" = "v8.0" ] || fail "Go must run with GOARM64=v8.0"
 
 install -d -m 0755 "$OUTPUT_DIR/bin" "$OUTPUT_DIR/web"
-go -C "$REPO_ROOT/services/block-agent" build -trimpath -o "$OUTPUT_DIR/bin/block-agent" ./cmd/block-agent
+"$GO_BIN" -C "$REPO_ROOT/services/block-agent" build -buildvcs=false -mod=readonly -trimpath -o "$OUTPUT_DIR/bin/block-agent" ./cmd/block-agent
 install -m 0644 "$HMI_DIR/index.html" "$OUTPUT_DIR/web/index.html"
 cp -a "$HMI_DIR/assets" "$OUTPUT_DIR/web/assets"
 rm -f "$OUTPUT_DIR/web/assets/points.simulatorFloat32.json"

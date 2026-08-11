@@ -60,31 +60,22 @@ systemd 使用以下 flags（路径来自受保护的 `/etc/block/block.env`）�
 
 ## 构建与测试
 
-所有缓存和输出应放在 `D:\codex\Block-DMP\.cache\**`。SQLite 驱动是纯 Go
-实现，Linux ARM64 发布保持 `CGO_ENABLED=0`。
+从新 clone 构建 Block 时，只使用仓库根目录的正式入口：
 
 ```powershell
-$env:TEMP = 'D:\codex\Block-DMP\.cache\block-agent\tmp'
-$env:TMP = $env:TEMP
-$env:TMPDIR = $env:TEMP
-$env:GOTMPDIR = 'D:\codex\Block-DMP\.cache\block-agent\gotmp'
-$env:GOCACHE = 'D:\codex\Block-DMP\.cache\block-agent\gocache'
-$env:GOMODCACHE = 'D:\codex\Block-DMP\.cache\block-agent\gomodcache'
-
-go test ./...
-go vet ./...
-go test -race ./...
-
-$env:CGO_ENABLED = '0'
-$env:GOOS = 'linux'
-$env:GOARCH = 'arm64'
-go build -trimpath -o `
-  'D:\codex\Block-DMP\.cache\block-agent\bin\block-agent' ./cmd/block-agent
-go build -trimpath -o `
-  'D:\codex\Block-DMP\.cache\block-agent\bin\plc-simulator' ./cmd/plc-simulator
-go build -trimpath -o `
-  'D:\codex\Block-DMP\.cache\block-agent\bin\ssh-bootstrapd' ./cmd/ssh-bootstrapd
+Set-Location <Block-repository-root>
+.\tools\build-release.ps1 -Version <approved-unique-version>
 ```
+
+它从官方 ZIP 下载并 SHA-256 校验 Go `1.26.5`、在指定/默认 state root 的
+`GOMODCACHE` 中按 `go.mod`/`go.sum` 下载和 `go mod verify`，随后以
+`GOENV=off`、`GOWORK=off`、`GO111MODULE=on`、空 `GOROOT`、`GOTOOLCHAIN=local`、
+`CGO_ENABLED=0`、`GOOS=linux`、`GOARCH=arm64`、`GOARM64=v8.0`、`-mod=readonly`、
+`-trimpath` 与 `-buildvcs=false`
+离线生成 release。SQLite 驱动是纯 Go 实现。正式入口不依赖系统 PATH 中的 Go、Node 或
+TypeScript，也不使用 `.tools/go1.26.5` 或历史 `.cache`；但仍需要 PowerShell、Git 命令行
+和 Git for Windows。直接调用 `deploy/block/build.sh` 必须自行提供 `BLOCK_GO_BIN` 和文档
+列出的完整受控环境。state root 中的工具链、缓存、测试输出和制品不得提交。
 
 ## 配置与启动
 

@@ -1,6 +1,6 @@
 # Block 代码、编译、设备部署与 PLC 模拟测试指南
 
-本文说明 Block 本地 HMI、Block Agent、应用制品发布和 Easy521 电脑模拟 PLC 的当前推荐流程。命令以 `2026-08-09` 已验证的工作树和脚本为准。
+本文说明 Block 本地 HMI、Block Agent、应用制品发布和 Easy521 电脑模拟 PLC 的当前推荐流程。构建命令以 `2026-08-11` 的可复现入口为准；下文保留的设备结果均是历史证据，不是新 clone 的工具链或缓存前提。
 
 当前运行时固定在每次完整 PLC 读取结束后等待 500 ms 再开始下一次读取。普通成功写后立即完整轮询；脉冲按置 1 → 100 ms → 复位 0 → 立即完整轮询，读取完成才算命令完成。实际 PLC 写入失败或超时也立即完整轮询一次，读取完成后才回复失败；随后从该次读取完成时重新等待 500 ms。无效命令和本地校验失败不会额外读取。本指南中标明“历史”的 50 ms 记录仅保留当时的验收事实，不能作为当前 500 ms 的真机验收证据。
 
@@ -10,9 +10,9 @@
 
 | 内容 | 路径或值 |
 | --- | --- |
-| Block 正式 Git 仓库 | `D:\codex\Block-DMP\repos\Block` |
-| 当前开发工作树 | `D:\codex\Block-DMP\repos\Block` |
-| 本轮冻结的应用提交 | `fc685ad30f0141c8e8be3604cea48cb0545809f1`（基于 `b1b2862`） |
+| Block 正式 Git 仓库 | 当前 clone 的仓库根目录 |
+| 当前开发工作树 | 当前 clone 的仓库根目录 |
+| 归档盘点的源码范围 | `b1b2862` 至 `40bbe8e`；设备候选与真机证据须另见 [归档盘点](Block归档盘点-20260811.md) |
 | Common baseline | `d1073038277db0b954c021cb2cc377012ec8a78c` |
 | HMI | `apps/block-hmi/**` |
 | Agent | `services/block-agent/**` |
@@ -23,14 +23,14 @@
 开始前执行：
 
 ```powershell
-# Windows PowerShell
-$BlockRepo = 'D:\codex\Block-DMP\repos\Block'
+# Windows PowerShell；在 Block 仓库根目录执行
+$BlockRepo = (Get-Location).Path
 git -C $BlockRepo status --short
 git -C $BlockRepo rev-parse HEAD
 Get-Content -LiteralPath "$BlockRepo\COMMON_BASELINE" -Encoding UTF8
 ```
 
-发布必须冻结一个明确提交、一个未复用的新版本字符串和一个单一制品。工作树出现未批准的 tracked 修改时停止。不要读取或输出 `wifi.toml`、真实 `.env`、密码、私钥、证书私钥、token 或真实安装身份路径。
+发布必须冻结一个明确提交、一个未复用的新版本字符串和一个单一制品。工作树出现任何已修改或未跟踪文件时停止。不要读取或输出 `wifi.toml`、真实 `.env`、密码、私钥、证书私钥、token 或真实安装身份路径。
 
 本指南中的 `192.168.1.104` 是登记且受信的有线管理地址。IP 只用于连接，不能代替 `siteId`、`blockId` 和 `deviceId`；Wi-Fi 地址应按第 6 节的 DHCP 发现流程确认。
 
@@ -39,8 +39,7 @@ Get-Content -LiteralPath "$BlockRepo\COMMON_BASELINE" -Encoding UTF8
 正式本地预览工具会构建并启动真实 `block-agent`，通过严格的回环 HTTPS/WSS 提供当前工作树 HMI；它不是纯静态 HTTP 预览。
 
 ```powershell
-# Windows PowerShell，在工作树根目录执行
-Set-Location 'D:\codex\Block-DMP\repos\Block'
+# Windows PowerShell，在仓库根目录执行
 .\tools\start-block-hmi-auth-demo.ps1
 ```
 
@@ -57,156 +56,64 @@ Set-Location 'D:\codex\Block-DMP\repos\Block'
 ```
 
 `?demo=1` 只控制浏览器演示状态；它不会连接或配置真实 Wi-Fi，也不会切换发布点表。预览脚本直接使用工作树中的默认 `apps/block-hmi/assets/points.json`。
+首次没有显式 TLS 文件时，预览脚本需要系统 OpenSSL（Git for Windows 自带版本可用）；否则必须传入开发用证书、私钥和 CA 三个路径。
+预览构建会清除继承的 `GIT_CONFIG_*`、Node TLS 覆盖和 npm 配置，并在启动成功或失败后恢复调用
+PowerShell 原有环境，避免将工具链、缓存或用户 Git 配置泄漏给后续命令。
+首次 `-FreshAuth` 可安全初始化不存在或空的 `DataDirectory`；已有非空目录必须带本 demo 的
+owner marker 才会被删除。
 
 ### 两种 PLC profile
 
 | profile | 点位 | 用途和安全含义 |
 | --- | --- | --- |
-| `default` | 18 BOOL + 1 FLOAT32/REAL + 5 INT16 + 3 INT32/DINT，共 27 点、54 bindings，`scanIntervalMs=500` | 默认构建；未显式设置环境变量时使用的获批真实点表。 |
+| `default` | 33 BOOL + 1 FLOAT32/REAL + 5 INT16 + 3 INT32/DINT，共 42 点、54 bindings，`scanIntervalMs=500`；其中 15 个 BOOL 是报警 | 默认构建；未显式设置环境变量时使用的获批真实点表。15 条报警是源码定义数量，不等于真机已验收。 |
 | `simulatorFloat32` | 8 BOOL + 22 FLOAT32，共 30 点 | 仅可显式选择的 legacy 电脑模拟 PLC 联调 profile；FLOAT32 是本机模拟约定，不得当成真实 Easy521 字序、权限或动作语义。 |
 
 构建器只接受这两个值；未知 profile 会直接拒绝。无论选择哪种 profile，制品中都只保留一份 `web/assets/points.json`，不会把 `points.simulatorFloat32.json` 源文件一并发布。
 
-## 3. 本地缓存和测试
+## 3. 新 clone 可复现构建（Windows x64）
 
-所有临时目录和 Go 缓存必须留在 `D:\codex\Block-DMP\.cache\**`。下面使用一个独立任务目录；不要复用用户目录或仓库外缓存。
-
-```powershell
-# Windows PowerShell
-$Workspace = 'D:\codex\Block-DMP'
-$BlockRepo = "$Workspace\repos\Block"
-$CacheRoot = "$Workspace\.cache\block-guide-validation"
-$Go = "$Workspace\.tools\go1.26.5\go\bin\go.exe"
-
-New-Item -ItemType Directory -Force -Path `
-  "$CacheRoot\tmp", "$CacheRoot\gotmp", "$CacheRoot\gocache", `
-  "$CacheRoot\gomodcache", "$CacheRoot\bin" | Out-Null
-
-$env:TEMP = "$CacheRoot\tmp"
-$env:TMP = $env:TEMP
-$env:TMPDIR = $env:TEMP
-$env:GOTMPDIR = "$CacheRoot\gotmp"
-$env:GOCACHE = "$CacheRoot\gocache"
-$env:GOMODCACHE = "$CacheRoot\gomodcache"
-```
-
-新建的 `GOMODCACHE` 首次使用前，先完成第 4 节“首次准备锁定依赖”，再回到本节执行 Go 测试；依赖准备完成后可在 PowerShell 设置 `$env:GOPROXY = 'off'`，确保测试不再联网。
-
-### TypeScript、Node 和 HMI Go 测试
+新 clone 不需要预装 Go、Node、TypeScript，也不得借用 `.tools`、历史 `.cache`
+或历史 `GOMODCACHE`。它仍需要 Windows PowerShell、Git 命令行与 Git for Windows（`bash`、
+`cygpath`、`file`、`grep`）。唯一正式入口是：
 
 ```powershell
-Set-Location "$BlockRepo\apps\block-hmi"
-tsc assets/hmi.mts --target ES2022 --lib DOM,ES2022 `
-  --module NodeNext --moduleResolution NodeNext --strict `
-  --skipLibCheck --noEmitOnError --outDir assets
-node assets/hmi.test.mjs
-& $Go test ./...
+# 在仓库根目录执行
+.\tools\build-release.ps1 -Version <approved-unique-version>
 ```
 
-`deploy/block/build.sh` 复制已经存在的 HMI 产物，不会替 Release 编译 `hmi.mts`。编译后若 `assets/hmi.mjs` 出现未批准差异，应先提交和审查代码，不能直接把变化中的文件打入发布包。
+Git for Windows 不需要安装在固定目录：脚本先由 PATH 中的 `git.exe` 推导其安装根；无法发现时可传
+`-GitBash` 或设置 `BLOCK_GIT_BASH`，两者均须指向该 Git for Windows 安装内的 `bash.exe`。
 
-### Agent 测试
+可为一次独立验证指定一个新的 state root：
 
 ```powershell
-Set-Location "$BlockRepo\services\block-agent"
-& $Go test ./...
-& $Go vet ./...
+.\tools\build-release.ps1 -Version <approved-unique-version> `
+  -StateRoot '.cache\block-clean-build'
 ```
 
-需要完整并发检查时，再在同一缓存环境执行 `& $Go test -race ./...`。
+正式构建默认拒绝已修改或未跟踪的工作树，并把 commit、Git tree、clean 状态写入
+`artifact/build-metadata.json`。`-AllowDirty` 仅限开发诊断；归档最终 hash 必须在提交后由
+干净树重新构建。state root 只能是仓库根目录 `.cache` 的直接子目录，脚本拒绝卷根、仓库根、
+junction 和没有 owner marker 的非空目录；`-FreshState` 也只会删除本工具已拥有的 state root。
 
-### Easy521 模拟器测试
+入口在该 state root 内完成以下步骤：
+
+1. 从 `go.dev` 与 `nodejs.org` 下载 Go `1.26.5`、Node.js `24.14.0` 的 Windows x64 ZIP，并用脚本中固定的 SHA-256 校验；不会使用系统 PATH 的同名工具。
+2. 只从根 `package-lock.json` 安装精确的 TypeScript `5.6.3` 到 state root；从 `apps/block-hmi/assets/hmi.mts` 和 `tools/plc-simulator/web/app.ts` 重编译到 state root，逐字节比对已跟踪的 `hmi.mjs`、`app.js`，不同即失败且不会覆写运行时资产。
+3. 在 state root 的全新 `GOMODCACHE` 中按每个 `go.mod`/`go.sum` 下载模块并执行 `go mod verify`。默认下载链是 `https://goproxy.cn|https://proxy.golang.org|direct`，`|` 允许网络错误时继续 fallback；它只是可配置的可用性策略，并不保证任何镜像永远可达。每个模块仍由 `go.mod`/`go.sum` 与 `sum.golang.org` 校验；随后设 `GOPROXY=off`、`GOSUMDB=off`。
+4. 运行 HMI Node 测试、三个 Go module 的 `go test` 和 Agent `go vet`，再以 `GOENV=off`、`GOWORK=off`、`GO111MODULE=on`、空 `GOROOT`、`GOTOOLCHAIN=local`、`CGO_ENABLED=0`、`GOOS=linux`、`GOARCH=arm64`、`GOARM64=v8.0`、`-mod=readonly`、`-trimpath`、`-buildvcs=false` 构建 `artifact/bin/block-agent`。脚本内部调用 Git Bash，并校验输出为 AArch64 ELF。
+
+所有 `TEMP`、`TMP`、`TMPDIR`、`GOTMPDIR`、`GOPATH`、`GOCACHE`、`GOMODCACHE`、npm cache、工具链与制品均在 state root 中。脚本固定 `GOENV=off`、`GO111MODULE=on`、清空 `GOROOT`，并清除 `GOPRIVATE`、`GONOPROXY`、`GONOSUMDB`、`GOINSECURE`、`NODE_OPTIONS`、`NODE_PATH`、Node TLS 覆盖、继承的 `NPM_CONFIG_*` 和全部 `GIT_CONFIG_*` 注入；不会输出这些继承值。`HTTP(S)_PROXY` 与正常 Git 代理仅可影响传输路径，值不记录且不替代内容校验。正式 `build-release.ps1` 不依赖 Common；仅可选 SSH Bootstrap 验证需要另行 clone Common 并显式传入 `-CommonRoot`。完成发布或验证后，只能删除已明确核对的该次 state root。默认 profile 为正式 `points.json`；需要 legacy 电脑模拟点表时显式加 `-PLCProfile simulatorFloat32`。
+
+## 5. 制品校验和可选打包
+
+第 3 节已经验证 AArch64 ELF。需要在提交给 Release 前额外盘点或打包时，使用刚才
+明确指定的 state root，而不是任何历史任务缓存。先在 PowerShell 对点表做结构计数：
 
 ```powershell
-Set-Location 'D:\codex\Block-DMP\imports\easy521-plc-simulator'
-python -m unittest discover -v
-```
-
-该测试使用动态端口，不连接真实 PLC。
-
-## 4. Windows portable Go + Git Bash 构建 Linux ARM64
-
-本轮实际可用组合是工作区 portable Go `go1.26.5 windows/amd64`、Git Bash 和 Go 的 `GOOS=linux/GOARCH=arm64` 交叉编译。不要让 WSL 调用 Windows Go 包装器；打包前必须独立确认输出是 AArch64 ELF，而不是 Windows PE。
-
-先从 PowerShell 启动 Git Bash：
-
-```powershell
-& 'C:\Program Files\Git\bin\bash.exe'
-```
-
-以下命令在 **Git Bash** 执行。`VERSION` 必须替换为获批且未复用的新字符串；版本只允许字母、数字、点、下划线和短横线。
-
-```bash
-WORKSPACE=/d/codex/Block-DMP
-BLOCK_REPO="$WORKSPACE/repos/Block"
-VERSION='<approved-unique-version>'
-CACHE_ROOT="$WORKSPACE/.cache/block-release-$VERSION"
-ARTIFACT_DIR="$CACHE_ROOT/artifact"
-
-mkdir -p "$CACHE_ROOT/tmp" "$CACHE_ROOT/gotmp" \
-  "$CACHE_ROOT/gocache" "$CACHE_ROOT/gomodcache"
-export PATH="$WORKSPACE/.tools/go1.26.5/go/bin:$PATH"
-export TEMP="$CACHE_ROOT/tmp"
-export TMP="$CACHE_ROOT/tmp"
-export TMPDIR="$CACHE_ROOT/tmp"
-export GOTMPDIR="$CACHE_ROOT/gotmp"
-export GOCACHE="$CACHE_ROOT/gocache"
-export GOMODCACHE="$CACHE_ROOT/gomodcache"
-```
-
-### 首次准备锁定依赖
-
-只有首次填充本任务 `GOMODCACHE` 时联网。使用 `go.mod/go.sum` 已锁定依赖，保持 checksum database、`go.sum` 和 TLS 校验；不得设置 `GONOSUMDB`、`GOINSECURE` 或修改依赖文件。
-
-```bash
-export GOPROXY=https://goproxy.cn,direct
-export GOSUMDB=sum.golang.org
-unset GONOSUMDB GOINSECURE
-
-cd "$BLOCK_REPO/services/block-agent"
-go mod download
-go mod verify
-git -C "$BLOCK_REPO" diff --exit-code -- services/block-agent/go.mod services/block-agent/go.sum
-```
-
-下载失败时停止，不安装系统 Go、不下载未锁定工具、不改 `go.mod/go.sum`。
-
-### 离线构建单一制品
-
-锁定依赖准备完成后关闭模块网络访问：
-
-```bash
-export GOPROXY=off
-export CGO_ENABLED=0
-export GOOS=linux
-export GOARCH=arm64
-cd "$BLOCK_REPO"
-```
-
-每次发布只选择下面一条。
-
-默认安全 profile：
-
-```bash
-unset BLOCK_PLC_PROFILE
-deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
-```
-
-仅可显式选择的 legacy 电脑模拟 PLC profile：
-
-```bash
-export BLOCK_PLC_PROFILE=simulatorFloat32
-deploy/block/build.sh --output "$ARTIFACT_DIR" --version "$VERSION"
-```
-
-`ARTIFACT_DIR` 必须事先不存在。不要在同一版本下反复覆盖或生成多个候选。
-
-## 5. 制品校验和 WSL 打包
-
-先在 PowerShell 对点表做结构计数：
-
-```powershell
-$ArtifactDir = 'D:\codex\Block-DMP\.cache\block-release-<version>\artifact'
+$StateRoot = Join-Path (Get-Location) '.cache\block-clean-build'
+$ArtifactDir = Join-Path $StateRoot 'artifact'
 $Profile = Get-Content -LiteralPath "$ArtifactDir\web\assets\points.json" `
   -Raw -Encoding UTF8 | ConvertFrom-Json
 $BoolCount = @($Profile.points | Where-Object type -eq 'bool').Count
@@ -227,15 +134,16 @@ $BindingCount = @($Profile.bindings).Count
 }
 ```
 
-预期：`default` 为 `Total=27`、`Bool=18`、`Float32=1`、`Int16=5`、`Int32=3`、`Bindings=54`、`ScanIntervalMs=500`；仅显式选择的 legacy `simulatorFloat32` 保持 `Total=30`、`Bool=8`、`Float32=22`，且 `SimulatorSourceLeaked=False`。
+预期：`default` 为 `Total=42`、`Bool=33`、`Float32=1`、`Int16=5`、`Int32=3`、`Bindings=54`、`ScanIntervalMs=500`；其中 `Bool=33` 包含 15 个报警 BOOL。仅显式选择的 legacy `simulatorFloat32` 保持 `Total=30`、`Bool=8`、`Float32=22`，且 `SimulatorSourceLeaked=False`。
 
-Windows `tar.exe` 可能丢失脚本执行位，因此在 **WSL/Linux shell** 生成 manifest 和唯一压缩包：
+若要生成可传输的 POSIX tar 包，Windows `tar.exe` 可能丢失脚本执行位；此时在
+**WSL/Linux shell** 使用同一个 state root 生成 manifest 和唯一压缩包。这是可选的
+打包步骤，不是第 3 节新 clone 构建的前提：
 
 ```bash
-WORKSPACE=/mnt/d/codex/Block-DMP
-VERSION='<same-approved-version>'
-CACHE_ROOT="$WORKSPACE/.cache/block-release-$VERSION"
-ARTIFACT_DIR="$CACHE_ROOT/artifact"
+STATE_ROOT="$PWD/.cache/block-clean-build"
+ARTIFACT_DIR="$STATE_ROOT/artifact"
+VERSION='<approved-unique-version>'
 
 file "$ARTIFACT_DIR/bin/block-agent" | grep -Eq 'ELF .*ARM aarch64'
 test "$(cat "$ARTIFACT_DIR/VERSION")" = "$VERSION"
@@ -243,12 +151,20 @@ test "$(cat "$ARTIFACT_DIR/VERSION")" = "$VERSION"
 (
   cd "$ARTIFACT_DIR"
   find . -type f -print0 | sort -z | xargs -0 sha256sum
-) > "$CACHE_ROOT/artifact.sha256"
+) > "$STATE_ROOT/artifact.sha256"
 
-cd "$CACHE_ROOT"
+cd "$STATE_ROOT"
 tar --format=posix -czf artifact.tar.gz artifact artifact.sha256
 tar -tzf artifact.tar.gz >/dev/null
 sha256sum artifact.tar.gz artifact.sha256 artifact/bin/block-agent
+```
+
+清理必须先 dry-run，且只在用户终端确认清单后执行；该脚本只处理 owner marker 管理的 state root 中
+的精确缓存、完整 `artifact/` 发布目录和 tar/manifest，不删除源码、README、配置、SSH 材料或现场证据：
+
+```powershell
+.\tools\cleanup-build-artifacts.ps1 -StateRoot '.cache\block-clean-build'
+.\tools\cleanup-build-artifacts.ps1 -StateRoot '.cache\block-clean-build' -Execute
 ```
 
 发布记录只保存版本、源码提交、Common baseline、manifest/binary/archive SHA-256 和验收结论；不要把制品、日志或目标机 binary 提交 Git。
@@ -313,7 +229,7 @@ $Version = '<same-approved-version>'
 if ($Version -notmatch '^[A-Za-z0-9._-]+$') { throw 'Invalid version.' }
 $Stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $Stage = "/var/backups/block/stage-$Version-$Stamp"
-$Archive = "D:\codex\Block-DMP\.cache\block-release-$Version\artifact.tar.gz"
+$Archive = Join-Path (Get-Location) ".cache\block-release-$Version\artifact.tar.gz"
 
 & ssh @SshOptions $Remote "sudo install -d -o root -g root -m 0700 '$Stage'"
 if ($LASTEXITCODE -ne 0) { throw 'Staging creation failed.' }

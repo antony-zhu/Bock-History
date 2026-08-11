@@ -72,21 +72,33 @@ Agent，HMI 不使用 `localStorage` 保存或恢复 PLC 地址，也不再写 `
 
 该工具构建并启动实际的 `services/block-agent/cmd/block-agent`，以
 `https://127.0.0.1:8444` 提供此目录的 HMI 静态文件，并以同源 WSS 提供
-`/ws`。未传入证书参数时，它只在工作区
+`/ws`。未传入证书参数时，它只在仓库根目录
 `.cache/block-hmi-auth-demo/tls/` 生成短期开发 CA、叶子证书和私钥；这些文件
-不会进入仓库，也不适用于真机。需要使用指定证书时，三个路径必须同时提供：
+不会进入仓库，也不适用于真机。脚本会调用根目录的统一构建 bootstrap，在同一
+state root 中准备并校验 Go 和模块；不读取 `.tools` 或历史模块缓存。演示构建期间会
+清除继承的 `GIT_CONFIG_*`、Node TLS 覆盖和 npm 配置，并在启动成功或失败后恢复调用
+PowerShell 原有的环境变量，不把工具缓存路径或隔离设置泄漏给后续命令。需要为演示
+指定独立 state root 或使用指定证书时：
 
 ```powershell
+.\tools\start-block-hmi-auth-demo.ps1 `
+  -StateRoot '.cache\block-hmi-demo'
+
 .\tools\start-block-hmi-auth-demo.ps1 `
   -TLSCertificatePath C:\path\local-hmi.crt `
   -TLSPrivateKeyPath C:\path\local-hmi.key `
   -TLSCAPath C:\path\local-hmi-ca.crt
 ```
 
+首次不传 TLS 文件时，演示还明确依赖系统可用的 OpenSSL（Git for Windows 自带的
+OpenSSL 可用）；没有 OpenSSL 时必须显式提供上述三份 TLS 文件。state root 只能是仓库根目录
+`.cache` 的直接子目录并带本工具 owner marker，不能使用 `D:\state`、工作树或 junction。
+
 默认复用
 `.cache/block-hmi-auth-demo/state/block-hmi-auth-demo.db`，因此可验证账户和
-idle 配置的重启持久化；只有显式传入 `-FreshAuth` 才会删除这个精确的开发演示状态目录。使用
-`-Stop` 仅会停止 PID 记录和命令行都匹配的本工作树 Agent。
+idle 配置的重启持久化；只有显式传入 `-FreshAuth` 才会删除这个精确的开发演示状态目录。首次
+运行时该目录不存在或为空会安全初始化；只有已有且非空的目录才要求 demo owner marker，避免清除
+外部数据；`-Stop` 仅会停止 PID 记录和命令行都匹配的本工作树 Agent。
 
 ```powershell
 .\tools\test-block-hmi-auth-persistence.ps1
@@ -98,22 +110,27 @@ HTTPS 端口和严格 CA 校验，覆盖首次管理员、登录、idle 配置�
 
 ## 本地验证
 
-有 TypeScript 编译器时更新浏览器产物：
+根目录的正式构建入口会从锁定依赖重编译本目录的 `assets/hmi.mts` 到独立 state
+root，并逐字节比对现有 `assets/hmi.mjs`；不一致即失败，构建过程不会改写这个已
+跟踪的浏览器运行时资产。它同样验证 PLC simulator 的 `web/app.ts`/`web/app.js`，
+运行 Node/Go 测试，并构建 Linux ARM64 release：
 
-```text
-tsc assets/hmi.mts --target ES2022 --lib DOM,ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --noEmitOnError --outDir assets
+```powershell
+Set-Location <Block-repository-root>
+.\tools\build-release.ps1 -Version <approved-unique-version>
 ```
 
-执行验证：
-
-```text
-node assets/hmi.test.mjs
-go test ./...
-```
+首次执行自动下载并 SHA-256 校验 Go `1.26.5` 与 Node.js `24.14.0`，并使用根
+`package-lock.json` 中精确锁定的 TypeScript `5.6.3`；正式 `build-release.ps1` 不依赖
+系统 PATH 中的 Go、Node 或 TypeScript，也不使用任何历史 `.cache`。它仍明确要求
+PowerShell 与 Git for Windows；直接调用 `deploy/block/build.sh` 则必须自行提供
+`BLOCK_GO_BIN` 和完整受控 Go 环境。
 
 `assets/points.json` 是默认/真实 PLC 使用的获批点表，派生自
-`D:\PLC_Points\PLC_Points_260809.xlsx`；包含 27 个运行时点位：18 个 BOOL、1 个
-FLOAT32/REAL、5 个 INT16 和 3 个 INT32/DINT，`scanIntervalMs=500`。遗留的
+`D:\PLC_Points\PLC_Points_260809.xlsx`；当前包含 **42 个**运行时点位：**33 个 BOOL**、1 个
+FLOAT32/REAL、5 个 INT16 和 3 个 INT32/DINT，`scanIntervalMs=500`。其中 27 个为原有
+非报警点位（18 个 BOOL、1 个 FLOAT32/REAL、5 个 INT16、3 个 INT32/DINT），另有 15 个
+只读 BOOL 报警点位；15 条报警定义不等于已完成真机验证。遗留的
 `assets/points.simulatorFloat32.json` 仅为显式选择的 legacy 模拟 profile；默认页面始终加载
 `points.json`。`runtime.configure` 只发送所选点表的运行时点位；显示路径和中文说明只在
 浏览器使用。

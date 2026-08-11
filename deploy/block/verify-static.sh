@@ -8,11 +8,19 @@ fail() {
   exit 1
 }
 
+if command -v python3 >/dev/null 2>&1 && python3 --version >/dev/null 2>&1; then
+  PYTHON_BIN=$(command -v python3)
+elif command -v python >/dev/null 2>&1 && python --version >/dev/null 2>&1; then
+  PYTHON_BIN=$(command -v python)
+else
+  fail "a working python3 or python interpreter is required for static deployment checks"
+fi
+
 for SCRIPT in build.sh install-users.sh install.sh health-check.sh version.sh rollback.sh verify-install.sh verify-static.sh tests/deploy-regression.sh tests/install-rollback-regression.sh; do
   bash -n "$SCRIPT_DIR/$SCRIPT"
 done
 
-python3 - "$SCRIPT_DIR/config/block.env.example" <<'PY'
+"$PYTHON_BIN" - "$SCRIPT_DIR/config/block.env.example" <<'PY'
 import sys
 
 path = sys.argv[1]
@@ -72,7 +80,7 @@ if config["BLOCK_MQTTS_V2_ENDPOINT"] != "mqtts://bdm.example.invalid:8883":
     raise SystemExit("BDM connection defaults must be MQTTS on 8883")
 PY
 
-python3 - "$SCRIPT_DIR/chromium/block-kiosk.json" <<'PY'
+"$PYTHON_BIN" - "$SCRIPT_DIR/chromium/block-kiosk.json" <<'PY'
 import json
 import sys
 
@@ -93,7 +101,7 @@ if policy != expected:
     raise SystemExit(f"unexpected Chromium kiosk policy: {policy}")
 PY
 
-python3 - "$SCRIPT_DIR/install.sh" <<'PY'
+"$PYTHON_BIN" - "$SCRIPT_DIR/install.sh" <<'PY'
 import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
@@ -143,7 +151,7 @@ if 'snapshot_chromium_policy' not in source or 'CHROMIUM_POLICY_FILE=$CHROMIUM_P
     raise SystemExit("install must version and snapshot the Chromium kiosk policy")
 PY
 
-python3 - "$SCRIPT_DIR/build.sh" <<'PY'
+"$PYTHON_BIN" - "$SCRIPT_DIR/build.sh" <<'PY'
 import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
@@ -162,7 +170,7 @@ for required in (
         raise SystemExit(f"build is missing candidate deploy bundle content: {required}")
 PY
 
-python3 - "$SCRIPT_DIR/rollback.sh" <<'PY'
+"$PYTHON_BIN" - "$SCRIPT_DIR/rollback.sh" <<'PY'
 import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()
@@ -186,7 +194,7 @@ if gate >= manual_stop:
     raise SystemExit("cross-topology rollback must reject before stopping services")
 PY
 
-python3 - "$SCRIPT_DIR/verify-install.sh" <<'PY'
+"$PYTHON_BIN" - "$SCRIPT_DIR/verify-install.sh" <<'PY'
 import sys
 
 source = open(sys.argv[1], encoding="utf-8").read()

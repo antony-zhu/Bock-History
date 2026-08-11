@@ -4,6 +4,19 @@ set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 CACHE_ROOT=$ROOT/../../.cache/block-install-rollback
 TEST_ROOT=
+TEST_WINDOWS_LINK_COMPAT=false
+
+# Git Bash defaults to a directory-copy fallback when it cannot create a
+# native symbolic link.  That makes this fixture's current-release pointer
+# cease to be a link, so force its portable native-link mode for this test
+# only.  The deployed scripts still use their normal Linux symlink behavior.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    TEST_WINDOWS_LINK_COMPAT=true
+    export MSYS=winsymlinks:native
+    ;;
+esac
+export TEST_WINDOWS_LINK_COMPAT
 
 fail() {
   printf 'install-rollback-regression: %s\n' "$*" >&2
@@ -56,6 +69,19 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o|-g)
       shift 2
+      ;;
+    -m)
+      if [ "$TEST_WINDOWS_LINK_COMPAT" = true ]; then
+        # Git for Windows may reject chmod-style mode changes on test
+        # directories.  Modes are validated on the Linux deployment target;
+        # this fixture only needs the copied content and release transitions.
+        shift 2
+      else
+        args+=("$1")
+        shift
+        args+=("$1")
+        shift
+      fi
       ;;
     *)
       args+=("$1")
@@ -142,14 +168,39 @@ write_legacy_http_release() {
 
 make_tls_material() {
   local tls=$TEST_ROOT/tls
+  local ca_key ca_crt leaf_key leaf_csr leaf_crt leaf_ext
   mkdir -p "$tls"
-  openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
-    -keyout "$tls/ca.key" -out "$tls/ca.crt" -subj /CN=block-test-ca >/dev/null 2>&1
-  openssl req -newkey rsa:2048 -nodes \
-    -keyout "$tls/block-hmi.key" -out "$tls/block-hmi.csr" -subj /CN=block-hmi >/dev/null 2>&1
+  ca_key=$tls/ca.key
+  ca_crt=$tls/ca.crt
+  leaf_key=$tls/block-hmi.key
+  leaf_csr=$tls/block-hmi.csr
+  leaf_crt=$tls/block-hmi.crt
+  leaf_ext=$tls/leaf.ext
+  if command -v cygpath >/dev/null 2>&1; then
+    ca_key=$(cygpath -w "$ca_key")
+    ca_crt=$(cygpath -w "$ca_crt")
+    leaf_key=$(cygpath -w "$leaf_key")
+    leaf_csr=$(cygpath -w "$leaf_csr")
+    leaf_crt=$(cygpath -w "$leaf_crt")
+    leaf_ext=$(cygpath -w "$leaf_ext")
+    MSYS2_ARG_CONV_EXCL='*' openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+      -keyout "$ca_key" -out "$ca_crt" -subj /CN=block-test-ca >/dev/null 2>&1
+    MSYS2_ARG_CONV_EXCL='*' openssl req -newkey rsa:2048 -nodes \
+      -keyout "$leaf_key" -out "$leaf_csr" -subj /CN=block-hmi >/dev/null 2>&1
+  else
+    openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+      -keyout "$ca_key" -out "$ca_crt" -subj /CN=block-test-ca >/dev/null 2>&1
+    openssl req -newkey rsa:2048 -nodes \
+      -keyout "$leaf_key" -out "$leaf_csr" -subj /CN=block-hmi >/dev/null 2>&1
+  fi
   printf '%s\n' 'subjectAltName=IP:127.0.0.1' > "$tls/leaf.ext"
-  openssl x509 -req -in "$tls/block-hmi.csr" -CA "$tls/ca.crt" -CAkey "$tls/ca.key" -CAcreateserial \
-    -out "$tls/block-hmi.crt" -days 2 -extfile "$tls/leaf.ext" >/dev/null 2>&1
+  if command -v cygpath >/dev/null 2>&1; then
+    MSYS2_ARG_CONV_EXCL='*' openssl x509 -req -in "$leaf_csr" -CA "$ca_crt" -CAkey "$ca_key" -CAcreateserial \
+      -out "$leaf_crt" -days 2 -extfile "$leaf_ext" >/dev/null 2>&1
+  else
+    openssl x509 -req -in "$leaf_csr" -CA "$ca_crt" -CAkey "$ca_key" -CAcreateserial \
+      -out "$leaf_crt" -days 2 -extfile "$leaf_ext" >/dev/null 2>&1
+  fi
   chmod 0644 "$tls/ca.crt" "$tls/block-hmi.crt"
   chmod 0640 "$tls/block-hmi.key"
 }

@@ -23,8 +23,13 @@ for script in \
   bash -n "${script}"
 done
 
-command -v node >/dev/null || die "node is required for static validation"
-node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' \
+NODE_BIN="${BLOCK_NODE_BIN:-}"
+if [[ -z "${NODE_BIN}" ]]; then
+  NODE_BIN="$(command -v node || true)"
+fi
+[[ -n "${NODE_BIN}" && -x "${NODE_BIN}" ]] || die "BLOCK_NODE_BIN must name an executable Node.js binary, or node must be available on PATH for standalone validation"
+export BLOCK_NODE_BIN="${NODE_BIN}"
+"${NODE_BIN}" -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' \
   "${ROOT}/config/ssh-bootstrap.example.json"
 grep -Fqx 'User=ssh-bootstrap' "${ROOT}/systemd/ssh-bootstrapd.service"
 grep -Fqx 'Group=ssh-bootstrap' "${ROOT}/systemd/ssh-bootstrapd.service"

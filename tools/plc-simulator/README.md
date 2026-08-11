@@ -93,9 +93,12 @@ SSE 断开后的重连由浏览器原生 `EventSource` 处理，页面会读取�
 ## 开发与测试
 
 页面源码是原生 TypeScript、HTML 和 CSS。`web/app.js` 是已经提交并嵌入 exe 的
-编译产物。使用工作区已有离线 TypeScript 编译器重新生成它，不需要联网安装依赖。
+运行时资产，不能用工作区已有的 TypeScript、Go 或历史模块缓存覆盖。新 clone 的正式
+编译/验证统一从仓库根目录执行 `tools/build-release.ps1`：它在本次 state root 下载并
+校验固定 Go、Node 和锁定的 TypeScript，重编译 `web/app.ts` 后逐字节比对 `web/app.js`，
+再在新 `GOMODCACHE` 中验证此模块依赖。
 
-~~~text
-go test .
-go test -race .
-~~~
+直接 `go test ./...` 只可用于已经由统一 bootstrap 准备好受管 state root 的局部诊断，
+不是正式构建入口，也不能借用 `.tools`、系统 PATH 或历史缓存来证明可复现性。
+`go test -race ./...` 会启用 cgo，另需本机 `gcc` 或 `clang`；缺少 C 编译器时应明确跳过
+该并发诊断，不能把普通测试通过写成 race 结果。

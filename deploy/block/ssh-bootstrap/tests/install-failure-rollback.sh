@@ -6,7 +6,17 @@ readonly INSTALL_SCRIPT="${ROOT}/install.sh"
 readonly ROLLBACK_SCRIPT="${ROOT}/rollback.sh"
 readonly CACHE_ROOT="${ROOT}/../../../.cache/ssh-bootstrap-rollback"
 
-node - "${INSTALL_SCRIPT}" "${ROLLBACK_SCRIPT}" <<'JS'
+NODE_BIN="${BLOCK_NODE_BIN:-}"
+if [[ -z "${NODE_BIN}" ]]; then
+  NODE_BIN="$(command -v node || true)"
+fi
+[[ -n "${NODE_BIN}" && -x "${NODE_BIN}" ]] || {
+  printf 'ERROR: BLOCK_NODE_BIN must name an executable Node.js binary, or node must be available on PATH for standalone rollback regression\n' >&2
+  exit 1
+}
+export BLOCK_NODE_BIN="${NODE_BIN}"
+
+"${NODE_BIN}" - "${INSTALL_SCRIPT}" "${ROLLBACK_SCRIPT}" <<'JS'
 const fs = require("fs");
 const install = fs.readFileSync(process.argv[2], "utf8");
 const rollback = fs.readFileSync(process.argv[3], "utf8");

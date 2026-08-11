@@ -3,7 +3,17 @@ set -euo pipefail
 
 readonly ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-node - "${ROOT}/config/ssh-bootstrap.example.json" <<'JS'
+NODE_BIN="${BLOCK_NODE_BIN:-}"
+if [[ -z "${NODE_BIN}" ]]; then
+  NODE_BIN="$(command -v node || true)"
+fi
+[[ -n "${NODE_BIN}" && -x "${NODE_BIN}" ]] || {
+  printf 'ERROR: BLOCK_NODE_BIN must name an executable Node.js binary, or node must be available on PATH for standalone regression\n' >&2
+  exit 1
+}
+export BLOCK_NODE_BIN="${NODE_BIN}"
+
+"${NODE_BIN}" - "${ROOT}/config/ssh-bootstrap.example.json" <<'JS'
 const fs = require("fs");
 const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 if (

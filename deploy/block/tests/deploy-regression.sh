@@ -4,6 +4,12 @@ set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 DEPLOY_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd -P)
 
+# Git Bash can otherwise fall back to a directory copy for symbolic links,
+# which makes the current-release verification fixture invalid.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) export MSYS=winsymlinks:native ;;
+esac
+
 fail() {
   printf 'deploy-regression: %s\n' "$*" >&2
   exit 1
@@ -44,6 +50,24 @@ mkdir -p "$PROFILE_BIN"
 printf '%s\n' \
   '#!/usr/bin/env sh' \
   'set -eu' \
+  'if [ "${1:-}" = version ]; then' \
+  '  printf "%s\\n" "go version go1.26.5 linux/amd64"' \
+  '  exit 0' \
+  'fi' \
+  'if [ "${1:-}" = env ]; then' \
+  '  case "${2:-}" in' \
+  '    GOTOOLCHAIN) printf "%s\\n" "${GOTOOLCHAIN:-}" ;;' \
+  '    GOENV) printf "\\n" ;;' \
+  '    GOWORK) printf "%s\\n" "${GOWORK:-}" ;;' \
+  '    GO111MODULE) printf "%s\\n" "${GO111MODULE:-}" ;;' \
+  '    CGO_ENABLED) printf "%s\\n" "${CGO_ENABLED:-}" ;;' \
+  '    GOOS) printf "%s\\n" "${GOOS:-}" ;;' \
+  '    GOARCH) printf "%s\\n" "${GOARCH:-}" ;;' \
+  '    GOARM64) printf "%s\\n" "${GOARM64:-}" ;;' \
+  '    *) exit 1 ;;' \
+  '  esac' \
+  '  exit 0' \
+  'fi' \
   'output=' \
   'while [ "$#" -gt 0 ]; do' \
   '  case "$1" in' \
@@ -55,12 +79,42 @@ printf '%s\n' \
   ': > "$output"' > "$PROFILE_BIN/go"
 chmod +x "$PROFILE_BIN/go"
 
+BUILD_STATE=$TEST_ROOT/build-state
+mkdir -p "$BUILD_STATE/gopath" "$BUILD_STATE/gocache" "$BUILD_STATE/gomodcache" "$BUILD_STATE/gotmp" "$BUILD_STATE/tmp"
+export BLOCK_GO_BIN="$PROFILE_BIN/go"
+export GOTOOLCHAIN=local
+export GOENV=off
+export GOWORK=off
+export GO111MODULE=on
+unset GOROOT
+export CGO_ENABLED=0
+export GOOS=linux
+export GOARCH=arm64
+export GOARM64=v8.0
+export GOFLAGS=-mod=readonly
+export GOPROXY=off
+export GOSUMDB=off
+export GOPRIVATE=
+export GONOPROXY=
+export GONOSUMDB=
+export GOINSECURE=
+export GOVCS='public:git|hg,private:off'
+export GOPATH="$BUILD_STATE/gopath"
+export GOCACHE="$BUILD_STATE/gocache"
+export GOMODCACHE="$BUILD_STATE/gomodcache"
+export GOTMPDIR="$BUILD_STATE/gotmp"
+export TEMP="$BUILD_STATE/tmp"
+export TMP="$BUILD_STATE/tmp"
+export TMPDIR="$BUILD_STATE/tmp"
+
 DEFAULT_PROFILE_ARTIFACT=$TEST_ROOT/default-profile-artifact
 PATH="$PROFILE_BIN:$PATH" "$DEPLOY_DIR/build.sh" --output "$DEFAULT_PROFILE_ARTIFACT" --version profile-default >/dev/null
 grep -Fq '"address": "D504.0"' "$DEFAULT_PROFILE_ARTIFACT/web/assets/points.json" || fail "default profile lost verified BOOL points"
-if grep -Eq 'D800|D812|float32|fc10' "$DEFAULT_PROFILE_ARTIFACT/web/assets/points.json"; then
-  fail "default profile includes unverified numeric points"
-fi
+for legacy_simulator_address in D800 D806 D812 D814 D816 D818 D820 D822 D824 D826 D828 D830 D832 D834 D836 D840 D842 D844 D846 D848 D850 D852; do
+  if grep -Fq "\"address\": \"$legacy_simulator_address\"" "$DEFAULT_PROFILE_ARTIFACT/web/assets/points.json"; then
+    fail "default profile includes legacy simulator point: $legacy_simulator_address"
+  fi
+done
 [ ! -e "$DEFAULT_PROFILE_ARTIFACT/web/assets/points.simulatorFloat32.json" ] || fail "default artifact includes simulator point bundle"
 
 SIMULATOR_PROFILE_ARTIFACT=$TEST_ROOT/simulator-profile-artifact

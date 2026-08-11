@@ -5,11 +5,12 @@
 也不复制真机发布操作。真机操作只遵循
 [Block v2 真机发布与回滚](../../deploy/block/README.md)。
 
-## 当前状态（截至 2026-08-07）
+## 当前状态（截至 2026-08-11）
 
 | 项目 | 已核对状态 |
 | --- | --- |
 | 当前实现基准 | `c47115b`（`fix(block-hmi): require WSS for local runtime`）与其前置 `9657e1b`（`feat(block-agent): serve local HMI only over TLS`）构成本轮本机 HMI TLS 行为基准，包含 `7621280` 的真实认证持久化演示、`0511847` 的认证字段长度约束和 `5f83b61` 的过期会话保护；共享契约基线为 Common `d1073038277db0b954c021cb2cc377012ec8a78c`，已由 `COMMON_BASELINE` 固定。文档自身的提交不作为功能实现基准。 |
+| 2026-08-10/11 源码增量 | `b1b2862..40bbe8e` 是上述基准之后的连续源码链，包含 PLC 轮询/连接、SQLite endpoint、Easy521 写回退、low-high 数值、主页/生产绑定、15 报警和 HMI 刷新修复。分层证据、构建结论和未验证项见 [2026-08-11 归档盘点](Block归档盘点-20260811.md)。 |
 | 真机实际运行版本 | `0.0.0-18c0a5260c50`。受保护部署报告确认，`456b61a69c95b35aec70935c605a1635f1ec3984` 的两次受控安装均在门禁误判后自动回滚；新 release 仅以非活动版本保留。 |
 | 本地演示 | `/?demo=1` 及其认证变体进入固定 `1920×1080` iframe 壳；小窗等比缩放和居中。缩放态仍映射到同源 `__demoFrame=1` 的真实 DOM，认证、权限和软键盘逻辑不分叉。演示与运行时均使用严格 CA 校验的 loopback HTTPS/WSS，不存在 `ws://` 或 8080/8081 兼容监听。认证请求同机 Agent 的 v2 无状态 API 和测试 SQLite；真实 `cmd/block-agent` 的本机启动及独立数据库重启持久化脚本已通过。当前 Browser 运行环境没有可用实例，未执行真实点击、截图或矩形验收。该说明不等同于真机验收。 |
 | 当前已完成 | 当前功能基准已包含 2026-08-05 至 2026-08-07 的 V2 HMI、模拟器、认证/访客、维护页、发布文档、视觉性能精简、固定工业 viewport 演示及缩放态输入映射；本轮完成 Common v2 无状态认证基线、字段长度约束、过期会话不可续期保护、真实 Agent 持久化验证，以及 `127.0.0.1:8444` 本地 HTTPS/WSS 收口，详见下方时间线。 |
@@ -322,6 +323,54 @@
 - **实现结果**：`9657e1b` 将业务 mux 固定为 `127.0.0.1:8444`，启动必须加载证书/私钥，TLS 最低为 1.2；明文探测不返回 HTTP 兼容响应，8080/8081 不监听。`c47115b` 使 HMI 只计算同源 WSS URL。发布候选的本机 leaf/私钥分别为 `/etc/block/certs/block-hmi.crt` 与 `/etc/block/certs/block-hmi.key`，kiosk 与健康检查使用可由 `block`、`block-ui` 读取的公开 CA `/usr/local/share/ca-certificates/block-dmp-blk-rel-001.crt`，不使用不可读的 `/etc/block/certs/ca.crt`。候选制品自带完整 `deploy/`，首次和每次安装都只执行受控 staging 中的 `artifact/deploy/install.sh`，不调用旧 current installer。安装器在写入状态前严格验证 TLS 材料并保存 transaction 快照；失败自动恢复配置、两个 unit 和 release 状态，手工回滚安装目标 release 自身的 unit 并调用其兼容健康检查；跨 HTTP/TLS 拓扑而没有对应 config/unit 快照时，在变更服务或 current 前拒绝。发布文档仅在严格检查通过、Chromium 单独缺少信任时提供受控 NSS 公开 CA 导入步骤，不允许 `-k`、`--insecure` 或忽略证书错误。
 - **验证/真机结果**：Agent TLS 单元测试覆盖正确 CA、错误 CA、错误主机名、过期证书、TLS 1.1 和明文 HTTP 拒绝；HMI 静态测试覆盖 WSS；真实 Agent 持久化脚本以随机 loopback TLS 端口、严格 CA 校验验证认证和重启持久化，并检查 8080/8081 没有业务监听。未连接设备、未部署或烧写，尚无真机证据。
 - **遗留事项**：Release 授权后按发布流程先做设备只读预检；真实设备必须验证 `127.0.0.1` SAN、严格健康检查、Chromium HTTPS/WSS 页面和屏幕证据。若 Chromium 需要本机 CA 信任，只能由设备管理员按文档备份并导入公开 CA。
+
+### 2026-08-11
+
+#### 归档盘点与可复现构建
+
+- **用户目标/决策**：在不推送、不访问设备、PLC 或现场网络的前提下，为当前 Block
+  归档补齐可复现构建、生成物边界和本轮修复的证据分层；工具和模块下载可依赖受控的
+  公网访问，但不等同于设备或现场网络操作。
+- **实现结果**：新增根 `package.json`/`package-lock.json`（精确 TypeScript `5.6.3`）、
+  HMI tsconfig、统一 Go/Node bootstrap 和 `tools/build-release.ps1`。它下载并 SHA-256
+  校验 Go `1.26.5`、Node `24.14.0`，在指定 state root 中验证 Go 模块、重编译并逐字节
+  比对 HMI/模拟器运行时资产，再离线构建 Linux ARM64 release。正式 release 默认拒绝脏
+  Git 工作树，记录 commit/tree/clean 状态，固定 `GOENV=off`、`GOWORK=off`、`GO111MODULE=on`、
+  空 `GOROOT`、`GOARM64=v8.0` 和 `-buildvcs=false`；state root 使用 owner marker，拒绝 worktree、
+  junction 和非拥有的非空目录。HMI demo、SSH bootstrap 验证和低层 `build.sh` 不再依赖
+  历史模块缓存；正式入口不依赖 Go/Node/TS PATH，直接调用 `build.sh` 仍须显式提供
+  `BLOCK_GO_BIN` 与完整环境。
+- **验证/真机结果**：全新 `archive-repro-build-20260811` state root 的 TS 比对、HMI Node
+  测试、三个 Go module 测试、Agent vet 和 AArch64 release 均通过；哈希、工具版本、
+  初始代理超时及清理边界详见[归档盘点](Block归档盘点-20260811.md)。`a5c1672f…` 是脏工作树
+  下的预提交验证 hash，不是最终归档 hash；未连接设备、未部署、未执行 Wi-Fi、SSH 或 PLC
+  操作。
+- **遗留事项**：`51944eb` 是可识别的本地 `.10` HMI 候选，`40bbe8e` 没有部署或真机
+  证据；操作员最后仍见 3 条报警只能列为未完成真机验证。当前 state root 约 1.12 GiB，
+  本会话的物理删除被环境策略阻止；新增 cleanup 脚本默认 dry-run，须由用户终端审阅并执行。
+  恢复设备后须重新获得 Release 授权，并按唯一发布流程完成只读预检、受控部署和真实屏幕验收。
+
+#### 归档回归与环境修正补充
+
+- **用户目标/决策**：在暂不上传 Git、不得连接设备/PLC/Wi-Fi/SSH 的前提下，先完成当前
+  脚本的本地回归、环境边界和归档记录；不把本地通过误写为真机结论。
+- **实现结果**：发现 Git Bash 默认会把目录软链接降级，导致部署回归的 `current` 指针不是
+  链接；现只在 Windows 回归夹具中固定 `MSYS=winsymlinks:native`，并在 mock 中跳过 Windows
+  不支持的目录 mode 变更。另将默认 PLC profile 的回归规则从 `float32|fc10` 泛匹配改为
+  legacy 模拟 profile 的精确地址清单：正式点表合法的 `D522` FLOAT32 和 `D1000` FC10 不再被
+  错误拦截。正式 release 未传 state root 时改为按版本独立目录；同时清除 Node TLS 覆盖、
+  任意继承的 `GIT_CONFIG_*` 注入，固定 `GO111MODULE=on` 和空 `GOROOT`，但保留 HTTP(S)/正常
+  Git 代理仅作传输路径。Git Bash 由 PATH 的 `git.exe` 发现或显式覆盖，拒绝 WSL/System32 bash
+  且要求可执行 `cygpath.exe`。两项都不修改设备端 Linux 的安装、回滚或 PLC 点位行为。
+- **验证/真机结果**：PowerShell/Bash parser、`git diff --check`、JSON 解析、HMI Node 测试、
+  `verify-static.sh`、安装/回滚回归与完整部署回归均通过。以固定 Go `1.26.5`、`GOPROXY=off`
+  和 `-mod=readonly` 运行三个 Go module 测试也通过；这次增量测试临时使用旧模块缓存作为
+  离线输入，因而不是全新 bootstrap 或正式 release 证据。新验证目录清理前为 2,738 个文件、
+  176,663,479 bytes，按受管清单已只清理其 Go 临时/缓存目录，剩余 111-byte owner marker。
+  全程未连接设备、未部署、未进行 Wi-Fi、SSH 或 PLC 操作。
+- **遗留事项**：`tests/ssh-bootstrap/verify.ps1` 的完整入口本轮未重跑，因为它必须创建全新
+  state root 并重新下载/校验工具和模块，race 门禁还需要本地 `gcc` 或 `clang`；其 parser 已通过。
+  未提交前仍不能生成最终归档 hash，旧 1.12 GiB 无 marker 验证目录仍需用户在本机按审计路径处理。
 
 ## 维护规则
 

@@ -17,14 +17,19 @@ secrets/
 private/
 
 # Go and native build products
+/.cache/
+**/.cache/
 **/.gradle/
 **/build/
+**/dist/
+**/bin/
+**/out/
+**/coverage/
+**/node_modules/
+**/target/
 *.apk
 *.aab
 local.properties
-bin/
-dist/
-out/
 release/
 releases/
 *.exe

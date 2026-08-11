@@ -45,16 +45,25 @@ block，不会重复追加。两种模式都在 reload 前执行 `sshd -t`，回
 
 ## 构建和静态验证
 
-```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-  go build -trimpath \
-  -ldflags "-X main.version=<version>" \
-  -o artifact/bin/ssh-bootstrapd ./cmd/ssh-bootstrapd
+SSH Bootstrap 代码/契约验证是可选入口，不直接依赖 PATH 中的 Go、Node、TypeScript 或历史模块
+缓存；它要求用户显式提供包含 `COMMON_BASELINE` 固定 commit 的独立 Common checkout。正式
+`build-release.ps1` 不调用该验证，也不依赖 Common：
 
-./verify-static.sh
+```powershell
+.\tests\ssh-bootstrap\verify.ps1 `
+  -StateRoot '.cache\ssh-bootstrap-verify' `
+  -CommonRoot '<path-to-Common-checkout>'
 ```
 
-所有测试缓存和产物必须放在工作区 `.cache/**`。样例只含占位指纹和公开
+该入口使用 bootstrap/state root 下载并校验工具和模块，执行带 `-buildvcs=false` 的 test、vet
+和 Linux ARM64 静态构建。默认 race 检查会启用 cgo，因此需要本机 `gcc` 或 `clang`；只有
+普通构建诊断时才可显式 `-SkipRace`，其结果不构成 race 门禁。
+
+裸 `go build` 只可用于已准备好同一受管 state root、显式 Go 环境的局部诊断，不能作为正式
+制品或契约验证入口。`./verify-static.sh` 会优先使用调用方传入的 `BLOCK_NODE_BIN`（可指向统一
+bootstrap 准备的已校验 Node）；只有独立运行静态检查时才回退到 PATH 中的 `node`。
+
+所有测试缓存和产物必须放在仓库根目录 `.cache/**`。样例只含占位指纹和公开
 路径；不得提交真实 `.env`、管理员私钥、TLS 私钥、SSH CA 私钥、密码或
 现场配置。
 
