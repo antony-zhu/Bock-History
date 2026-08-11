@@ -5353,7 +5353,8 @@
         toast.className = `toast ${level}`;
         toast.textContent = message;
         requestAnimationFrame(() => toast.classList.add("show"));
-        toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2200);
+        const duration = level === "danger" || level === "error" ? 8000 : 2200;
+        toastTimer = window.setTimeout(() => toast.classList.remove("show"), duration);
       }
 
       window.addEventListener("block-hmi-notice", event => {

@@ -435,6 +435,19 @@ func TestStaticHMIUsesStatelessFrontendPermissions(t *testing.T) {
 	}
 }
 
+func TestDangerAndErrorToastRemainVisibleForEightSeconds(t *testing.T) {
+	contents, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	toast := regexp.MustCompile(`(?s)function showToast\(message, level = "info"\) \{.*?\n      \}`).FindString(string(contents))
+	if toast == "" ||
+		!strings.Contains(toast, `level === "danger" || level === "error" ? 8000 : 2200`) ||
+		!strings.Contains(toast, `window.setTimeout(() => toast.classList.remove("show"), duration)`) {
+		t.Fatal("danger and error toasts must remain visible for eight seconds while normal notices stay short")
+	}
+}
+
 func TestPLCMaintenancePageKeepsOnlyConnectionControls(t *testing.T) {
 	index, err := os.ReadFile("index.html")
 	if err != nil {

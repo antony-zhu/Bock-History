@@ -70,6 +70,35 @@ bootstrap 固定 `GOENV=off`、`GOWORK=off`、`GO111MODULE=on` 并清除 `GOROOT
 .\tools\cleanup-build-artifacts.ps1 -StateRoot '.cache\my-clean-build' -Execute
 ```
 
+## 固定构建和 HMI/应用烧写
+
+日常构建和烧写均使用固定脚本；“烧写”只指 Block HMI/应用，不会配置 Wi-Fi、PLC 点位或向 PLC 写入。
+
+```powershell
+# 构建（唯一正式构建逻辑仍由 build-release.ps1 执行）
+.\tools\build-block.ps1 -Version <approved-version>
+
+# 先检查烧写命令，不连接设备、不构建、不写入
+.\tools\deploy-hmi.ps1 -Version <approved-version> -Build `
+  -DeviceAddress <device-address> -SiteId <site-id> -BlockId <block-id> -DeviceId <device-id> -DryRun
+
+# 正式烧写：脚本构建、打包、HTTPS 获取五分钟 SSH 证书、上传候选制品、安装并验收
+.\tools\deploy-hmi.ps1 -Version <approved-version> -Build `
+  -DeviceAddress <device-address> -SiteId <site-id> -BlockId <block-id> -DeviceId <device-id> `
+  -CommonRoot <pinned-Common-checkout> -AdminKid <administrator-kid> `
+  -AdminKey <protected-administrator-key> -ManagementCA <protected-management-ca>
+```
+
+若已有受批准的 ssh-bootstrapctl.exe，可用 -BootstrapCtl 取代 -CommonRoot；若已由受保护工具生成有效会话，可用 -SessionDirectory 取代三个管理员凭据。凭据、会话和现场配置始终保留在仓库外。
+
+部署脚本需要 WSL 来用 Linux tar 保留候选制品的执行位。它先检查 HTTPS/SSH 身份、受验 host key、候选哈希、远端 sudo -n 权限和设备现有配置，再只运行候选制品内的 install.sh，随后运行 verify-install.sh。任一步失败都会非零退出并保留不含秘密的诊断；不会尝试密码、跳过主机校验或重复烧写。
+
+无需设备的命令组装检查：
+
+```powershell
+.\tools\test-deploy-hmi.ps1
+```
+
 ## 公共架构与契约
 
 公共架构和跨组件契约的唯一来源是独立的 Common Git checkout。本仓库通过根目录的

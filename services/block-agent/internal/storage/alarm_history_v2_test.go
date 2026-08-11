@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -140,6 +141,114 @@ func TestAlarmHistoryV2RejectsInvalidRecordAndQuery(t *testing.T) {
 	}
 	if _, _, err := store.List(ctx, alarmhistory.Query{Limit: 1}); !errors.Is(err, alarmhistory.ErrInvalidQuery) {
 		t.Fatalf("list invalid query error = %v", err)
+	}
+}
+
+func TestOpenMigratesLegacyAlarmHistoryV2Schema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy-alarm-history.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySchema := "CREATE TABLE alarm_history_v2 (" +
+		"history_cursor INTEGER PRIMARY KEY AUTOINCREMENT, " +
+		"alarm_record_id TEXT NOT NULL UNIQUE, " +
+		"site_id TEXT NOT NULL, " +
+		"block_id TEXT NOT NULL, " +
+		"device_id TEXT NOT NULL, " +
+		"alarm_id TEXT NOT NULL, " +
+		"event_kind TEXT NOT NULL CHECK (event_kind IN ('RAISED', 'CLEARED')), " +
+		"code TEXT NOT NULL, " +
+		"severity TEXT NOT NULL, " +
+		"text TEXT NOT NULL, " +
+		"occurred_at TEXT NOT NULL, " +
+		"occurred_unix_nano INTEGER NOT NULL, " +
+		"recorded_at TEXT NOT NULL, " +
+		"quality TEXT NOT NULL, " +
+		"details_json TEXT NOT NULL DEFAULT '{}')"
+	if _, err := legacy.ExecContext(ctx, legacySchema); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 8, 11, 8, 30, 0, 0, time.UTC)
+	if _, err := legacy.ExecContext(ctx,
+		"INSERT INTO alarm_history_v2 ("+
+			"history_cursor, alarm_record_id, site_id, block_id, device_id, alarm_id, "+
+			"event_kind, code, severity, text, occurred_at, occurred_unix_nano, "+
+			"recorded_at, quality, details_json"+
+			") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		41, "legacy-record", "site-lab", "block-001", "device-001", "alarm-1",
+		"RAISED", "E_STOP", "CRITICAL", "legacy alarm",
+		base.Format(alarmHistoryTimeLayout), base.UnixNano(),
+		base.Format(alarmHistoryTimeLayout), "good", "{\"source\":\"legacy\"}",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(path, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	columns, err := alarmHistoryV2TableColumns(ctx, store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alarmHistoryV2SchemaMatches(columns) {
+		t.Fatalf("migrated alarm history schema = %+v", columns)
+	}
+
+	var (
+		archiveSite, archiveBlock, archiveDevice string
+		archiveOccurredUnixNano                  int64
+		archiveRecordedAt, archiveQuality        string
+	)
+	if err := store.db.QueryRowContext(ctx,
+		"SELECT site_id, block_id, device_id, occurred_unix_nano, recorded_at, quality "+
+			"FROM "+alarmHistoryV2LegacyTable+" WHERE history_cursor = ?", 41,
+	).Scan(
+		&archiveSite, &archiveBlock, &archiveDevice, &archiveOccurredUnixNano,
+		&archiveRecordedAt, &archiveQuality,
+	); err != nil {
+		t.Fatalf("read legacy alarm archive: %v", err)
+	}
+	if archiveSite != "site-lab" || archiveBlock != "block-001" || archiveDevice != "device-001" ||
+		archiveOccurredUnixNano != base.UnixNano() || archiveRecordedAt != base.Format(alarmHistoryTimeLayout) ||
+		archiveQuality != "good" {
+		t.Fatalf("legacy archive fields were not preserved: site=%q block=%q device=%q unixNano=%d recordedAt=%q quality=%q",
+			archiveSite, archiveBlock, archiveDevice, archiveOccurredUnixNano, archiveRecordedAt, archiveQuality)
+	}
+
+	records, hasMore, err := store.List(ctx, alarmhistory.Query{
+		FromOccurredAt: base.Add(-time.Second),
+		ToOccurredAt:   base.Add(time.Second),
+		Limit:          10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasMore || len(records) != 1 {
+		t.Fatalf("migrated records = %+v, hasMore = %v", records, hasMore)
+	}
+	if records[0].HistoryCursor != 41 ||
+		records[0].AlarmRecordID != "legacy-record" ||
+		records[0].Text != "legacy alarm" ||
+		records[0].Details["source"] != "legacy" {
+		t.Fatalf("legacy record was not preserved: %+v", records[0])
+	}
+
+	appended := appendAlarmHistoryV2(t, store, "after-legacy-migration", "CLEARED", base.Add(time.Millisecond))
+	if appended.HistoryCursor != 42 {
+		t.Fatalf("next history cursor = %d, want 42", appended.HistoryCursor)
 	}
 }
 

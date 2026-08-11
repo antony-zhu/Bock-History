@@ -156,6 +156,9 @@ func (s *Store) initialize(ctx context.Context) error {
 			return fmt.Errorf("apply SQLite migration %s: %w", migration, err)
 		}
 	}
+	if err := s.ensureAlarmHistoryV2Schema(ctx); err != nil {
+		return fmt.Errorf("migrate alarm history schema: %w", err)
+	}
 	if err := s.ensureCommandMetadataColumns(ctx); err != nil {
 		return fmt.Errorf("migrate command metadata columns: %w", err)
 	}
